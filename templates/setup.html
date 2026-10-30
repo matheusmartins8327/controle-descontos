@@ -6,6 +6,9 @@
   <p class="sub">Crie a conta do administrador. Ele terá acesso total, incluindo o cadastro de até {{ MAX_USUARIOS }} usuários.</p>
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Código de instalação
+      <input name="codigo" inputmode="numeric" autocomplete="off" required>
+      <small>Aparece na janela do sistema (computador) ou no final da instalação no PythonAnywhere.</small></label>
     <label>Nome<input name="nome" required></label>
     <label>E-mail<input name="email" type="email" required></label>
     <label>Senha (mín. 8 caracteres)<input name="senha" type="password" minlength="8" required></label>

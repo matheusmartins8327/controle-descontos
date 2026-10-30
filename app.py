@@ -12,12 +12,14 @@ Fluxo:
 
 Todos os valores são em dólar (USD).
 """
+import glob
 import os
 import re
 import socket
+import subprocess
 import secrets
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 
 from flask import (Flask, abort, flash, g, redirect, render_template, request,
@@ -28,7 +30,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 5
-VERSAO = "1.3"
+VERSAO = "1.4"
 
 # ---------------------------------------------------------------------------
 # Perfis e fluxo
@@ -83,6 +85,12 @@ def _secret_key():
 
 
 app.config["SECRET_KEY"] = _secret_key()
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# Em servidor com HTTPS (ex.: PythonAnywhere), o cookie de sessão só trafega criptografado
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("HTTPS") == "1"
+
+MAX_TENTATIVAS_LOGIN = 5
+BLOQUEIO_MINUTOS = 15
 
 # ---------------------------------------------------------------------------
 # Banco de dados
@@ -160,6 +168,11 @@ CREATE TABLE IF NOT EXISTS historico (
     status_anterior TEXT,
     status_novo TEXT,
     observacao TEXT,
+    criado_em TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tentativas_login (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
     criado_em TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_descontos_status ON descontos(status);
@@ -329,15 +342,35 @@ def parse_num(texto):
 # ---------------------------------------------------------------------------
 # Configuração inicial e login
 # ---------------------------------------------------------------------------
+ARQ_CODIGO_INSTALACAO = os.path.join(INSTANCE_DIR, "codigo_instalacao.txt")
+
+
+def codigo_instalacao():
+    """Código exigido para criar o primeiro administrador (impede que outra pessoa o crie)."""
+    os.makedirs(INSTANCE_DIR, exist_ok=True)
+    if not os.path.exists(ARQ_CODIGO_INSTALACAO):
+        with open(ARQ_CODIGO_INSTALACAO, "w") as f:
+            f.write(f"{secrets.randbelow(10**6):06d}")
+    with open(ARQ_CODIGO_INSTALACAO) as f:
+        return f.read().strip()
+
+
+def sem_usuarios():
+    return get_db().execute("SELECT COUNT(*) FROM usuarios").fetchone()[0] == 0
+
+
 @app.route("/configuracao-inicial", methods=["GET", "POST"])
 def setup():
-    if get_db().execute("SELECT COUNT(*) FROM usuarios").fetchone()[0] > 0:
+    if not sem_usuarios():
         return redirect(url_for("login"))
+    codigo_instalacao()  # garante que o código exista
     if request.method == "POST":
         nome = request.form.get("nome", "").strip()
         email = request.form.get("email", "").strip().lower()
         senha = request.form.get("senha", "")
-        if not nome or not email or len(senha) < 8:
+        if not secrets.compare_digest(request.form.get("codigo", "").strip(), codigo_instalacao()):
+            flash("Código de instalação incorreto.", "erro")
+        elif not nome or not email or len(senha) < 8:
             flash("Preencha nome, e-mail e uma senha com no mínimo 8 caracteres.", "erro")
         elif senha != request.form.get("senha2"):
             flash("As senhas não conferem.", "erro")
@@ -348,6 +381,7 @@ def setup():
                 (nome, email, generate_password_hash(senha), agora()),
             )
             db.commit()
+            os.remove(ARQ_CODIGO_INSTALACAO)
             flash("Administrador criado. Faça login para continuar.", "ok")
             return redirect(url_for("login"))
     return render_template("setup.html")
@@ -360,14 +394,27 @@ def login():
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         senha = request.form.get("senha", "")
-        u = get_db().execute("SELECT * FROM usuarios WHERE email = ?", (email,)).fetchone()
+        db = get_db()
+        limite = (datetime.now() - timedelta(minutes=BLOQUEIO_MINUTOS)).strftime("%Y-%m-%d %H:%M:%S")
+        falhas = db.execute("SELECT COUNT(*) FROM tentativas_login WHERE email = ? AND criado_em > ?",
+                            (email, limite)).fetchone()[0]
+        if falhas >= MAX_TENTATIVAS_LOGIN:
+            flash(f"Muitas tentativas incorretas. Aguarde {BLOQUEIO_MINUTOS} minutos ou peça ao administrador"
+                  " para redefinir sua senha.", "erro")
+            return render_template("login.html")
+        u = db.execute("SELECT * FROM usuarios WHERE email = ?", (email,)).fetchone()
         if u and u["ativo"] and check_password_hash(u["senha_hash"], senha):
+            db.execute("DELETE FROM tentativas_login WHERE email = ?", (email,))
+            db.commit()
             session.clear()
             session["usuario_id"] = u["id"]
             destino = request.args.get("next", "")
             if not destino.startswith("/") or destino.startswith("//"):
                 destino = url_for("painel")
             return redirect(destino)
+        db.execute("INSERT INTO tentativas_login (email, criado_em) VALUES (?, ?)", (email, agora()))
+        db.execute("DELETE FROM tentativas_login WHERE criado_em < ?", (limite,))
+        db.commit()
         flash("E-mail ou senha inválidos.", "erro")
     return render_template("login.html")
 
@@ -959,6 +1006,7 @@ def usuario_form(id=None):
                            (nome, email, perfil, ativo, id))
                 if senha:
                     db.execute("UPDATE usuarios SET senha_hash=? WHERE id=?", (generate_password_hash(senha), id))
+                    db.execute("DELETE FROM tentativas_login WHERE email = ?", (email,))
                 flash("Usuário atualizado.", "ok")
             db.commit()
         except sqlite3.IntegrityError:
@@ -976,6 +1024,67 @@ def usuario_form(id=None):
 @login_obrigatorio
 def relatorios():
     return render_template("relatorios.html")
+
+
+# ---------------------------------------------------------------------------
+# Sistema: versão e atualização pelo navegador (somente administrador)
+# ---------------------------------------------------------------------------
+def git(*args):
+    r = subprocess.run(["git", "-C", BASE_DIR, *args], capture_output=True, text=True, timeout=120)
+    return r.returncode, (r.stdout + r.stderr).strip()
+
+
+def arquivo_wsgi():
+    """No PythonAnywhere, alterar o arquivo WSGI reinicia o sistema com o código novo."""
+    if os.environ.get("WSGI_FILE"):
+        return os.environ["WSGI_FILE"]
+    encontrados = glob.glob("/var/www/*_wsgi.py")
+    return encontrados[0] if encontrados else None
+
+
+def backup_banco(sufixo=""):
+    if not os.path.exists(DB_PATH):
+        return None
+    pasta = os.path.join(INSTANCE_DIR, "backups")
+    os.makedirs(pasta, exist_ok=True)
+    destino = os.path.join(pasta, f"descontos-{datetime.now():%Y%m%d-%H%M%S}{sufixo}.db")
+    with sqlite3.connect(DB_PATH) as origem, sqlite3.connect(destino) as copia:
+        origem.backup(copia)
+    for antigo in sorted(f for f in os.listdir(pasta) if f.endswith(".db"))[:-30]:
+        os.remove(os.path.join(pasta, antigo))
+    return destino
+
+
+@app.route("/sistema", methods=["GET", "POST"])
+@somente_admin
+def sistema():
+    usa_git = os.path.isdir(os.path.join(BASE_DIR, ".git"))
+    if request.method == "POST" and usa_git:
+        antes = git("rev-parse", "HEAD")[1]
+        cod, saida = git("fetch", "origin", "main")
+        if cod != 0:
+            flash(f"Não foi possível consultar o GitHub: {saida}", "erro")
+            return redirect(url_for("sistema"))
+        if git("rev-parse", "origin/main")[1] == antes:
+            flash("O sistema já está na versão mais recente.", "ok")
+            return redirect(url_for("sistema"))
+        backup_banco("-antes-atualizacao")
+        # o servidor não deve ter alterações locais no código: fica idêntico ao GitHub
+        cod, saida = git("reset", "--hard", "origin/main")
+        if cod != 0:
+            flash(f"Falha ao atualizar: {saida}", "erro")
+            return redirect(url_for("sistema"))
+        wsgi = arquivo_wsgi()
+        if wsgi:
+            os.utime(wsgi, None)
+            flash("Atualização instalada. O sistema está reiniciando: aguarde alguns segundos e recarregue a página.", "ok")
+        else:
+            flash("Atualização baixada. Feche e abra o sistema novamente para aplicá-la.", "ok")
+        return redirect(url_for("sistema"))
+    commit = git("log", "-1", "--format=%h · %cd · %s", "--date=format:%d/%m/%Y %H:%M")[1] if usa_git else None
+    backups = sorted(os.listdir(os.path.join(INSTANCE_DIR, "backups")), reverse=True)[:10] \
+        if os.path.isdir(os.path.join(INSTANCE_DIR, "backups")) else []
+    return render_template("sistema.html", usa_git=usa_git, commit=commit, backups=backups)
 
 
 @app.errorhandler(403)
@@ -1010,6 +1119,10 @@ if __name__ == "__main__":
     if host == "0.0.0.0":
         print(f"  Outros na rede:     http://{ip_local()}:{porta}")
     print("  Para encerrar, feche esta janela (ou Ctrl+C).")
+    with sqlite3.connect(DB_PATH) as _db:
+        if _db.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0] == 0:
+            with app.app_context():
+                print(f"  Código de instalação (primeiro acesso): {codigo_instalacao()}")
     print("=" * 64)
     try:
         from waitress import serve

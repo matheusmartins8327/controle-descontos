@@ -1,4 +1,4 @@
-# Controle de Descontos – Fornecedores do Paquistão (v1.3)
+# Controle de Descontos – Fornecedores do Paquistão (v1.4)
 
 Sistema web para controlar descontos por má qualidade, desde a inspeção do invoice até o pagamento do valor retido.
 Todos os valores são em **dólar (US$)**.

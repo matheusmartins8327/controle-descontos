@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block titulo %}Sistema{% endblock %}
+{% block conteudo %}
+<h1>Sistema</h1>
+<p class="sub">Versão {{ VERSAO }}{% if commit %} · {{ commit }}{% endif %}</p>
+
+<section class="bloco">
+  <h2>Atualização</h2>
+  {% if usa_git %}
+  <p>Instala a versão mais recente publicada no GitHub. Antes de atualizar, é feito um backup automático do banco de dados.
+     Os usuários conectados podem perceber alguns segundos de indisponibilidade.</p>
+  <form method="post" onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Atualizando…'">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn primario">Verificar e instalar atualização</button>
+  </form>
+  {% else %}
+  <p class="vazio">Neste computador, a atualização é feita automaticamente ao abrir o sistema pelo arquivo
+     <strong>Iniciar Controle de Descontos.bat</strong>.</p>
+  {% endif %}
+</section>
+
+<section class="bloco">
+  <h2>Backups do banco de dados <small>· pasta instance/backups</small></h2>
+  {% if backups %}
+  <ul class="historico">{% for b in backups %}<li>{{ b }}</li>{% endfor %}</ul>
+  {% else %}<p class="vazio">Nenhum backup ainda. Eles são criados a cada atualização e diariamente no servidor.</p>{% endif %}
+</section>
+{% endblock %}
