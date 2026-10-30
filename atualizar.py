@@ -17,7 +17,7 @@ import urllib.request
 import zipfile
 from datetime import datetime
 
-REPOSITORIO = ""  # "usuario/repositorio" no GitHub
+REPOSITORIO = "matheusmartins8327/controle-descontos"
 RAMO = "main"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
