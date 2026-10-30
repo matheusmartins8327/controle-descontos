@@ -3,6 +3,36 @@
 Sistema web para controlar descontos por má qualidade, desde a inspeção do invoice até o pagamento do valor retido.
 Todos os valores são em **dólar (US$)**.
 
+## Hospedagem na nuvem: PythonAnywhere (recomendado)
+
+O sistema fica no ar 24h em `https://matheusmartins8327.pythonanywhere.com`, sem depender de nenhum computador ligado.
+Os usuários acessam pelo navegador, de qualquer lugar (o link pode ser salvo no OneDrive, Teams ou favoritos).
+
+### Instalação (uma única vez, ~10 minutos)
+1. Crie uma conta gratuita em https://www.pythonanywhere.com/registration/register/beginner/ com o usuário **matheusmartins8327**.
+2. Aba **Web** → **Add a new web app** → **Next** → **Manual configuration** → **Python 3.11** → **Next**.
+3. Aba **Consoles** → **Bash**. Cole o comando abaixo e tecle Enter:
+   ```
+   bash <(curl -s https://raw.githubusercontent.com/matheusmartins8327/controle-descontos/main/deploy/pythonanywhere_instalar.sh)
+   ```
+   No final aparece o **código de instalação** (6 dígitos). Anote.
+4. Aba **Tasks** → em *Scheduled tasks*, escolha um horário de madrugada (ex.: 03:00 UTC) e cadastre o comando:
+   ```
+   bash /home/matheusmartins8327/controle-descontos/deploy/tarefa_diaria.sh
+   ```
+5. Abra `https://matheusmartins8327.pythonanywhere.com`, informe o código de instalação e crie sua conta de administrador.
+
+### Atualizações
+- **Automáticas:** a tarefa diária faz backup do banco e instala a versão mais recente publicada no GitHub.
+- **Na hora:** menu **Sistema** → **Verificar e instalar atualização** (somente administrador).
+
+### Cuidados
+- No plano gratuito, o PythonAnywhere pede que você clique em **"Run until 3 months from today"** (aba **Web**) a cada 3 meses; eles avisam por e-mail antes. O plano pago (~US$ 5/mês) remove essa exigência.
+- Backups ficam em `controle-descontos/instance/backups` (aba **Files** do PythonAnywhere, de onde podem ser baixados).
+- Para levar dados de um computador para o servidor: aba **Files** → `controle-descontos/instance/` → **Upload** do arquivo `descontos.db` e depois **Reload** na aba **Web**.
+
+## Uso em um computador local (alternativa)
+
 ## Como abrir no Windows (passo a passo)
 
 **1. Instale o Python (só na primeira vez)**
