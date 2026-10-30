@@ -28,6 +28,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 5
+VERSAO = "1.3"
 
 # ---------------------------------------------------------------------------
 # Perfis e fluxo
@@ -296,7 +297,7 @@ def codigo_desconto(d):
 app.jinja_env.globals.update(
     csrf_token=csrf_token, PERFIS=PERFIS, STATUS=STATUS, ETAPAS=ETAPAS,
     STATUS_DEDUCAO=STATUS_DEDUCAO, pode=pode,
-    codigo_desconto=codigo_desconto, MAX_USUARIOS=MAX_USUARIOS,
+    codigo_desconto=codigo_desconto, MAX_USUARIOS=MAX_USUARIOS, VERSAO=VERSAO,
 )
 app.jinja_env.filters["moeda"] = fmt_moeda
 app.jinja_env.filters["num"] = fmt_num
@@ -1004,7 +1005,7 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     porta = int(os.environ.get("PORT", 5000))
     print("=" * 64)
-    print(" Controle de Descontos - Fornecedores do Paquistão")
+    print(f" Controle de Descontos - Fornecedores do Paquistão · versão {VERSAO}")
     print(f"  Neste computador:   http://localhost:{porta}")
     if host == "0.0.0.0":
         print(f"  Outros na rede:     http://{ip_local()}:{porta}")

@@ -141,3 +141,4 @@ td:first-child a { white-space: nowrap; }
 dd.pre { white-space: pre-line; }
 .form-desconto .grade { grid-template-columns: 1fr 1fr; }
 @media (max-width: 600px) { .form-desconto .grade { grid-template-columns: 1fr; } }
+.rodape { text-align: center; color: var(--suave); font-size: .75rem; padding: 0 16px 1.5rem; }

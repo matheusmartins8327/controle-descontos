@@ -26,7 +26,7 @@
   <table>
     <thead><tr><th>Etapa</th><th>Perfil responsável</th></tr></thead>
     <tbody>
-      <tr><td>1. Registrar desconto após inspeção</td><td>{{ PERFIS['qualidade'] }}</td></tr>
+      <tr><td>1. Cadastrar desconto após inspeção</td><td>{{ PERFIS['qualidade'] }}</td></tr>
       {% for k, e in ETAPAS.items() %}<tr><td>{{ loop.index + 1 }}. {{ e.titulo }}</td><td>{{ PERFIS[e.perfil] }}</td></tr>{% endfor %}
     </tbody>
   </table>
