@@ -2,7 +2,17 @@
 # Tarefa diária no PythonAnywhere: backup do banco + instalação de atualizações publicadas no GitHub.
 DIR="$HOME/controle-descontos"
 PY="${PY:-python3.11}"
-WSGI="/var/www/${USER//./_}_pythonanywhere_com_wsgi.py"
+# Localiza o arquivo WSGI do Web app (ex.: /var/www/usuario_pythonanywhere_com_wsgi.py)
+localizar_wsgi() {
+  local arquivos=(/var/www/*_wsgi.py)
+  [ -e "${arquivos[0]}" ] || return 1
+  for f in "${arquivos[@]}"; do
+    # prefere o do próprio usuário (sem diferenciar maiúsculas/minúsculas)
+    if [[ "${f,,}" == "/var/www/${USER,,}_"* ]]; then echo "$f"; return 0; fi
+  done
+  echo "${arquivos[0]}"
+}
+WSGI="${WSGI:-$(localizar_wsgi || true)}"
 set -e
 cd "$DIR"
 

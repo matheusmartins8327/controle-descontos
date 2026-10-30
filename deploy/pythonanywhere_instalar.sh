@@ -6,15 +6,32 @@ set -e
 REPO="${REPO:-https://github.com/matheusmartins8327/controle-descontos.git}"
 DIR="$HOME/controle-descontos"
 PY="${PY:-python3.11}"
-WSGI="/var/www/${USER//./_}_pythonanywhere_com_wsgi.py"
+# Localiza o arquivo WSGI do Web app (ex.: /var/www/usuario_pythonanywhere_com_wsgi.py)
+localizar_wsgi() {
+  local arquivos=(/var/www/*_wsgi.py)
+  [ -e "${arquivos[0]}" ] || return 1
+  for f in "${arquivos[@]}"; do
+    # prefere o do próprio usuário (sem diferenciar maiúsculas/minúsculas)
+    if [[ "${f,,}" == "/var/www/${USER,,}_"* ]]; then echo "$f"; return 0; fi
+  done
+  echo "${arquivos[0]}"
+}
 
 echo "== Controle de Descontos: instalação =="
-if [ ! -f "$WSGI" ]; then
+WSGI="${WSGI:-$(localizar_wsgi || true)}"
+if [ -z "$WSGI" ] || [ ! -f "$WSGI" ]; then
   echo
-  echo "ERRO: o Web app ainda não foi criado."
-  echo "Vá na aba 'Web' > 'Add a new web app' > 'Manual configuration' > 'Python 3.11' e rode este comando de novo."
+  echo "ERRO: não encontrei o Web app desta conta."
+  echo "  Usuário: $USER"
+  echo "  Conteúdo de /var/www: $(ls /var/www 2>/dev/null | tr '\n' ' ')"
+  echo
+  echo "Confira na aba 'Web' se aparece o endereço do sistema (ex.: ${USER,,}.pythonanywhere.com)."
+  echo "Se não aparecer: 'Add a new web app' > Next > 'Manual configuration' > 'Python 3.11' > Next."
+  echo "Depois rode este comando de novo. Se o erro continuar, envie uma foto desta tela."
   exit 1
 fi
+ENDERECO="$(basename "$WSGI" _wsgi.py | tr '_' '.')"
+echo "Web app encontrado: $ENDERECO"
 
 if [ -d "$DIR/.git" ]; then
   git -C "$DIR" fetch -q origin main
@@ -46,7 +63,7 @@ touch "$WSGI"
 
 echo
 echo "== Instalação concluída =="
-echo "Endereço do sistema: https://${USER}.pythonanywhere.com"
+echo "Endereço do sistema: https://$ENDERECO"
 if [ -n "$CODIGO" ]; then
   echo "Código de instalação (para criar o administrador): $CODIGO"
 fi

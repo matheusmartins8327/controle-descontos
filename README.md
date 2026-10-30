@@ -18,7 +18,7 @@ Os usuários acessam pelo navegador, de qualquer lugar (o link pode ser salvo no
    No final aparece o **código de instalação** (6 dígitos). Anote.
 4. Aba **Tasks** → em *Scheduled tasks*, escolha um horário de madrugada (ex.: 03:00 UTC) e cadastre o comando:
    ```
-   bash /home/matheusmartins8327/controle-descontos/deploy/tarefa_diaria.sh
+   bash ~/controle-descontos/deploy/tarefa_diaria.sh
    ```
 5. Abra `https://matheusmartins8327.pythonanywhere.com`, informe o código de instalação e crie sua conta de administrador.
 
