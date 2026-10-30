@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block titulo %}Fornecedores{% endblock %}
+{% block conteudo %}
+<h1>Fornecedores</h1>
+{% if pode_editar %}
+<form method="post" class="bloco">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h2>Novo fornecedor</h2>
+  <div class="grade">
+    <label>Nome *<input name="nome" required></label>
+    <label>Cidade<input name="cidade" placeholder="Sialkot, Karachi…"></label>
+    <label>Contato<input name="contato" placeholder="Nome / e-mail / telefone"></label>
+  </div>
+  <button class="btn primario">Cadastrar</button>
+</form>
+{% endif %}
+<section class="bloco">
+  {% if fornecedores %}
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>Nome</th><th>Cidade</th><th>Contato</th><th class="num">Descontos</th><th>Situação</th>{% if pode_editar %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for f in fornecedores %}
+    {% if pode_editar %}
+      <tr>
+        <td><input form="f{{ f.id }}" name="nome" value="{{ f.nome }}" required></td>
+        <td><input form="f{{ f.id }}" name="cidade" value="{{ f.cidade or '' }}"></td>
+        <td><input form="f{{ f.id }}" name="contato" value="{{ f.contato or '' }}"></td>
+        <td class="num">{{ f.qtd }}</td>
+        <td><select form="f{{ f.id }}" name="ativo"><option value="1" {{ 'selected' if f.ativo }}>Ativo</option><option value="0" {{ 'selected' if not f.ativo }}>Inativo</option></select></td>
+        <td><form method="post" id="f{{ f.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="id" value="{{ f.id }}"><button class="btn pequeno">Salvar</button></form></td>
+      </tr>
+    {% else %}
+      <tr><td>{{ f.nome }}</td><td>{{ f.cidade or '—' }}</td><td>{{ f.contato or '—' }}</td><td class="num">{{ f.qtd }}</td><td>{{ 'Ativo' if f.ativo else 'Inativo' }}</td></tr>
+    {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="vazio">Nenhum fornecedor cadastrado.</p>{% endif %}
+</section>
+{% endblock %}

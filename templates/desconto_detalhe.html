@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block titulo %}{{ codigo_desconto(d) }}{% endblock %}
+{% block conteudo %}
+{% set ativo = d.status not in ('CANCELADO',) %}
+<div class="cabecalho">
+  <div>
+    <a class="voltar" href="{{ url_for('painel') }}">← Painel</a>
+    <h1>{{ codigo_desconto(d) }} · {{ d.fornecedor }}</h1>
+    {% with status=d.status %}{% include "_status.html" %}{% endwith %}
+  </div>
+  <div class="valor-destaque">
+    <small>Valor do desconto · invoice {{ d.invoice_origem }}</small>
+    <strong>{{ d.valor_desconto|moeda }}</strong>
+  </div>
+</div>
+
+<section class="resumo">
+  <div><small>Deduzido em invoices</small><strong>{{ resumo.deduzido|moeda }}</strong></div>
+  <div class="{{ 'alerta' if d.retido_em and resumo.saldo > 0.005 }}"><small>Saldo a deduzir</small><strong>{{ resumo.saldo|moeda }}</strong></div>
+  <div><small>Retido já pago</small><strong>{{ resumo.pago|moeda }}</strong></div>
+  <div><small>Retido em aberto</small><strong>{{ resumo.retido_aberto|moeda }}</strong></div>
+</section>
+<div class="barra" title="Deduzido / pago">
+  <span class="pago" style="width: {{ (100 * resumo.pago / d.valor_desconto)|round(1) }}%"></span>
+  <span class="deduzido" style="width: {{ (100 * (resumo.deduzido - resumo.pago) / d.valor_desconto)|round(1) }}%"></span>
+</div>
+<p class="legenda"><span class="pago"></span> Pago <span class="deduzido"></span> Deduzido, aguardando chegada/pagamento <span></span> Saldo a deduzir</p>
+
+<ol class="trilha">
+  {% set passos = [
+    ('Registro', 'qualidade', d.registrado_em is not none, nomes.get(d.registrado_por, '?') ~ ' · ' ~ (d.registrado_em|data)),
+    ('Retenção', 'financeiro', d.retido_em is not none, (nomes.get(d.retido_por, '?') ~ ' · ' ~ (d.data_retencao|data)) if d.retido_em else ''),
+    ('Dedução', 'compras', d.retido_em and resumo.saldo <= 0.005, (resumo.deduzido|moeda) ~ ' em ' ~ resumo.n ~ ' invoice(s)' if resumo.n else ''),
+    ('Chegada', 'recebimento', resumo.n and resumo.saldo <= 0.005 and resumo.chegaram == resumo.n, (resumo.chegaram ~ ' de ' ~ resumo.n ~ ' invoice(s)') if resumo.n else ''),
+    ('Pagamento', 'financeiro', d.status == 'CONCLUIDO', (resumo.pagas ~ ' de ' ~ resumo.n ~ ' parcela(s)') if resumo.n else ''),
+  ] %}
+  {% set atual = {'AGUARDANDO_RETENCAO': 1, 'AGUARDANDO_DEDUCAO': 2, 'AGUARDANDO_CHEGADA': 3, 'AGUARDANDO_PAGAMENTO': 4}.get(d.status) %}
+  {% for nome, perfil, feito, info in passos %}
+  <li class="{{ 'feito' if feito else ('atual' if atual == loop.index0) }}">
+    <span class="bola">{{ loop.index }}</span>
+    <strong>{{ nome }}</strong>
+    <small>{{ PERFIS[perfil] }}</small>
+    {% if info %}<small>{{ info }}</small>{% endif %}
+  </li>
+  {% endfor %}
+</ol>
+
+{% if d.status == 'CANCELADO' %}
+<div class="flash erro">Cancelado por {{ nomes.get(d.cancelado_por, '?') }} em {{ d.cancelado_em|data }} — {{ d.motivo_cancelamento }}</div>
+{% endif %}
+
+{# ---------- Etapa 2: retenção ---------- #}
+{% if d.status == 'AGUARDANDO_RETENCAO' %}
+<section class="bloco acao-etapa">
+  <h2>Próxima etapa: {{ ETAPAS.reter.titulo }} <small>· {{ PERFIS[ETAPAS.reter.perfil] }}</small></h2>
+  {% if pode(ETAPAS.reter.perfil) %}
+  <form method="post" action="{{ url_for('desconto_reter', id=d.id) }}" onsubmit="return confirm('Confirmar a retenção?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <p>Confirme que o valor de <strong>{{ d.valor_desconto|moeda }}</strong> foi retido no pagamento do invoice <strong>{{ d.invoice_origem }}</strong>.</p>
+    <div class="grade">
+      <label>Data da retenção *<input type="date" name="data_retencao" value="{{ hoje }}" required></label>
+      <label class="largo">Observação<textarea name="obs" rows="2"></textarea></label>
+    </div>
+    <button class="btn primario">{{ ETAPAS.reter.titulo }}</button>
+  </form>
+  {% else %}<p class="vazio">Aguardando ação de um usuário com perfil <strong>{{ PERFIS[ETAPAS.reter.perfil] }}</strong>.</p>{% endif %}
+</section>
+{% endif %}
+
+{# ---------- Etapa 3: nova dedução ---------- #}
+{% if d.status == 'AGUARDANDO_DEDUCAO' %}
+<section class="bloco acao-etapa">
+  <h2>{{ ETAPAS.deduzir.titulo }} <small>· {{ PERFIS[ETAPAS.deduzir.perfil] }} · saldo de {{ resumo.saldo|moeda }}</small></h2>
+  {% if pode(ETAPAS.deduzir.perfil) %}
+  <form method="post" action="{{ url_for('deducao_nova', id=d.id) }}" onsubmit="return confirm('Registrar esta dedução?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <p>Informe o novo invoice firmado com o fornecedor e quanto foi deduzido nele. O valor pode ser dividido em vários invoices
+      (ex.: US$ 10.000 = US$ 4.000 em um invoice + US$ 6.000 em outro).</p>
+    <div class="grade">
+      <label>Nº do invoice com dedução *<input name="invoice" required></label>
+      <label>Data do invoice<input type="date" name="data_invoice"></label>
+      <label>Valor total do invoice (US$)<input name="valor_invoice" inputmode="decimal"></label>
+      <label>Valor deduzido neste invoice (US$) *<input name="valor_deduzido" inputmode="decimal" value="{{ resumo.saldo|num }}" required>
+        <small>Máximo: {{ resumo.saldo|moeda }}</small></label>
+      <label class="largo">Observação<textarea name="obs" rows="2"></textarea></label>
+    </div>
+    <button class="btn primario">Registrar dedução</button>
+  </form>
+  {% else %}<p class="vazio">Aguardando ação de um usuário com perfil <strong>{{ PERFIS[ETAPAS.deduzir.perfil] }}</strong>.</p>{% endif %}
+</section>
+{% endif %}
+
+{# ---------- Etapas 4 e 5: por dedução ---------- #}
+<section class="bloco">
+  <h2>Deduções em invoices <small>· {{ resumo.n }} registrada(s)</small></h2>
+  {% if deducoes %}
+  <div class="rolagem">
+  <table class="deducoes">
+    <thead><tr><th>Invoice</th><th class="num">Valor deduzido</th><th>Status</th><th>Chegada na fábrica</th><th>Pagamento do retido</th><th>Ação</th></tr></thead>
+    <tbody>
+    {% for x in deducoes %}
+      <tr>
+        <td><strong>{{ x.invoice }}</strong>
+          {% if x.data_invoice or x.valor_invoice %}<small class="bloco-linha">{{ x.data_invoice|data if x.data_invoice }}{{ ' · ' if x.data_invoice and x.valor_invoice }}{% if x.valor_invoice %}invoice de {{ x.valor_invoice|moeda }}{% endif %}</small>{% endif %}
+          <small class="bloco-linha">por {{ nomes.get(x.deduzido_por, '?') }}{% if x.obs_deducao %} — {{ x.obs_deducao }}{% endif %}</small></td>
+        <td class="num"><strong>{{ x.valor_deduzido|moeda }}</strong></td>
+        <td>{% with status=x.status %}<span class="status s-{{ status|lower }}">{{ STATUS_DEDUCAO[status] }}</span>{% endwith %}</td>
+        <td>{% if x.recebido_em %}{{ x.data_chegada|data }}<small class="bloco-linha">por {{ nomes.get(x.recebido_por, '?') }}{% if x.obs_chegada %} — {{ x.obs_chegada }}{% endif %}</small>{% else %}—{% endif %}</td>
+        <td>{% if x.pago_em %}{{ x.data_pagamento|data }}{% if x.ref_pagamento %} · Ref. {{ x.ref_pagamento }}{% endif %}<small class="bloco-linha">por {{ nomes.get(x.pago_por, '?') }}{% if x.obs_pagamento %} — {{ x.obs_pagamento }}{% endif %}</small>{% else %}—{% endif %}</td>
+        <td class="acao-linha">
+          {% if ativo and x.status == 'AGUARDANDO_CHEGADA' %}
+            {% if pode(ETAPAS.receber.perfil) %}
+            <form method="post" action="{{ url_for('deducao_avancar', pid=x.id, etapa='receber') }}" onsubmit="return confirm('Confirmar a chegada do invoice {{ x.invoice }}?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="date" name="data_chegada" value="{{ hoje }}" required title="Data de chegada">
+              <input name="obs" placeholder="Observação">
+              <button class="btn pequeno primario">Confirmar chegada</button>
+            </form>
+            {% else %}<small>Aguardando {{ PERFIS[ETAPAS.receber.perfil] }}</small>{% endif %}
+          {% elif ativo and x.status == 'AGUARDANDO_PAGAMENTO' %}
+            {% if pode(ETAPAS.pagar.perfil) %}
+            <form method="post" action="{{ url_for('deducao_avancar', pid=x.id, etapa='pagar') }}" onsubmit="return confirm('Registrar o pagamento de {{ x.valor_deduzido|moeda }} do valor retido?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="date" name="data_pagamento" value="{{ hoje }}" required title="Data do pagamento">
+              <input name="ref_pagamento" placeholder="Ref. (remessa / swift)">
+              <button class="btn pequeno primario">Pagar {{ x.valor_deduzido|moeda }}</button>
+            </form>
+            {% else %}<small>Aguardando {{ PERFIS[ETAPAS.pagar.perfil] }}</small>{% endif %}
+          {% elif x.status == 'PAGO' %}<small>Concluída</small>{% endif %}
+          {% if g.usuario.perfil == 'admin' and ativo %}
+          <details class="admin-desfazer">
+            <summary>{{ 'Excluir dedução' if x.status == 'AGUARDANDO_CHEGADA' else 'Desfazer última etapa' }}</summary>
+            <form method="post" action="{{ url_for('deducao_desfazer', pid=x.id) }}" onsubmit="return confirm('Confirmar?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input name="motivo" placeholder="Motivo *" required>
+              <button class="btn pequeno perigo">Confirmar</button>
+            </form>
+          </details>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot><tr><th>Total</th><th class="num">{{ resumo.deduzido|moeda }}</th><th colspan="4"></th></tr></tfoot>
+  </table>
+  </div>
+  {% else %}<p class="vazio">Nenhuma dedução registrada ainda.</p>{% endif %}
+</section>
+
+<section class="bloco">
+  <h2>Invoice inspecionado (origem)
+    {% if d.status == 'AGUARDANDO_RETENCAO' and pode('qualidade') %}<a class="btn pequeno" href="{{ url_for('desconto_editar', id=d.id) }}">Editar</a>{% endif %}
+  </h2>
+  <dl>
+    <dt>Fornecedor</dt><dd>{{ d.fornecedor }}</dd>
+    <dt>Invoice</dt><dd>{{ d.invoice_origem }}</dd>
+    <dt>Envio do relatório</dt><dd>{{ d.data_envio_relatorio|data }}</dd>
+    <dt>Valor total do invoice</dt><dd>{{ d.valor_invoice_origem|moeda }}</dd>
+    <dt>Valor do desconto</dt><dd>{{ d.valor_desconto|moeda }}</dd>
+    <dt>Observações</dt><dd class="pre">{{ d.motivo or '—' }}</dd>
+    {% if d.retido_em %}<dt>Retido em</dt><dd>{{ d.data_retencao|data }} por {{ nomes.get(d.retido_por, '?') }}{% if d.obs_retencao %} — {{ d.obs_retencao }}{% endif %}</dd>{% endif %}
+  </dl>
+</section>
+
+<section class="bloco">
+  <h2>Histórico</h2>
+  <ul class="historico">
+    {% for h in historico %}
+    <li><time>{{ h.criado_em|data }}</time> <strong>{{ h.acao }}</strong> · {{ h.usuario or '?' }}
+      {% if h.observacao %}<div class="obs">{{ h.observacao }}</div>{% endif %}</li>
+    {% endfor %}
+  </ul>
+</section>
+
+{% if g.usuario.perfil == 'admin' and ativo and d.status != 'CONCLUIDO' %}
+<section class="bloco admin">
+  <h2>Ações do administrador</h2>
+  {% if deducoes %}
+  <p class="vazio">Para desfazer a retenção ou cancelar o desconto, primeiro exclua as deduções (na tabela acima).</p>
+  {% else %}
+  <div class="duas-colunas">
+    {% if d.retido_em %}
+    <form method="post" action="{{ url_for('desconto_desfazer_retencao', id=d.id) }}" onsubmit="return confirm('Desfazer a retenção?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Desfazer retenção — motivo<input name="motivo" required></label>
+      <button class="btn">Desfazer retenção</button>
+    </form>
+    {% endif %}
+    <form method="post" action="{{ url_for('desconto_cancelar', id=d.id) }}" onsubmit="return confirm('Cancelar este desconto?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Cancelar desconto — motivo<input name="motivo_cancelamento" required></label>
+      <button class="btn perigo">Cancelar desconto</button>
+    </form>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

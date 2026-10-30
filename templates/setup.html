@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block titulo %}Configuração inicial{% endblock %}
+{% block conteudo %}
+<div class="cartao">
+  <h1>Configuração inicial</h1>
+  <p class="sub">Crie a conta do administrador. Ele terá acesso total, incluindo o cadastro de até {{ MAX_USUARIOS }} usuários.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Nome<input name="nome" required></label>
+    <label>E-mail<input name="email" type="email" required></label>
+    <label>Senha (mín. 8 caracteres)<input name="senha" type="password" minlength="8" required></label>
+    <label>Confirmar senha<input name="senha2" type="password" minlength="8" required></label>
+    <button class="btn primario">Criar administrador</button>
+  </form>
+</div>
+{% endblock %}

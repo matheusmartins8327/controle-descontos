@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block titulo %}{{ 'Editar' if id else 'Novo' }} usuário{% endblock %}
+{% block conteudo %}
+<div class="cartao">
+  <h1>{{ 'Editar usuário' if id else 'Novo usuário' }}</h1>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Nome *<input name="nome" value="{{ u.nome or '' }}" required></label>
+    <label>E-mail *<input name="email" type="email" value="{{ u.email or '' }}" required></label>
+    <label>Perfil *
+      <select name="perfil">{% for k, v in PERFIS.items() %}<option value="{{ k }}" {{ 'selected' if u.perfil == k }}>{{ v }}</option>{% endfor %}</select>
+    </label>
+    <label>Situação
+      <select name="ativo"><option value="1" {{ 'selected' if u.ativo|string == '1' }}>Ativo</option><option value="0" {{ 'selected' if u.ativo|string == '0' }}>Inativo</option></select>
+    </label>
+    <label>{{ 'Nova senha (deixe em branco para manter)' if id else 'Senha inicial * (mín. 8 caracteres)' }}
+      <input name="senha" type="password" minlength="8" {{ '' if id else 'required' }} autocomplete="new-password"></label>
+    <div class="acoes">
+      <button class="btn primario">Salvar</button>
+      <a class="btn link" href="{{ url_for('usuarios') }}">Voltar</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

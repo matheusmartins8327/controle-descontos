@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block titulo %}{{ titulo }}{% endblock %}
+{% block conteudo %}
+<div class="cartao">
+  <h1>{{ titulo }}</h1>
+  <p>{{ msg }}</p>
+  <a class="btn" href="{{ url_for('painel') }}">Voltar ao painel</a>
+</div>
+{% endblock %}

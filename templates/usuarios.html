@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block titulo %}Usuários{% endblock %}
+{% block conteudo %}
+<div class="cabecalho">
+  <div><h1>Usuários</h1><p class="sub">{{ ativos }} de {{ MAX_USUARIOS }} usuários ativos</p></div>
+  {% if ativos < MAX_USUARIOS %}<a class="btn primario" href="{{ url_for('usuario_form') }}">+ Novo usuário</a>
+  {% else %}<span class="aviso">Limite de {{ MAX_USUARIOS }} usuários atingido</span>{% endif %}
+</div>
+<section class="bloco">
+  <table>
+    <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Situação</th><th></th></tr></thead>
+    <tbody>
+    {% for u in usuarios %}
+      <tr class="{{ '' if u.ativo else 'inativo' }}">
+        <td>{{ u.nome }}{% if u.id == g.usuario.id %} <small>(você)</small>{% endif %}</td>
+        <td>{{ u.email }}</td><td>{{ PERFIS[u.perfil] }}</td>
+        <td>{{ 'Ativo' if u.ativo else 'Inativo' }}</td>
+        <td><a class="btn pequeno" href="{{ url_for('usuario_form', id=u.id) }}">Editar</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+<section class="bloco">
+  <h2>Responsabilidade por perfil</h2>
+  <table>
+    <thead><tr><th>Etapa</th><th>Perfil responsável</th></tr></thead>
+    <tbody>
+      <tr><td>1. Registrar desconto após inspeção</td><td>{{ PERFIS['qualidade'] }}</td></tr>
+      {% for k, e in ETAPAS.items() %}<tr><td>{{ loop.index + 1 }}. {{ e.titulo }}</td><td>{{ PERFIS[e.perfil] }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <p class="sub">O Administrador pode executar qualquer etapa, cancelar descontos e desfazer etapas.</p>
+</section>
+{% endblock %}

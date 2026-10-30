@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block titulo %}Painel{% endblock %}
+{% block conteudo %}
+<h1>Painel</h1>
+
+{% set cards = [
+  ('AGUARDANDO_RETENCAO', 'Aguardando retenção', 'financeiro', 'descontos'),
+  ('AGUARDANDO_DEDUCAO', 'Saldo a deduzir', 'compras', 'descontos'),
+  ('AGUARDANDO_CHEGADA', 'Aguardando chegada', 'recebimento', 'invoices'),
+  ('AGUARDANDO_PAGAMENTO', 'Aguardando pagamento', 'financeiro', 'invoices'),
+  ('CONCLUIDO', 'Concluídos', None, 'descontos'),
+] %}
+<section class="fluxo">
+  {% for s, rotulo, perfil, unidade in cards %}
+  <a class="fluxo-etapa {{ 'sel' if filtro_status == s }}" href="{{ url_for('painel', status=s) }}">
+    <span class="n">{{ contagem[s] }} <small>{{ unidade }}</small></span>
+    <span class="rot">{{ rotulo }}</span>
+    <small>{{ PERFIS[perfil] if perfil else 'Processo encerrado' }}</small>
+  </a>
+  {% endfor %}
+</section>
+
+{% if pendencias %}
+<section class="bloco destaque">
+  <h2>Minhas pendências <span class="cont">{{ pendencias|length }}</span></h2>
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>Código</th><th>Fornecedor</th><th>Invoice origem</th><th>Invoice dedução</th><th class="num">Valor</th><th>Próxima ação</th><th></th></tr></thead>
+    <tbody>
+    {% for p in pendencias %}
+      <tr>
+        <td>{{ codigo_desconto(p.d) }}</td>
+        <td>{{ p.d.fornecedor }}</td>
+        <td>{{ p.d.invoice_origem }}</td>
+        <td>{{ p.invoice or '—' }}</td>
+        <td class="num">{{ p.valor|moeda }}</td>
+        <td>{{ p.acao }}</td>
+        <td><a class="btn pequeno primario" href="{{ url_for('desconto_detalhe', id=p.d.id) }}">Abrir</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="bloco">
+  <h2>Descontos</h2>
+  <form class="filtros" method="get">
+    <select name="status">
+      <option value="">Todos os status</option>
+      <option value="ABERTOS" {{ 'selected' if filtro_status == 'ABERTOS' }}>Em aberto</option>
+      {% for k, v in STATUS.items() %}<option value="{{ k }}" {{ 'selected' if filtro_status == k }}>{{ v }}</option>{% endfor %}
+    </select>
+    <select name="fornecedor">
+      <option value="">Todos os fornecedores</option>
+      {% for f in fornecedores %}<option value="{{ f.id }}" {{ 'selected' if filtro_fornecedor == f.id|string }}>{{ f.nome }}</option>{% endfor %}
+    </select>
+    <input name="q" value="{{ busca }}" placeholder="Buscar invoice ou fornecedor">
+    <button class="btn">Filtrar</button>
+    {% if filtro_status or filtro_fornecedor or busca %}<a class="btn link" href="{{ url_for('painel') }}">Limpar</a>{% endif %}
+  </form>
+  {% if descontos %}
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>Código</th><th>Fornecedor</th><th>Invoice origem</th><th class="num">Desconto</th><th class="num">Deduzido</th><th class="num">Pago</th><th>Invoices dedução</th><th>Status</th><th>Registrado</th></tr></thead>
+    <tbody>
+    {% for d in descontos %}
+      <tr class="clicavel" onclick="location='{{ url_for('desconto_detalhe', id=d.id) }}'">
+        <td><a href="{{ url_for('desconto_detalhe', id=d.id) }}">{{ codigo_desconto(d) }}</a></td>
+        <td>{{ d.fornecedor }}</td>
+        <td>{{ d.invoice_origem }}</td>
+        <td class="num">{{ d.valor_desconto|moeda }}</td>
+        <td class="num">{{ d.total_deduzido|moeda }}</td>
+        <td class="num">{{ d.total_pago|moeda }}</td>
+        <td>{{ d.invoices_deducao or '—' }}</td>
+        <td>{% with status=d.status %}{% include "_status.html" %}{% endwith %}</td>
+        <td>{{ d.registrado_em|data }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="vazio">Nenhum desconto encontrado.</p>
+  {% endif %}
+</section>
+{% endblock %}

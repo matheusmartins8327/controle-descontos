@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block titulo %}{{ 'Editar' if editando else 'Cadastro de' }} desconto{% endblock %}
+{% block conteudo %}
+<h1>{{ 'Editar desconto' if editando else 'Cadastro de desconto' }}</h1>
+<p class="sub">Etapa 1 · Qualidade — após a inspeção das peças do invoice recebido. Valores em dólar (US$).</p>
+<form method="post" class="bloco form-desconto">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="grade">
+    <label class="largo">Nome do fornecedor *
+      <input name="fornecedor" list="lista-fornecedores" value="{{ d.fornecedor or '' }}" required autocomplete="off">
+      <datalist id="lista-fornecedores">{% for f in fornecedores %}<option value="{{ f.nome }}">{% endfor %}</datalist>
+      <small>Escolha da lista ou digite um nome novo (será cadastrado automaticamente).</small>
+    </label>
+    <label>Invoice inspecionado *<input name="invoice_origem" value="{{ d.invoice_origem or '' }}" required></label>
+    <label>Data de envio do relatório *<input type="date" name="data_envio_relatorio" value="{{ d.data_envio_relatorio or '' }}" required></label>
+    <label>Valor total do invoice (US$) *<input name="valor_invoice_origem" inputmode="decimal" value="{{ d.valor_invoice_origem|num }}" placeholder="0,00" required></label>
+    <label>Valor do desconto (US$) *<input name="valor_desconto" inputmode="decimal" value="{{ d.valor_desconto|num }}" placeholder="0,00" required></label>
+    <label class="largo">Observações<textarea name="motivo" rows="4">{{ d.motivo or '' }}</textarea></label>
+  </div>
+  <div class="acoes">
+    <button class="btn primario">{{ 'Salvar alterações' if editando else 'Cadastrar desconto' }}</button>
+    <a class="btn link" href="{{ url_for('desconto_detalhe', id=id) if editando else url_for('painel') }}">Cancelar</a>
+  </div>
+</form>
+{% endblock %}

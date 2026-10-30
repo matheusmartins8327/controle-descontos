@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block titulo %}Relatórios{% endblock %}
+{% block conteudo %}
+<h1>Relatórios e indicadores</h1>
+<p class="sub">Módulo planejado para a próxima versão. Os dados necessários já estão sendo registrados (datas e responsáveis de cada etapa, valores e histórico).</p>
+<div class="planejado">
+  <section class="bloco"><h2>Relatórios</h2>
+    <ul>
+      <li>Valores retidos em aberto por fornecedor</li>
+      <li>Descontos por período (registro, dedução, pagamento)</li>
+      <li>Invoices aguardando dedução / chegada / pagamento</li>
+      <li>Exportação para Excel / PDF</li>
+    </ul>
+  </section>
+  <section class="bloco"><h2>Indicadores</h2>
+    <ul>
+      <li>Total retido em aberto (US$)</li>
+      <li>Tempo médio entre etapas (registro → retenção → dedução → chegada → pagamento)</li>
+      <li>% de desconto sobre o valor dos invoices por fornecedor</li>
+      <li>Prazo entre o envio do relatório e a retenção</li>
+      <li>Ranking de qualidade dos fornecedores</li>
+    </ul>
+  </section>
+</div>
+{% endblock %}
