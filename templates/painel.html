@@ -4,10 +4,10 @@
 <h1>Painel</h1>
 
 {% set cards = [
-  ('AGUARDANDO_RETENCAO', 'Aguardando retenção', 'financeiro', 'descontos'),
-  ('AGUARDANDO_DEDUCAO', 'Saldo a deduzir', 'compras', 'descontos'),
-  ('AGUARDANDO_CHEGADA', 'Aguardando chegada', 'recebimento', 'invoices'),
-  ('AGUARDANDO_PAGAMENTO', 'Aguardando pagamento', 'financeiro', 'invoices'),
+  ('AGUARDANDO_RETENCAO', 'Aguardando retenção', ETAPAS.reter.perfil, 'descontos'),
+  ('AGUARDANDO_DEDUCAO', 'Saldo a deduzir', ETAPAS.deduzir.perfil, 'descontos'),
+  ('AGUARDANDO_CHEGADA', 'Aguardando chegada', ETAPAS.receber.perfil, 'invoices'),
+  ('AGUARDANDO_PAGAMENTO', 'Aguardando pagamento', ETAPAS.pagar.perfil, 'pagamentos'),
   ('CONCLUIDO', 'Concluídos', None, 'descontos'),
 ] %}
 <section class="fluxo">
@@ -63,7 +63,7 @@
   {% if descontos %}
   <div class="rolagem">
   <table>
-    <thead><tr><th>Código</th><th>Fornecedor</th><th>Invoice origem</th><th class="num">Desconto</th><th class="num">Deduzido</th><th class="num">Pago</th><th>Invoices dedução</th><th>Status</th><th>Registrado</th></tr></thead>
+    <thead><tr><th>Código</th><th>Fornecedor</th><th>Invoice origem</th><th class="num">Desconto (final)</th><th class="num">Deduzido</th><th class="num">Pago</th><th>Invoices dedução</th><th>Status</th><th>Registrado</th></tr></thead>
     <tbody>
     {% for d in descontos %}
       <tr class="clicavel" onclick="location='{{ url_for('desconto_detalhe', id=d.id) }}'">

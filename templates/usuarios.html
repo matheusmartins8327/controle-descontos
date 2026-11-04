@@ -26,10 +26,10 @@
   <table>
     <thead><tr><th>Etapa</th><th>Perfil responsável</th></tr></thead>
     <tbody>
-      <tr><td>1. Cadastrar desconto após inspeção</td><td>{{ PERFIS['qualidade'] }}</td></tr>
-      {% for k, e in ETAPAS.items() %}<tr><td>{{ loop.index + 1 }}. {{ e.titulo }}</td><td>{{ PERFIS[e.perfil] }}</td></tr>{% endfor %}
+      {% for k, e in ETAPAS.items() %}<tr><td>{{ e.titulo }}</td><td>{{ PERFIS[e.perfil] }}</td></tr>{% endfor %}
+      <tr><td>Revalidar valor, editar cadastro, cancelar e desfazer etapas</td><td>{{ PERFIS['admin'] }}</td></tr>
     </tbody>
   </table>
-  <p class="sub">O Administrador pode executar qualquer etapa, cancelar descontos e desfazer etapas.</p>
+  <p class="sub">O Administrador pode executar qualquer etapa. O perfil Consulta apenas visualiza.</p>
 </section>
 {% endblock %}

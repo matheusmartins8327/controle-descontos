@@ -30,18 +30,19 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 5
-VERSAO = "1.4"
+VERSAO = "1.5"
 
 # ---------------------------------------------------------------------------
 # Perfis e fluxo
 # ---------------------------------------------------------------------------
 PERFIS = {
     "admin": "Administrador",
-    "qualidade": "Qualidade / Inspeção",
+    "importacao": "Importação",
     "financeiro": "Financeiro",
-    "compras": "Compras",
-    "recebimento": "Recebimento / Fábrica",
+    "consulta": "Consulta (somente leitura)",
 }
+# perfis da versão anterior -> perfis atuais (aplicado automaticamente ao iniciar)
+PERFIS_ANTIGOS = {"qualidade": "consulta", "compras": "importacao", "recebimento": "importacao"}
 
 STATUS = {
     "AGUARDANDO_RETENCAO": "Aguardando retenção",
@@ -61,10 +62,12 @@ STATUS_DEDUCAO = {
 
 # Etapas e perfil responsável
 ETAPAS = {
-    "reter": {"titulo": "Confirmar retenção", "perfil": "financeiro"},
-    "deduzir": {"titulo": "Registrar dedução em invoice", "perfil": "compras"},
-    "receber": {"titulo": "Confirmar chegada na fábrica", "perfil": "recebimento"},
+    "cadastrar": {"titulo": "Cadastrar desconto", "perfil": "admin"},
+    "reter": {"titulo": "Confirmar retenção", "perfil": "admin"},
+    "deduzir": {"titulo": "Registrar dedução em invoice", "perfil": "importacao"},
+    "receber": {"titulo": "Confirmar chegada na fábrica", "perfil": "importacao"},
     "pagar": {"titulo": "Pagar valor retido", "perfil": "financeiro"},
+    "pagar_diferenca": {"titulo": "Pagar diferença ao fornecedor", "perfil": "financeiro"},
 }
 
 TOLERANCIA = 0.005  # diferença de arredondamento aceita (meio centavo)
@@ -125,7 +128,9 @@ CREATE TABLE IF NOT EXISTS descontos (
     motivo TEXT,  -- observações
     registrado_por INTEGER REFERENCES usuarios(id),
     registrado_em TEXT,
-    -- Etapa 2: retenção (Financeiro)
+    -- Etapa 2: retenção (Administrador). valor_retido = valor inicial segurado;
+    -- valor_desconto = valor final (pode ser revalidado), usado nas etapas seguintes
+    valor_retido REAL,
     data_retencao TEXT,
     obs_retencao TEXT,
     retido_por INTEGER REFERENCES usuarios(id),
@@ -170,6 +175,27 @@ CREATE TABLE IF NOT EXISTS historico (
     observacao TEXT,
     criado_em TEXT NOT NULL
 );
+-- Revalidações do valor do desconto após a retenção (somente administrador)
+CREATE TABLE IF NOT EXISTS revisoes_valor (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    desconto_id INTEGER NOT NULL REFERENCES descontos(id),
+    valor_anterior REAL NOT NULL,
+    valor_novo REAL NOT NULL,
+    motivo TEXT NOT NULL,
+    usuario_id INTEGER REFERENCES usuarios(id),
+    criado_em TEXT NOT NULL
+);
+-- Pagamento ao fornecedor da diferença quando o valor final fica menor que o valor segurado
+CREATE TABLE IF NOT EXISTS pagamentos_diferenca (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    desconto_id INTEGER NOT NULL REFERENCES descontos(id),
+    valor REAL NOT NULL,
+    data_pagamento TEXT NOT NULL,
+    ref_pagamento TEXT,
+    obs TEXT,
+    pago_por INTEGER REFERENCES usuarios(id),
+    pago_em TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tentativas_login (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT NOT NULL,
@@ -206,6 +232,13 @@ def init_db():
         colunas = {r[1] for r in db.execute("PRAGMA table_info(descontos)")}
         if "data_envio_relatorio" not in colunas:
             db.execute("ALTER TABLE descontos ADD COLUMN data_envio_relatorio TEXT")
+        # versão 1.5: valor inicial segurado separado do valor final
+        if "valor_retido" not in colunas:
+            db.execute("ALTER TABLE descontos ADD COLUMN valor_retido REAL")
+        db.execute("UPDATE descontos SET valor_retido = valor_desconto"
+                   " WHERE retido_em IS NOT NULL AND valor_retido IS NULL")
+        for antigo, novo in PERFIS_ANTIGOS.items():
+            db.execute("UPDATE usuarios SET perfil = ? WHERE perfil = ?", (novo, antigo))
 
 
 def agora():
@@ -455,9 +488,16 @@ SELECT d.*, f.nome AS fornecedor,
     COALESCE((SELECT SUM(x.valor_deduzido) FROM deducoes x WHERE x.desconto_id = d.id), 0) AS total_deduzido,
     COALESCE((SELECT SUM(x.valor_deduzido) FROM deducoes x
               WHERE x.desconto_id = d.id AND x.status = 'PAGO'), 0) AS total_pago,
-    (SELECT GROUP_CONCAT(x.invoice, ', ') FROM deducoes x WHERE x.desconto_id = d.id) AS invoices_deducao
+    (SELECT GROUP_CONCAT(x.invoice, ', ') FROM deducoes x WHERE x.desconto_id = d.id) AS invoices_deducao,
+    COALESCE((SELECT SUM(p.valor) FROM pagamentos_diferenca p WHERE p.desconto_id = d.id), 0) AS diferenca_paga
 FROM descontos d JOIN fornecedores f ON f.id = d.fornecedor_id
 """
+
+# Diferença segurada a mais (valor inicial segurado - valor final) que ainda não foi paga ao fornecedor
+SQL_DIFERENCA_PENDENTE = (
+    "(d.valor_retido IS NOT NULL AND d.valor_retido - d.valor_desconto"
+    " - COALESCE((SELECT SUM(p.valor) FROM pagamentos_diferenca p WHERE p.desconto_id = d.id), 0) > 0.005)"
+)
 
 # Filtros do painel. "Aguardando chegada/pagamento" considera as deduções do desconto.
 FILTROS_STATUS = {
@@ -466,8 +506,9 @@ FILTROS_STATUS = {
     "AGUARDANDO_DEDUCAO": "d.status = 'AGUARDANDO_DEDUCAO'",
     "AGUARDANDO_CHEGADA": "d.status <> 'CANCELADO' AND EXISTS (SELECT 1 FROM deducoes x"
                           " WHERE x.desconto_id = d.id AND x.status = 'AGUARDANDO_CHEGADA')",
-    "AGUARDANDO_PAGAMENTO": "d.status <> 'CANCELADO' AND EXISTS (SELECT 1 FROM deducoes x"
-                            " WHERE x.desconto_id = d.id AND x.status = 'AGUARDANDO_PAGAMENTO')",
+    "AGUARDANDO_PAGAMENTO": "d.status <> 'CANCELADO' AND (EXISTS (SELECT 1 FROM deducoes x"
+                            " WHERE x.desconto_id = d.id AND x.status = 'AGUARDANDO_PAGAMENTO')"
+                            f" OR {SQL_DIFERENCA_PENDENTE})",
     "CONCLUIDO": "d.status = 'CONCLUIDO'",
     "CANCELADO": "d.status = 'CANCELADO'",
 }
@@ -475,6 +516,13 @@ FILTROS_STATUS = {
 
 def saldo_a_deduzir(d):
     return round(d["valor_desconto"] - d["total_deduzido"], 2)
+
+
+def diferenca_pendente(d):
+    """Parte do valor segurado que ficou acima do valor final e ainda não foi paga ao fornecedor."""
+    if d["valor_retido"] is None:
+        return 0
+    return max(round(d["valor_retido"] - d["valor_desconto"] - d["diferenca_paga"], 2), 0)
 
 
 def atualizar_status(desconto_id):
@@ -491,7 +539,7 @@ def atualizar_status(desconto_id):
         novo = "AGUARDANDO_DEDUCAO"
     elif "AGUARDANDO_CHEGADA" in pendentes:
         novo = "AGUARDANDO_CHEGADA"
-    elif "AGUARDANDO_PAGAMENTO" in pendentes:
+    elif "AGUARDANDO_PAGAMENTO" in pendentes or diferenca_pendente(d) > TOLERANCIA:
         novo = "AGUARDANDO_PAGAMENTO"
     else:
         novo = "CONCLUIDO"
@@ -505,7 +553,7 @@ def registrar_etapa(desconto_id, acao, status_anterior, obs=None):
     novo = atualizar_status(desconto_id)
     registrar_historico(desconto_id, acao, status_anterior, novo, obs)
     if novo == "CONCLUIDO" and status_anterior != "CONCLUIDO":
-        registrar_historico(desconto_id, "Processo concluído", obs="Todo o valor retido foi deduzido e pago.")
+        registrar_historico(desconto_id, "Processo concluído", obs="Todo o valor segurado foi deduzido e pago.")
     return novo
 
 
@@ -514,10 +562,10 @@ def listar_pendencias():
     db = get_db()
     pend = []
     ativos = "d.status NOT IN ('CANCELADO', 'CONCLUIDO')"
-    if pode("financeiro"):
+    if pode(ETAPAS["reter"]["perfil"]):
         for d in db.execute(SQL_LISTA + " WHERE d.status = 'AGUARDANDO_RETENCAO' ORDER BY d.id"):
             pend.append({"d": d, "acao": ETAPAS["reter"]["titulo"], "invoice": None, "valor": d["valor_desconto"]})
-    if pode("compras"):
+    if pode(ETAPAS["deduzir"]["perfil"]):
         for d in db.execute(SQL_LISTA + " WHERE d.status = 'AGUARDANDO_DEDUCAO' ORDER BY d.id"):
             pend.append({"d": d, "acao": "Deduzir saldo em invoice", "invoice": None, "valor": saldo_a_deduzir(d)})
     for etapa, status in (("receber", "AGUARDANDO_CHEGADA"), ("pagar", "AGUARDANDO_PAGAMENTO")):
@@ -530,6 +578,10 @@ def listar_pendencias():
         for x in linhas:
             d = db.execute(SQL_LISTA + " WHERE d.id = ?", (x["id"],)).fetchone()
             pend.append({"d": d, "acao": ETAPAS[etapa]["titulo"], "invoice": x["invoice"], "valor": x["valor_deduzido"]})
+    if pode(ETAPAS["pagar_diferenca"]["perfil"]):
+        for d in db.execute(SQL_LISTA + f" WHERE {ativos} AND {SQL_DIFERENCA_PENDENTE} ORDER BY d.id"):
+            pend.append({"d": d, "acao": ETAPAS["pagar_diferenca"]["titulo"], "invoice": None,
+                         "valor": diferenca_pendente(d)})
     return pend
 
 
@@ -562,6 +614,8 @@ def painel():
         contagem[chave] = db.execute(
             "SELECT COUNT(*) FROM deducoes x JOIN descontos d ON d.id = x.desconto_id"
             " WHERE x.status = ? AND d.status <> 'CANCELADO'", (chave,)).fetchone()[0]
+    contagem["AGUARDANDO_PAGAMENTO"] += db.execute(
+        f"SELECT COUNT(*) FROM descontos d WHERE d.status <> 'CANCELADO' AND {SQL_DIFERENCA_PENDENTE}").fetchone()[0]
 
     fornecedores = db.execute("SELECT id, nome FROM fornecedores ORDER BY nome").fetchall()
     return render_template(
@@ -614,7 +668,7 @@ def validar_form_desconto():
 @app.route("/descontos/novo", methods=["GET", "POST"])
 @login_obrigatorio
 def desconto_novo():
-    if not pode("qualidade"):
+    if not pode(ETAPAS["cadastrar"]["perfil"]):
         abort(403)
     db = get_db()
     fornecedores = db.execute("SELECT * FROM fornecedores WHERE ativo = 1 ORDER BY nome").fetchall()
@@ -646,7 +700,7 @@ def desconto_editar(id):
     db = get_db()
     d = carregar_desconto(id)
     # Valores só podem ser alterados antes da retenção
-    if d["status"] != "AGUARDANDO_RETENCAO" or not pode("qualidade"):
+    if d["status"] != "AGUARDANDO_RETENCAO" or not pode(ETAPAS["cadastrar"]["perfil"]):
         abort(403)
     fornecedores = db.execute("SELECT * FROM fornecedores WHERE ativo = 1 ORDER BY nome").fetchall()
     if request.method == "POST":
@@ -689,22 +743,33 @@ def desconto_detalhe(id):
         " WHERE h.desconto_id = ? ORDER BY h.id", (id,)
     ).fetchall()
     nomes = {u["id"]: u["nome"] for u in db.execute("SELECT id, nome FROM usuarios")}
+    revisoes = db.execute(
+        "SELECT r.*, u.nome AS usuario FROM revisoes_valor r LEFT JOIN usuarios u ON u.id = r.usuario_id"
+        " WHERE r.desconto_id = ? ORDER BY r.id", (id,)).fetchall()
+    pagamentos_dif = db.execute(
+        "SELECT p.*, u.nome AS usuario FROM pagamentos_diferenca p LEFT JOIN usuarios u ON u.id = p.pago_por"
+        " WHERE p.desconto_id = ? ORDER BY p.id", (id,)).fetchall()
+    pago_total = round(d["total_pago"] + d["diferenca_paga"], 2)
     resumo = {
         "deduzido": d["total_deduzido"],
         "saldo": saldo_a_deduzir(d),
-        "pago": d["total_pago"],
-        "retido_aberto": round(d["valor_desconto"] - d["total_pago"], 2) if d["retido_em"] else 0,
+        "pago": pago_total,
+        "retido_aberto": round(d["valor_retido"] - pago_total, 2) if d["valor_retido"] is not None else 0,
+        "diferenca": round(d["valor_retido"] - d["valor_desconto"], 2) if d["valor_retido"] is not None else 0,
+        "diferenca_pendente": diferenca_pendente(d),
+        "minimo_revalidacao": max(d["total_deduzido"], 0.01),
+        "maximo_revalidacao": round(d["valor_retido"] - d["diferenca_paga"], 2) if d["valor_retido"] is not None else None,
         "n": len(deducoes),
         "chegaram": sum(1 for x in deducoes if x["status"] != "AGUARDANDO_CHEGADA"),
         "pagas": sum(1 for x in deducoes if x["status"] == "PAGO"),
     }
-    return render_template("desconto_detalhe.html", d=d, deducoes=deducoes,
-                           historico=historico, nomes=nomes, resumo=resumo,
+    return render_template("desconto_detalhe.html", d=d, deducoes=deducoes, revisoes=revisoes,
+                           pagamentos_dif=pagamentos_dif, historico=historico, nomes=nomes, resumo=resumo,
                            hoje=datetime.now().strftime("%Y-%m-%d"))
 
 
 # ---------------------------------------------------------------------------
-# Etapa 2 - Retenção (Financeiro)
+# Etapa 2 - Retenção (Administrador)
 # ---------------------------------------------------------------------------
 @app.route("/descontos/<int:id>/reter", methods=["POST"])
 @login_obrigatorio
@@ -721,13 +786,109 @@ def desconto_reter(id):
         return redirect(url_for("desconto_detalhe", id=id))
     obs = request.form.get("obs", "").strip() or None
     db = get_db()
-    db.execute("UPDATE descontos SET data_retencao=?, obs_retencao=?, retido_por=?, retido_em=? WHERE id=?",
-               (data, obs, g.usuario["id"], agora(), id))
+    db.execute("UPDATE descontos SET valor_retido=valor_desconto, data_retencao=?, obs_retencao=?, retido_por=?,"
+               " retido_em=? WHERE id=?", (data, obs, g.usuario["id"], agora(), id))
     registrar_etapa(id, f"Retenção confirmada · {fmt_moeda(d['valor_desconto'])} no invoice {d['invoice_origem']}",
                     d["status"], obs)
     db.commit()
-    flash("Retenção confirmada. Aguardando dedução por Compras.", "ok")
+    flash("Retenção confirmada. Aguardando dedução pela Importação.", "ok")
     return redirect(url_for("desconto_detalhe", id=id))
+
+
+# ---------------------------------------------------------------------------
+# Revalidação do valor após a retenção (somente administrador)
+# O valor inicial segurado (valor_retido) é preservado; o valor final (valor_desconto)
+# passa a valer para as etapas seguintes.
+# ---------------------------------------------------------------------------
+@app.route("/descontos/<int:id>/revalidar", methods=["POST"])
+@somente_admin
+def desconto_revalidar(id):
+    d = carregar_desconto(id)
+    volta = redirect(url_for("desconto_detalhe", id=id))
+    if d["valor_retido"] is None or d["status"] in ("CONCLUIDO", "CANCELADO"):
+        flash("O valor só pode ser revalidado depois da retenção e antes da conclusão.", "erro")
+        return volta
+    novo = parse_num(request.form.get("valor_final"))
+    novo = round(novo, 2) if novo is not None else None
+    motivo = request.form.get("motivo", "").strip()
+    maximo = round(d["valor_retido"] - d["diferenca_paga"], 2)
+    erro = None
+    if not novo or novo <= 0:
+        erro = "Informe o valor final do desconto."
+    elif not motivo:
+        erro = "Informe o motivo da revalidação."
+    elif abs(novo - d["valor_desconto"]) <= TOLERANCIA:
+        erro = "O valor final informado é igual ao valor atual."
+    elif novo < d["total_deduzido"] - TOLERANCIA:
+        erro = (f"O valor final não pode ser menor que o total já deduzido em invoices "
+                f"({fmt_moeda(d['total_deduzido'])}). Exclua deduções antes, se necessário.")
+    elif novo > maximo + TOLERANCIA:
+        erro = (f"O valor final não pode ser maior que o valor segurado"
+                f"{' (descontando a diferença já paga)' if d['diferenca_paga'] else ''}: {fmt_moeda(maximo)}.")
+    if erro:
+        flash(erro, "erro")
+        return volta
+    db = get_db()
+    db.execute("INSERT INTO revisoes_valor (desconto_id, valor_anterior, valor_novo, motivo, usuario_id, criado_em)"
+               " VALUES (?, ?, ?, ?, ?, ?)", (id, d["valor_desconto"], novo, motivo, g.usuario["id"], agora()))
+    db.execute("UPDATE descontos SET valor_desconto = ? WHERE id = ?", (novo, id))
+    registrar_etapa(id, f"Valor revalidado · de {fmt_moeda(d['valor_desconto'])} para {fmt_moeda(novo)}",
+                    d["status"], motivo)
+    db.commit()
+    dif = round(d["valor_retido"] - novo - d["diferenca_paga"], 2)
+    if dif > TOLERANCIA:
+        flash(f"Valor revalidado. A diferença de {fmt_moeda(dif)} ficou pendente de pagamento pelo Financeiro.", "ok")
+    else:
+        flash("Valor revalidado.", "ok")
+    return volta
+
+
+@app.route("/descontos/<int:id>/pagar-diferenca", methods=["POST"])
+@login_obrigatorio
+def desconto_pagar_diferenca(id):
+    if not pode(ETAPAS["pagar_diferenca"]["perfil"]):
+        abort(403)
+    d = carregar_desconto(id)
+    volta = redirect(url_for("desconto_detalhe", id=id))
+    valor = diferenca_pendente(d)
+    if d["status"] == "CANCELADO" or valor <= TOLERANCIA:
+        flash("Não há diferença pendente de pagamento.", "erro")
+        return volta
+    data = request.form.get("data_pagamento")
+    if not data:
+        flash("Informe a data do pagamento.", "erro")
+        return volta
+    obs = request.form.get("obs", "").strip() or None
+    db = get_db()
+    db.execute("INSERT INTO pagamentos_diferenca (desconto_id, valor, data_pagamento, ref_pagamento, obs, pago_por,"
+               " pago_em) VALUES (?, ?, ?, ?, ?, ?, ?)",
+               (id, valor, data, request.form.get("ref_pagamento", "").strip() or None, obs, g.usuario["id"], agora()))
+    registrar_etapa(id, f"Diferença paga ao fornecedor · {fmt_moeda(valor)} do invoice {d['invoice_origem']}",
+                    d["status"], obs)
+    db.commit()
+    flash(f"Pagamento da diferença de {fmt_moeda(valor)} registrado.", "ok")
+    return volta
+
+
+@app.route("/pagamentos-diferenca/<int:pid>/desfazer", methods=["POST"])
+@somente_admin
+def pagamento_diferenca_desfazer(pid):
+    p = get_db().execute("SELECT * FROM pagamentos_diferenca WHERE id = ?", (pid,)).fetchone()
+    if p is None:
+        abort(404)
+    d = carregar_desconto(p["desconto_id"])
+    motivo = request.form.get("motivo", "").strip()
+    if not motivo:
+        flash("Informe o motivo para desfazer.", "erro")
+    elif d["status"] == "CANCELADO":
+        flash("Este desconto está cancelado.", "erro")
+    else:
+        db = get_db()
+        db.execute("DELETE FROM pagamentos_diferenca WHERE id = ?", (pid,))
+        registrar_etapa(d["id"], f"Pagamento da diferença desfeito · {fmt_moeda(p['valor'])}", d["status"], motivo)
+        db.commit()
+        flash("Pagamento da diferença desfeito.", "ok")
+    return redirect(url_for("desconto_detalhe", id=d["id"]))
 
 
 # ---------------------------------------------------------------------------
@@ -876,12 +1037,14 @@ def desconto_desfazer_retencao(id):
         flash("Não há retenção a desfazer.", "erro")
     elif d["invoices_deducao"]:
         flash("Desfaça/exclua as deduções antes de desfazer a retenção.", "erro")
+    elif d["diferenca_paga"]:
+        flash("Desfaça o pagamento da diferença antes de desfazer a retenção.", "erro")
     elif not motivo:
         flash("Informe o motivo para desfazer.", "erro")
     else:
         db = get_db()
-        db.execute("UPDATE descontos SET data_retencao=NULL, obs_retencao=NULL, retido_por=NULL, retido_em=NULL"
-                   " WHERE id=?", (id,))
+        db.execute("UPDATE descontos SET valor_retido=NULL, data_retencao=NULL, obs_retencao=NULL, retido_por=NULL,"
+                   " retido_em=NULL WHERE id=?", (id,))
         registrar_etapa(id, "Retenção desfeita", d["status"], motivo)
         db.commit()
         flash("Retenção desfeita.", "ok")
@@ -897,6 +1060,8 @@ def desconto_cancelar(id):
         flash("Este desconto já está encerrado.", "erro")
     elif d["invoices_deducao"]:
         flash("Este desconto já possui deduções. Exclua as deduções antes de cancelar.", "erro")
+    elif d["diferenca_paga"]:
+        flash("Este desconto já teve diferença paga ao fornecedor. Desfaça o pagamento antes de cancelar.", "erro")
     elif not motivo:
         flash("Informe o motivo do cancelamento.", "erro")
     else:
@@ -916,7 +1081,7 @@ def desconto_cancelar(id):
 @login_obrigatorio
 def fornecedores():
     db = get_db()
-    pode_editar = pode("qualidade")
+    pode_editar = pode(ETAPAS["cadastrar"]["perfil"])
     if request.method == "POST":
         if not pode_editar:
             abort(403)
@@ -1013,7 +1178,7 @@ def usuario_form(id=None):
             flash("Já existe um usuário com este e-mail.", "erro")
             return render_template("usuario_form.html", u=request.form, id=id)
         return redirect(url_for("usuarios"))
-    dados = dict(u) if u else {"ativo": 1, "perfil": "qualidade"}
+    dados = dict(u) if u else {"ativo": 1, "perfil": "importacao"}
     return render_template("usuario_form.html", u=dados, id=id)
 
 

@@ -1,4 +1,4 @@
-# Controle de Descontos – Fornecedores do Paquistão (v1.4)
+# Controle de Descontos – Fornecedores do Paquistão (v1.5)
 
 Sistema web para controlar descontos por má qualidade, desde a inspeção do invoice até o pagamento do valor retido.
 Todos os valores são em **dólar (US$)**.
@@ -84,23 +84,27 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 
 | # | Etapa | Responsável |
 |---|-------|-------------|
-| 1 | Cadastrar o desconto após a inspeção: fornecedor, invoice inspecionado, data de envio do relatório, valor total do invoice, valor do desconto (fechado) e observações | Qualidade |
-| 2 | Confirmar que o valor foi **retido** no pagamento do invoice de origem | Financeiro |
-| 3 | Registrar o(s) **novo(s) invoice(s)** com a dedução. **O desconto pode ser dividido em vários invoices** (ex.: US$ 10.000 = US$ 4.000 no invoice A + US$ 6.000 no invoice B) | Compras |
-| 4 | Confirmar a **chegada** de cada invoice deduzido na fábrica | Recebimento |
-| 5 | **Pagar** a parte correspondente do valor retido (cada dedução libera o seu valor) | Financeiro |
+| 1 | Cadastrar o desconto após a inspeção: fornecedor, invoice inspecionado, data de envio do relatório, valor total do invoice, valor do desconto (fechado) e observações | Administrador |
+| 2 | Confirmar que o valor foi **segurado** no pagamento do invoice de origem (grava o **valor inicial segurado**) | Administrador |
+| 3 | Registrar o(s) **novo(s) invoice(s)** com a dedução. O desconto pode ser dividido em vários invoices | Importação |
+| 4 | Confirmar a **chegada** de cada invoice deduzido na fábrica | Importação |
+| 5 | **Pagar** a parte correspondente do valor segurado | Financeiro |
 
-- O sistema não permite deduzir mais que o saldo nem repetir o mesmo invoice no mesmo desconto.
-- Cada dedução segue seu próprio caminho (chegada → pagamento). O desconto só é **Concluído** quando todo o valor foi deduzido e pago.
-- Cada etapa só pode ser executada pelo perfil responsável (ou pelo Administrador).
+### Revalidação do valor
+- Depois da retenção, o Administrador pode **revalidar** o valor do desconto (com motivo obrigatório). O sistema guarda o **valor inicial segurado** e todas as revalidações; as etapas 3 a 5 usam apenas o **valor final**.
+- O valor final não pode ser maior que o valor segurado nem menor que o total já deduzido em invoices.
+- Se o valor final ficar **menor** que o segurado, a diferença vira uma pendência do Financeiro (**Pagar diferença ao fornecedor**), para não deixar valor em aberto no invoice. O desconto só é concluído depois desse pagamento.
+
+### Regras gerais
+- Somente o Administrador cadastra, edita e revalida valores, cancela descontos e desfaz etapas (sempre com motivo).
+- O perfil **Consulta** apenas visualiza.
 - Tudo fica registrado no histórico (quem, quando, o quê).
-- Os valores do desconto só podem ser editados antes da retenção.
-- O Administrador pode desfazer etapas, excluir deduções e cancelar descontos (sempre com motivo).
 
 ## Usuários e perfis
 
 - Limite de **5 usuários ativos** (incluindo o administrador). Configurável em `MAX_USUARIOS` no `app.py`.
-- Perfis: Administrador, Qualidade, Financeiro, Compras, Recebimento.
+- Perfis: Administrador, Importação, Financeiro e Consulta (somente leitura).
+- Ao atualizar para a versão 1.5, usuários dos perfis antigos são convertidos: Compras e Recebimento → Importação; Qualidade → Consulta.
 - Somente o Administrador cria, edita, ativa/desativa usuários e redefine senhas.
 
 ## Backup

@@ -9,30 +9,34 @@
     {% with status=d.status %}{% include "_status.html" %}{% endwith %}
   </div>
   <div class="valor-destaque">
-    <small>Valor do desconto · invoice {{ d.invoice_origem }}</small>
+    <small>{{ 'Valor final do desconto' if revisoes else 'Valor do desconto' }} · invoice {{ d.invoice_origem }}</small>
     <strong>{{ d.valor_desconto|moeda }}</strong>
+    {% if revisoes %}<small>Valor inicial segurado: {{ d.valor_retido|moeda }}</small>{% endif %}
   </div>
 </div>
 
+{% set base = d.valor_retido if d.valor_retido is not none else d.valor_desconto %}
 <section class="resumo">
+  <div><small>Valor inicial segurado</small><strong>{{ d.valor_retido|moeda if d.valor_retido is not none else '—' }}</strong></div>
+  <div class="{{ 'destaque-valor' if revisoes }}"><small>Valor final{{ ' (revalidado)' if revisoes }}</small><strong>{{ d.valor_desconto|moeda }}</strong></div>
   <div><small>Deduzido em invoices</small><strong>{{ resumo.deduzido|moeda }}</strong></div>
   <div class="{{ 'alerta' if d.retido_em and resumo.saldo > 0.005 }}"><small>Saldo a deduzir</small><strong>{{ resumo.saldo|moeda }}</strong></div>
-  <div><small>Retido já pago</small><strong>{{ resumo.pago|moeda }}</strong></div>
-  <div><small>Retido em aberto</small><strong>{{ resumo.retido_aberto|moeda }}</strong></div>
+  <div><small>Segurado já pago</small><strong>{{ resumo.pago|moeda }}</strong></div>
+  <div class="{{ 'alerta' if resumo.diferenca_pendente > 0.005 }}"><small>Segurado em aberto</small><strong>{{ resumo.retido_aberto|moeda }}</strong></div>
 </section>
 <div class="barra" title="Deduzido / pago">
-  <span class="pago" style="width: {{ (100 * resumo.pago / d.valor_desconto)|round(1) }}%"></span>
-  <span class="deduzido" style="width: {{ (100 * (resumo.deduzido - resumo.pago) / d.valor_desconto)|round(1) }}%"></span>
+  <span class="pago" style="width: {{ (100 * resumo.pago / base)|round(1) }}%"></span>
+  <span class="deduzido" style="width: {{ (100 * (resumo.deduzido - d.total_pago) / base)|round(1) }}%"></span>
 </div>
-<p class="legenda"><span class="pago"></span> Pago <span class="deduzido"></span> Deduzido, aguardando chegada/pagamento <span></span> Saldo a deduzir</p>
+<p class="legenda"><span class="pago"></span> Pago <span class="deduzido"></span> Deduzido, aguardando chegada/pagamento <span></span> A deduzir / diferença a pagar</p>
 
 <ol class="trilha">
   {% set passos = [
-    ('Registro', 'qualidade', d.registrado_em is not none, nomes.get(d.registrado_por, '?') ~ ' · ' ~ (d.registrado_em|data)),
-    ('Retenção', 'financeiro', d.retido_em is not none, (nomes.get(d.retido_por, '?') ~ ' · ' ~ (d.data_retencao|data)) if d.retido_em else ''),
-    ('Dedução', 'compras', d.retido_em and resumo.saldo <= 0.005, (resumo.deduzido|moeda) ~ ' em ' ~ resumo.n ~ ' invoice(s)' if resumo.n else ''),
-    ('Chegada', 'recebimento', resumo.n and resumo.saldo <= 0.005 and resumo.chegaram == resumo.n, (resumo.chegaram ~ ' de ' ~ resumo.n ~ ' invoice(s)') if resumo.n else ''),
-    ('Pagamento', 'financeiro', d.status == 'CONCLUIDO', (resumo.pagas ~ ' de ' ~ resumo.n ~ ' parcela(s)') if resumo.n else ''),
+    ('Registro', ETAPAS.cadastrar.perfil, d.registrado_em is not none, nomes.get(d.registrado_por, '?') ~ ' · ' ~ (d.registrado_em|data)),
+    ('Retenção', ETAPAS.reter.perfil, d.retido_em is not none, (nomes.get(d.retido_por, '?') ~ ' · ' ~ (d.data_retencao|data)) if d.retido_em else ''),
+    ('Dedução', ETAPAS.deduzir.perfil, d.retido_em and resumo.saldo <= 0.005, (resumo.deduzido|moeda) ~ ' em ' ~ resumo.n ~ ' invoice(s)' if resumo.n else ''),
+    ('Chegada', ETAPAS.receber.perfil, resumo.n and resumo.saldo <= 0.005 and resumo.chegaram == resumo.n, (resumo.chegaram ~ ' de ' ~ resumo.n ~ ' invoice(s)') if resumo.n else ''),
+    ('Pagamento', ETAPAS.pagar.perfil, d.status == 'CONCLUIDO', (resumo.pagas ~ ' de ' ~ resumo.n ~ ' parcela(s)' ~ (' + diferença' if resumo.diferenca > 0.005 else '')) if resumo.n or resumo.diferenca > 0.005 else ''),
   ] %}
   {% set atual = {'AGUARDANDO_RETENCAO': 1, 'AGUARDANDO_DEDUCAO': 2, 'AGUARDANDO_CHEGADA': 3, 'AGUARDANDO_PAGAMENTO': 4}.get(d.status) %}
   {% for nome, perfil, feito, info in passos %}
@@ -64,6 +68,46 @@
     <button class="btn primario">{{ ETAPAS.reter.titulo }}</button>
   </form>
   {% else %}<p class="vazio">Aguardando ação de um usuário com perfil <strong>{{ PERFIS[ETAPAS.reter.perfil] }}</strong>.</p>{% endif %}
+</section>
+{% endif %}
+
+{# ---------- Diferença entre valor segurado e valor final ---------- #}
+{% if resumo.diferenca > 0.005 or pagamentos_dif %}
+<section class="bloco {{ 'acao-etapa' if resumo.diferenca_pendente > 0.005 and ativo }}">
+  <h2>{{ ETAPAS.pagar_diferenca.titulo }} <small>· {{ PERFIS[ETAPAS.pagar_diferenca.perfil] }}</small></h2>
+  <p>O valor final ({{ d.valor_desconto|moeda }}) ficou <strong>{{ resumo.diferenca|moeda }}</strong> abaixo do valor segurado
+     ({{ d.valor_retido|moeda }}). Essa diferença precisa ser paga ao fornecedor referente ao invoice <strong>{{ d.invoice_origem }}</strong>.</p>
+  {% if pagamentos_dif %}
+  <ul class="historico">
+    {% for p in pagamentos_dif %}
+    <li><time>{{ p.data_pagamento|data }}</time> <strong>{{ p.valor|moeda }} pago</strong> · {{ p.usuario or '?' }}{% if p.ref_pagamento %} · Ref. {{ p.ref_pagamento }}{% endif %}
+      {% if p.obs %}<div class="obs">{{ p.obs }}</div>{% endif %}
+      {% if g.usuario.perfil == 'admin' and ativo %}
+      <details class="admin-desfazer"><summary>Desfazer pagamento</summary>
+        <form method="post" action="{{ url_for('pagamento_diferenca_desfazer', pid=p.id) }}" onsubmit="return confirm('Desfazer este pagamento?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input name="motivo" placeholder="Motivo *" required>
+          <button class="btn pequeno perigo">Confirmar</button>
+        </form>
+      </details>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if resumo.diferenca_pendente > 0.005 and ativo %}
+    {% if pode(ETAPAS.pagar_diferenca.perfil) %}
+    <form method="post" action="{{ url_for('desconto_pagar_diferenca', id=d.id) }}" onsubmit="return confirm('Registrar o pagamento de {{ resumo.diferenca_pendente|moeda }} ao fornecedor?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="grade">
+        <label>Data do pagamento *<input type="date" name="data_pagamento" value="{{ hoje }}" required></label>
+        <label>Referência do pagamento<input name="ref_pagamento" placeholder="Nº da remessa / swift"></label>
+        <label class="largo">Observação<textarea name="obs" rows="2"></textarea></label>
+      </div>
+      <button class="btn primario">Pagar diferença de {{ resumo.diferenca_pendente|moeda }}</button>
+    </form>
+    {% else %}<p class="vazio">Aguardando pagamento de {{ resumo.diferenca_pendente|moeda }} pelo <strong>{{ PERFIS[ETAPAS.pagar_diferenca.perfil] }}</strong>.</p>{% endif %}
+  {% elif pagamentos_dif %}<p class="vazio">Diferença totalmente paga.</p>{% endif %}
 </section>
 {% endif %}
 
@@ -147,16 +191,57 @@
   {% else %}<p class="vazio">Nenhuma dedução registrada ainda.</p>{% endif %}
 </section>
 
+{# ---------- Revalidação do valor (somente administrador) ---------- #}
+{% if d.valor_retido is not none and (revisoes or (g.usuario.perfil == 'admin' and d.status not in ('CONCLUIDO', 'CANCELADO'))) %}
+<section class="bloco">
+  <h2>Revalidação do valor <small>· somente {{ PERFIS['admin'] }}</small></h2>
+  {% if revisoes %}
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>Data</th><th class="num">Valor anterior</th><th class="num">Novo valor</th><th>Motivo</th><th>Por</th></tr></thead>
+    <tbody>
+      <tr class="inativo"><td>{{ d.retido_em|data }}</td><td class="num">—</td><td class="num">{{ d.valor_retido|moeda }}</td><td>Valor inicial segurado</td><td>{{ nomes.get(d.retido_por, '?') }}</td></tr>
+      {% for r in revisoes %}
+      <tr><td>{{ r.criado_em|data }}</td><td class="num">{{ r.valor_anterior|moeda }}</td><td class="num"><strong>{{ r.valor_novo|moeda }}</strong></td><td>{{ r.motivo }}</td><td>{{ r.usuario or '?' }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+  {% if g.usuario.perfil == 'admin' and d.status not in ('CONCLUIDO', 'CANCELADO') %}
+  <details class="revalidar" {{ 'open' if not revisoes }}>
+    <summary>{{ 'Revalidar novamente' if revisoes else 'Revalidar o valor do desconto' }}</summary>
+    <form method="post" action="{{ url_for('desconto_revalidar', id=d.id) }}" onsubmit="return confirm('Confirmar o novo valor final?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <p class="sub">O valor inicial segurado ({{ d.valor_retido|moeda }}) fica registrado. A partir daqui, as etapas seguintes usam o valor final.
+        Se o valor final for menor que o segurado, a diferença fica pendente de pagamento ao fornecedor pelo Financeiro.</p>
+      <div class="grade">
+        <label>Valor final do desconto (US$) *<input name="valor_final" inputmode="decimal" value="{{ d.valor_desconto|num }}" required>
+          <small>Entre {{ resumo.minimo_revalidacao|moeda }} e {{ resumo.maximo_revalidacao|moeda }}</small></label>
+        <label class="largo">Motivo da revalidação *<textarea name="motivo" rows="2" required></textarea></label>
+      </div>
+      <button class="btn primario">Salvar valor final</button>
+    </form>
+  </details>
+  {% endif %}
+</section>
+{% endif %}
+
 <section class="bloco">
   <h2>Invoice inspecionado (origem)
-    {% if d.status == 'AGUARDANDO_RETENCAO' and pode('qualidade') %}<a class="btn pequeno" href="{{ url_for('desconto_editar', id=d.id) }}">Editar</a>{% endif %}
+    {% if d.status == 'AGUARDANDO_RETENCAO' and pode(ETAPAS.cadastrar.perfil) %}<a class="btn pequeno" href="{{ url_for('desconto_editar', id=d.id) }}">Editar</a>{% endif %}
   </h2>
   <dl>
     <dt>Fornecedor</dt><dd>{{ d.fornecedor }}</dd>
     <dt>Invoice</dt><dd>{{ d.invoice_origem }}</dd>
     <dt>Envio do relatório</dt><dd>{{ d.data_envio_relatorio|data }}</dd>
     <dt>Valor total do invoice</dt><dd>{{ d.valor_invoice_origem|moeda }}</dd>
+    {% if d.valor_retido is not none %}
+    <dt>Valor inicial segurado</dt><dd>{{ d.valor_retido|moeda }}</dd>
+    <dt>Valor final do desconto</dt><dd>{{ d.valor_desconto|moeda }}</dd>
+    {% else %}
     <dt>Valor do desconto</dt><dd>{{ d.valor_desconto|moeda }}</dd>
+    {% endif %}
     <dt>Observações</dt><dd class="pre">{{ d.motivo or '—' }}</dd>
     {% if d.retido_em %}<dt>Retido em</dt><dd>{{ d.data_retencao|data }} por {{ nomes.get(d.retido_por, '?') }}{% if d.obs_retencao %} — {{ d.obs_retencao }}{% endif %}</dd>{% endif %}
   </dl>

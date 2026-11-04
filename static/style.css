@@ -142,3 +142,9 @@ dd.pre { white-space: pre-line; }
 .form-desconto .grade { grid-template-columns: 1fr 1fr; }
 @media (max-width: 600px) { .form-desconto .grade { grid-template-columns: 1fr; } }
 .rodape { text-align: center; color: var(--suave); font-size: .75rem; padding: 0 16px 1.5rem; }
+
+/* v1.5 - valor inicial segurado x valor final */
+.resumo { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.resumo .destaque-valor { border-color: var(--pri); background: var(--pri-claro); }
+.valor-destaque small { display: block; }
+.revalidar summary { cursor: pointer; color: var(--pri); font-weight: 600; margin: .4rem 0 .8rem; }
