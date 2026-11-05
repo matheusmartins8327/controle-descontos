@@ -1,4 +1,4 @@
-# Controle de Descontos – Fornecedores do Paquistão (v1.5)
+# Controle de Descontos – Fornecedores do Paquistão (v1.6)
 
 Sistema web para controlar descontos por má qualidade, desde a inspeção do invoice até o pagamento do valor retido.
 Todos os valores são em **dólar (US$)**.
@@ -86,13 +86,14 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 |---|-------|-------------|
 | 1 | Cadastrar o desconto após a inspeção: fornecedor, invoice inspecionado, data de envio do relatório, valor total do invoice, valor do desconto (fechado) e observações | Administrador |
 | 2 | Confirmar que o valor foi **segurado** no pagamento do invoice de origem (grava o **valor inicial segurado**) | Administrador |
-| 3 | Registrar o(s) **novo(s) invoice(s)** com a dedução. O desconto pode ser dividido em vários invoices | Importação |
+| 3 | Registrar o(s) **novo(s) invoice(s)** com a dedução: nº do invoice (obrigatório), valor deduzido (obrigatório) e observação (opcional). O desconto pode ser dividido em vários invoices | Importação |
 | 4 | Confirmar a **chegada** de cada invoice deduzido na fábrica | Importação |
 | 5 | **Pagar** a parte correspondente do valor segurado | Financeiro |
 
 ### Revalidação do valor
 - Depois da retenção, o Administrador pode **revalidar** o valor do desconto (com motivo obrigatório). O sistema guarda o **valor inicial segurado** e todas as revalidações; as etapas 3 a 5 usam apenas o **valor final**.
-- O valor final não pode ser maior que o valor segurado nem menor que o total já deduzido em invoices.
+- O valor final não pode ser menor que o total já deduzido em invoices.
+- O valor final pode ficar **acima** do segurado somente enquanto **nenhum pagamento** foi registrado para o desconto. Nesse caso, o Administrador confirma que o invoice de origem ainda não foi pago e o valor adicional também é segurado (o sistema mostra o "Total segurado"). Depois de qualquer pagamento, não é possível segurar valor adicional.
 - Se o valor final ficar **menor** que o segurado, a diferença vira uma pendência do Financeiro (**Pagar diferença ao fornecedor**), para não deixar valor em aberto no invoice. O desconto só é concluído depois desse pagamento.
 
 ### Regras gerais

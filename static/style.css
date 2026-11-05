@@ -148,3 +148,5 @@ dd.pre { white-space: pre-line; }
 .resumo .destaque-valor { border-color: var(--pri); background: var(--pri-claro); }
 .valor-destaque small { display: block; }
 .revalidar summary { cursor: pointer; color: var(--pri); font-weight: 600; margin: .4rem 0 .8rem; }
+label.marcar { display: flex; gap: .5rem; align-items: flex-start; color: var(--txt); }
+label.marcar input { width: auto; margin-top: .2rem; }

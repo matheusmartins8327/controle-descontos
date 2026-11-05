@@ -30,7 +30,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 5
-VERSAO = "1.5"
+VERSAO = "1.6"
 
 # ---------------------------------------------------------------------------
 # Perfis e fluxo
@@ -128,9 +128,11 @@ CREATE TABLE IF NOT EXISTS descontos (
     motivo TEXT,  -- observações
     registrado_por INTEGER REFERENCES usuarios(id),
     registrado_em TEXT,
-    -- Etapa 2: retenção (Administrador). valor_retido = valor inicial segurado;
+    -- Etapa 2: retenção (Administrador). valor_retido = valor inicial segurado (nunca muda);
+    -- valor_segurado = total segurado (aumenta se o valor for revalidado para cima antes de qualquer pagamento);
     -- valor_desconto = valor final (pode ser revalidado), usado nas etapas seguintes
     valor_retido REAL,
+    valor_segurado REAL,
     data_retencao TEXT,
     obs_retencao TEXT,
     retido_por INTEGER REFERENCES usuarios(id),
@@ -237,6 +239,11 @@ def init_db():
             db.execute("ALTER TABLE descontos ADD COLUMN valor_retido REAL")
         db.execute("UPDATE descontos SET valor_retido = valor_desconto"
                    " WHERE retido_em IS NOT NULL AND valor_retido IS NULL")
+        # versão 1.6: total segurado separado do valor inicial segurado
+        if "valor_segurado" not in colunas:
+            db.execute("ALTER TABLE descontos ADD COLUMN valor_segurado REAL")
+        db.execute("UPDATE descontos SET valor_segurado = valor_retido"
+                   " WHERE valor_retido IS NOT NULL AND valor_segurado IS NULL")
         for antigo, novo in PERFIS_ANTIGOS.items():
             db.execute("UPDATE usuarios SET perfil = ? WHERE perfil = ?", (novo, antigo))
 
@@ -495,7 +502,7 @@ FROM descontos d JOIN fornecedores f ON f.id = d.fornecedor_id
 
 # Diferença segurada a mais (valor inicial segurado - valor final) que ainda não foi paga ao fornecedor
 SQL_DIFERENCA_PENDENTE = (
-    "(d.valor_retido IS NOT NULL AND d.valor_retido - d.valor_desconto"
+    "(d.valor_segurado IS NOT NULL AND d.valor_segurado - d.valor_desconto"
     " - COALESCE((SELECT SUM(p.valor) FROM pagamentos_diferenca p WHERE p.desconto_id = d.id), 0) > 0.005)"
 )
 
@@ -520,9 +527,14 @@ def saldo_a_deduzir(d):
 
 def diferenca_pendente(d):
     """Parte do valor segurado que ficou acima do valor final e ainda não foi paga ao fornecedor."""
-    if d["valor_retido"] is None:
+    if d["valor_segurado"] is None:
         return 0
-    return max(round(d["valor_retido"] - d["valor_desconto"] - d["diferenca_paga"], 2), 0)
+    return max(round(d["valor_segurado"] - d["valor_desconto"] - d["diferenca_paga"], 2), 0)
+
+
+def tem_pagamento(d):
+    """Algum pagamento do valor segurado já foi registrado (parcelas ou diferença)?"""
+    return d["total_pago"] > TOLERANCIA or d["diferenca_paga"] > TOLERANCIA
 
 
 def atualizar_status(desconto_id):
@@ -754,11 +766,12 @@ def desconto_detalhe(id):
         "deduzido": d["total_deduzido"],
         "saldo": saldo_a_deduzir(d),
         "pago": pago_total,
-        "retido_aberto": round(d["valor_retido"] - pago_total, 2) if d["valor_retido"] is not None else 0,
-        "diferenca": round(d["valor_retido"] - d["valor_desconto"], 2) if d["valor_retido"] is not None else 0,
+        "retido_aberto": round(d["valor_segurado"] - pago_total, 2) if d["valor_segurado"] is not None else 0,
+        "diferenca": round(d["valor_segurado"] - d["valor_desconto"], 2) if d["valor_segurado"] is not None else 0,
         "diferenca_pendente": diferenca_pendente(d),
         "minimo_revalidacao": max(d["total_deduzido"], 0.01),
-        "maximo_revalidacao": round(d["valor_retido"] - d["diferenca_paga"], 2) if d["valor_retido"] is not None else None,
+        "tem_pagamento": tem_pagamento(d),
+        "maximo_revalidacao": round(d["valor_segurado"] - d["diferenca_paga"], 2) if d["valor_segurado"] is not None else None,
         "n": len(deducoes),
         "chegaram": sum(1 for x in deducoes if x["status"] != "AGUARDANDO_CHEGADA"),
         "pagas": sum(1 for x in deducoes if x["status"] == "PAGO"),
@@ -786,7 +799,7 @@ def desconto_reter(id):
         return redirect(url_for("desconto_detalhe", id=id))
     obs = request.form.get("obs", "").strip() or None
     db = get_db()
-    db.execute("UPDATE descontos SET valor_retido=valor_desconto, data_retencao=?, obs_retencao=?, retido_por=?,"
+    db.execute("UPDATE descontos SET valor_retido=valor_desconto, valor_segurado=valor_desconto, data_retencao=?, obs_retencao=?, retido_por=?,"
                " retido_em=? WHERE id=?", (data, obs, g.usuario["id"], agora(), id))
     registrar_etapa(id, f"Retenção confirmada · {fmt_moeda(d['valor_desconto'])} no invoice {d['invoice_origem']}",
                     d["status"], obs)
@@ -798,7 +811,9 @@ def desconto_reter(id):
 # ---------------------------------------------------------------------------
 # Revalidação do valor após a retenção (somente administrador)
 # O valor inicial segurado (valor_retido) é preservado; o valor final (valor_desconto)
-# passa a valer para as etapas seguintes.
+# passa a valer para as etapas seguintes. O valor final pode ficar acima do segurado
+# somente enquanto nenhum pagamento foi registrado: nesse caso o valor adicional também
+# é segurado (valor_segurado acompanha o valor final).
 # ---------------------------------------------------------------------------
 @app.route("/descontos/<int:id>/revalidar", methods=["POST"])
 @somente_admin
@@ -811,7 +826,8 @@ def desconto_revalidar(id):
     novo = parse_num(request.form.get("valor_final"))
     novo = round(novo, 2) if novo is not None else None
     motivo = request.form.get("motivo", "").strip()
-    maximo = round(d["valor_retido"] - d["diferenca_paga"], 2)
+    maximo = round(d["valor_segurado"] - d["diferenca_paga"], 2)
+    aumento = novo is not None and novo > d["valor_segurado"] + TOLERANCIA
     erro = None
     if not novo or novo <= 0:
         erro = "Informe o valor final do desconto."
@@ -822,9 +838,14 @@ def desconto_revalidar(id):
     elif novo < d["total_deduzido"] - TOLERANCIA:
         erro = (f"O valor final não pode ser menor que o total já deduzido em invoices "
                 f"({fmt_moeda(d['total_deduzido'])}). Exclua deduções antes, se necessário.")
-    elif novo > maximo + TOLERANCIA:
-        erro = (f"O valor final não pode ser maior que o valor segurado"
-                f"{' (descontando a diferença já paga)' if d['diferenca_paga'] else ''}: {fmt_moeda(maximo)}.")
+    elif aumento and tem_pagamento(d):
+        erro = (f"Já existe pagamento registrado para este desconto, então o Financeiro não tem como segurar valor"
+                f" adicional. O valor final pode ser no máximo {fmt_moeda(maximo)}.")
+    elif aumento and request.form.get("confirmo_segurar") != "1":
+        erro = (f"O novo valor é maior que o segurado ({fmt_moeda(d['valor_segurado'])}). Marque a confirmação de que"
+                f" o invoice {d['invoice_origem']} ainda não foi pago e o valor adicional também será segurado.")
+    elif not aumento and novo > maximo + TOLERANCIA:
+        erro = f"O valor final não pode ser maior que {fmt_moeda(maximo)} (valor segurado menos a diferença já paga)."
     if erro:
         flash(erro, "erro")
         return volta
@@ -832,11 +853,17 @@ def desconto_revalidar(id):
     db.execute("INSERT INTO revisoes_valor (desconto_id, valor_anterior, valor_novo, motivo, usuario_id, criado_em)"
                " VALUES (?, ?, ?, ?, ?, ?)", (id, d["valor_desconto"], novo, motivo, g.usuario["id"], agora()))
     db.execute("UPDATE descontos SET valor_desconto = ? WHERE id = ?", (novo, id))
-    registrar_etapa(id, f"Valor revalidado · de {fmt_moeda(d['valor_desconto'])} para {fmt_moeda(novo)}",
-                    d["status"], motivo)
+    acao = f"Valor revalidado · de {fmt_moeda(d['valor_desconto'])} para {fmt_moeda(novo)}"
+    if aumento:
+        db.execute("UPDATE descontos SET valor_segurado = ? WHERE id = ?", (novo, id))
+        acao += f" · total segurado aumentado de {fmt_moeda(d['valor_segurado'])} para {fmt_moeda(novo)}"
+    registrar_etapa(id, acao, d["status"], motivo)
     db.commit()
-    dif = round(d["valor_retido"] - novo - d["diferenca_paga"], 2)
-    if dif > TOLERANCIA:
+    dif = round(max(d["valor_segurado"], novo) - novo - d["diferenca_paga"], 2)
+    if aumento:
+        flash(f"Valor revalidado. O valor adicional de {fmt_moeda(novo - d['valor_segurado'])} também deve ser"
+              f" segurado no invoice {d['invoice_origem']}.", "ok")
+    elif dif > TOLERANCIA:
         flash(f"Valor revalidado. A diferença de {fmt_moeda(dif)} ficou pendente de pagamento pelo Financeiro.", "ok")
     else:
         flash("Valor revalidado.", "ok")
@@ -1043,7 +1070,7 @@ def desconto_desfazer_retencao(id):
         flash("Informe o motivo para desfazer.", "erro")
     else:
         db = get_db()
-        db.execute("UPDATE descontos SET valor_retido=NULL, data_retencao=NULL, obs_retencao=NULL, retido_por=NULL,"
+        db.execute("UPDATE descontos SET valor_retido=NULL, valor_segurado=NULL, data_retencao=NULL, obs_retencao=NULL, retido_por=NULL,"
                    " retido_em=NULL WHERE id=?", (id,))
         registrar_etapa(id, "Retenção desfeita", d["status"], motivo)
         db.commit()

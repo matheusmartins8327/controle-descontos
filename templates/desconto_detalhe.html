@@ -15,9 +15,12 @@
   </div>
 </div>
 
-{% set base = d.valor_retido if d.valor_retido is not none else d.valor_desconto %}
+{% set base = d.valor_segurado if d.valor_segurado is not none else d.valor_desconto %}
 <section class="resumo">
   <div><small>Valor inicial segurado</small><strong>{{ d.valor_retido|moeda if d.valor_retido is not none else '—' }}</strong></div>
+  {% if d.valor_segurado is not none and (d.valor_segurado - d.valor_retido)|abs > 0.005 %}
+  <div><small>Total segurado</small><strong>{{ d.valor_segurado|moeda }}</strong></div>
+  {% endif %}
   <div class="{{ 'destaque-valor' if revisoes }}"><small>Valor final{{ ' (revalidado)' if revisoes }}</small><strong>{{ d.valor_desconto|moeda }}</strong></div>
   <div><small>Deduzido em invoices</small><strong>{{ resumo.deduzido|moeda }}</strong></div>
   <div class="{{ 'alerta' if d.retido_em and resumo.saldo > 0.005 }}"><small>Saldo a deduzir</small><strong>{{ resumo.saldo|moeda }}</strong></div>
@@ -76,7 +79,7 @@
 <section class="bloco {{ 'acao-etapa' if resumo.diferenca_pendente > 0.005 and ativo }}">
   <h2>{{ ETAPAS.pagar_diferenca.titulo }} <small>· {{ PERFIS[ETAPAS.pagar_diferenca.perfil] }}</small></h2>
   <p>O valor final ({{ d.valor_desconto|moeda }}) ficou <strong>{{ resumo.diferenca|moeda }}</strong> abaixo do valor segurado
-     ({{ d.valor_retido|moeda }}). Essa diferença precisa ser paga ao fornecedor referente ao invoice <strong>{{ d.invoice_origem }}</strong>.</p>
+     ({{ d.valor_segurado|moeda }}). Essa diferença precisa ser paga ao fornecedor referente ao invoice <strong>{{ d.invoice_origem }}</strong>.</p>
   {% if pagamentos_dif %}
   <ul class="historico">
     {% for p in pagamentos_dif %}
@@ -122,11 +125,9 @@
       (ex.: US$ 10.000 = US$ 4.000 em um invoice + US$ 6.000 em outro).</p>
     <div class="grade">
       <label>Nº do invoice com dedução *<input name="invoice" required></label>
-      <label>Data do invoice<input type="date" name="data_invoice"></label>
-      <label>Valor total do invoice (US$)<input name="valor_invoice" inputmode="decimal"></label>
-      <label>Valor deduzido neste invoice (US$) *<input name="valor_deduzido" inputmode="decimal" value="{{ resumo.saldo|num }}" required>
-        <small>Máximo: {{ resumo.saldo|moeda }}</small></label>
-      <label class="largo">Observação<textarea name="obs" rows="2"></textarea></label>
+      <label>Valor deduzido neste invoice (US$) *<input name="valor_deduzido" inputmode="decimal" placeholder="0,00" required>
+        <small>Saldo disponível: {{ resumo.saldo|moeda }}</small></label>
+      <label class="largo">Observação (opcional)<textarea name="obs" rows="2"></textarea></label>
     </div>
     <button class="btn primario">Registrar dedução</button>
   </form>
@@ -217,8 +218,13 @@
         Se o valor final for menor que o segurado, a diferença fica pendente de pagamento ao fornecedor pelo Financeiro.</p>
       <div class="grade">
         <label>Valor final do desconto (US$) *<input name="valor_final" inputmode="decimal" value="{{ d.valor_desconto|num }}" required>
-          <small>Entre {{ resumo.minimo_revalidacao|moeda }} e {{ resumo.maximo_revalidacao|moeda }}</small></label>
+          {% if resumo.tem_pagamento %}<small>Entre {{ resumo.minimo_revalidacao|moeda }} e {{ resumo.maximo_revalidacao|moeda }} (já há pagamento registrado, não é possível segurar valor adicional)</small>
+          {% else %}<small>Mínimo: {{ resumo.minimo_revalidacao|moeda }}. Pode ser maior que o segurado ({{ d.valor_segurado|moeda }}), se o valor adicional também for segurado.</small>{% endif %}</label>
         <label class="largo">Motivo da revalidação *<textarea name="motivo" rows="2" required></textarea></label>
+        {% if not resumo.tem_pagamento %}
+        <label class="largo marcar"><input type="checkbox" name="confirmo_segurar" value="1">
+          Se o novo valor for maior que o segurado: confirmo que o invoice {{ d.invoice_origem }} ainda não foi pago e o valor adicional também será segurado.</label>
+        {% endif %}
       </div>
       <button class="btn primario">Salvar valor final</button>
     </form>
