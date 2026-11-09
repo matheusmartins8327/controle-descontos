@@ -30,7 +30,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 5
-VERSAO = "1.7"
+VERSAO = "1.8"
 
 # ---------------------------------------------------------------------------
 # Perfis e fluxo
@@ -66,7 +66,7 @@ ETAPAS = {
     "reter": {"titulo": "Confirmar retenção", "perfil": "admin"},
     "deduzir": {"titulo": "Registrar dedução em invoice", "perfil": "importacao"},
     "receber": {"titulo": "Confirmar chegada na fábrica", "perfil": "importacao"},
-    "pagar": {"titulo": "Pagar valor retido", "perfil": "financeiro"},
+    "pagar": {"titulo": "Pagar valor segurado", "perfil": "financeiro"},
     "pagar_diferenca": {"titulo": "Pagar diferença ao fornecedor", "perfil": "financeiro"},
 }
 
@@ -187,6 +187,18 @@ CREATE TABLE IF NOT EXISTS revisoes_valor (
     usuario_id INTEGER REFERENCES usuarios(id),
     criado_em TEXT NOT NULL
 );
+-- Etapa 5: pagamentos (totais ou parciais) do valor segurado referente a cada dedução (Financeiro)
+CREATE TABLE IF NOT EXISTS pagamentos_deducao (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    deducao_id INTEGER NOT NULL REFERENCES deducoes(id),
+    valor REAL NOT NULL,
+    data_pagamento TEXT NOT NULL,
+    ref_pagamento TEXT NOT NULL,
+    obs TEXT,
+    pago_por INTEGER REFERENCES usuarios(id),
+    pago_em TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pagamentos_deducao ON pagamentos_deducao(deducao_id);
 -- Pagamento ao fornecedor da diferença quando o valor final fica menor que o valor segurado
 CREATE TABLE IF NOT EXISTS pagamentos_diferenca (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -244,6 +256,13 @@ def init_db():
             db.execute("ALTER TABLE descontos ADD COLUMN valor_segurado REAL")
         db.execute("UPDATE descontos SET valor_segurado = valor_retido"
                    " WHERE valor_retido IS NOT NULL AND valor_segurado IS NULL")
+        # versão 1.8: pagamentos parciais. Deduções pagas antes viram um pagamento integral.
+        db.execute(
+            "INSERT INTO pagamentos_deducao (deducao_id, valor, data_pagamento, ref_pagamento, obs, pago_por, pago_em)"
+            " SELECT x.id, x.valor_deduzido, COALESCE(x.data_pagamento, substr(x.pago_em, 1, 10)),"
+            " COALESCE(x.ref_pagamento, '—'), x.obs_pagamento, x.pago_por, COALESCE(x.pago_em, datetime('now'))"
+            " FROM deducoes x WHERE x.status = 'PAGO'"
+            " AND NOT EXISTS (SELECT 1 FROM pagamentos_deducao p WHERE p.deducao_id = x.id)")
         for antigo, novo in PERFIS_ANTIGOS.items():
             db.execute("UPDATE usuarios SET perfil = ? WHERE perfil = ?", (novo, antigo))
 
@@ -493,8 +512,8 @@ def minha_senha():
 SQL_LISTA = """
 SELECT d.*, f.nome AS fornecedor,
     COALESCE((SELECT SUM(x.valor_deduzido) FROM deducoes x WHERE x.desconto_id = d.id), 0) AS total_deduzido,
-    COALESCE((SELECT SUM(x.valor_deduzido) FROM deducoes x
-              WHERE x.desconto_id = d.id AND x.status = 'PAGO'), 0) AS total_pago,
+    COALESCE((SELECT SUM(p.valor) FROM pagamentos_deducao p JOIN deducoes x ON x.id = p.deducao_id
+              WHERE x.desconto_id = d.id), 0) AS total_pago,
     (SELECT GROUP_CONCAT(x.invoice, ', ') FROM deducoes x WHERE x.desconto_id = d.id) AS invoices_deducao,
     COALESCE((SELECT SUM(p.valor) FROM pagamentos_diferenca p WHERE p.desconto_id = d.id), 0) AS diferenca_paga
 FROM descontos d JOIN fornecedores f ON f.id = d.fornecedor_id
@@ -584,12 +603,15 @@ def listar_pendencias():
         if not pode(ETAPAS[etapa]["perfil"]):
             continue
         linhas = db.execute(
-            "SELECT x.id AS deducao_id, x.invoice, x.valor_deduzido, d.id FROM deducoes x"
-            f" JOIN descontos d ON d.id = x.desconto_id WHERE x.status = ? AND {ativos} ORDER BY x.id",
+            "SELECT x.id AS deducao_id, x.invoice, x.valor_deduzido, d.id,"
+            " COALESCE((SELECT SUM(p.valor) FROM pagamentos_deducao p WHERE p.deducao_id = x.id), 0) AS pago"
+            f" FROM deducoes x JOIN descontos d ON d.id = x.desconto_id WHERE x.status = ? AND {ativos} ORDER BY x.id",
             (status,)).fetchall()
         for x in linhas:
             d = db.execute(SQL_LISTA + " WHERE d.id = ?", (x["id"],)).fetchone()
-            pend.append({"d": d, "acao": ETAPAS[etapa]["titulo"], "invoice": x["invoice"], "valor": x["valor_deduzido"]})
+            acao = ETAPAS[etapa]["titulo"] + (" (restante)" if x["pago"] > TOLERANCIA else "")
+            pend.append({"d": d, "acao": acao, "invoice": x["invoice"],
+                         "valor": round(x["valor_deduzido"] - x["pago"], 2)})
     if pode(ETAPAS["pagar_diferenca"]["perfil"]):
         for d in db.execute(SQL_LISTA + f" WHERE {ativos} AND {SQL_DIFERENCA_PENDENTE} ORDER BY d.id"):
             pend.append({"d": d, "acao": ETAPAS["pagar_diferenca"]["titulo"], "invoice": None,
@@ -749,7 +771,14 @@ def carregar_desconto(id):
 def desconto_detalhe(id):
     db = get_db()
     d = carregar_desconto(id)
-    deducoes = db.execute("SELECT * FROM deducoes WHERE desconto_id = ? ORDER BY id", (id,)).fetchall()
+    deducoes = db.execute(
+        "SELECT x.*, COALESCE((SELECT SUM(p.valor) FROM pagamentos_deducao p WHERE p.deducao_id = x.id), 0) AS pago"
+        " FROM deducoes x WHERE x.desconto_id = ? ORDER BY x.id", (id,)).fetchall()
+    pagamentos = {}
+    for p in db.execute(
+            "SELECT p.*, u.nome AS usuario FROM pagamentos_deducao p JOIN deducoes x ON x.id = p.deducao_id"
+            " LEFT JOIN usuarios u ON u.id = p.pago_por WHERE x.desconto_id = ? ORDER BY p.id", (id,)):
+        pagamentos.setdefault(p["deducao_id"], []).append(p)
     historico = db.execute(
         "SELECT h.*, u.nome AS usuario FROM historico h LEFT JOIN usuarios u ON u.id = h.usuario_id"
         " WHERE h.desconto_id = ? ORDER BY h.id", (id,)
@@ -776,7 +805,7 @@ def desconto_detalhe(id):
         "chegaram": sum(1 for x in deducoes if x["status"] != "AGUARDANDO_CHEGADA"),
         "pagas": sum(1 for x in deducoes if x["status"] == "PAGO"),
     }
-    return render_template("desconto_detalhe.html", d=d, deducoes=deducoes, revisoes=revisoes,
+    return render_template("desconto_detalhe.html", d=d, deducoes=deducoes, pagamentos=pagamentos, revisoes=revisoes,
                            pagamentos_dif=pagamentos_dif, historico=historico, nomes=nomes, resumo=resumo,
                            hoje=datetime.now().strftime("%Y-%m-%d"))
 
@@ -888,19 +917,26 @@ def desconto_pagar_diferenca(id):
     if d["status"] == "CANCELADO" or valor <= TOLERANCIA:
         flash("Não há diferença pendente de pagamento.", "erro")
         return volta
-    data = request.form.get("data_pagamento")
-    if not data:
-        flash("Informe a data do pagamento.", "erro")
+    dados, erro = ler_pagamento(valor)
+    if erro:
+        flash(erro, "erro")
         return volta
     obs = request.form.get("obs", "").strip() or None
     db = get_db()
     db.execute("INSERT INTO pagamentos_diferenca (desconto_id, valor, data_pagamento, ref_pagamento, obs, pago_por,"
                " pago_em) VALUES (?, ?, ?, ?, ?, ?, ?)",
-               (id, valor, data, request.form.get("ref_pagamento", "").strip() or None, obs, g.usuario["id"], agora()))
-    registrar_etapa(id, f"Diferença paga ao fornecedor · {fmt_moeda(valor)} do invoice {d['invoice_origem']}",
-                    d["status"], obs)
+               (id, dados["valor"], dados["data"], dados["ref"], obs, g.usuario["id"], agora()))
+    restante = round(valor - dados["valor"], 2)
+    acao = (f"Diferença paga ao fornecedor · {fmt_moeda(dados['valor'])} do invoice {d['invoice_origem']}"
+            f" · Ref. {dados['ref']}")
+    if restante > TOLERANCIA:
+        acao += f" · parcial, restam {fmt_moeda(restante)}"
+    registrar_etapa(id, acao, d["status"], obs)
     db.commit()
-    flash(f"Pagamento da diferença de {fmt_moeda(valor)} registrado.", "ok")
+    if restante > TOLERANCIA:
+        flash(f"Pagamento parcial de {fmt_moeda(dados['valor'])} registrado. Restam {fmt_moeda(restante)} da diferença.", "ok")
+    else:
+        flash(f"Pagamento da diferença de {fmt_moeda(dados['valor'])} registrado.", "ok")
     return volta
 
 
@@ -1015,19 +1051,47 @@ def deducao_avancar(pid, etapa):
                    " recebido_por=?, recebido_em=? WHERE id=?", (data, obs, uid, ts, pid))
         acao = f"Chegada confirmada · invoice {x['invoice']}"
     else:
-        data = f.get("data_pagamento")
-        if not data:
-            flash("Informe a data do pagamento.", "erro")
+        ja_pago = db.execute("SELECT COALESCE(SUM(valor), 0) FROM pagamentos_deducao WHERE deducao_id = ?",
+                             (pid,)).fetchone()[0]
+        pendente = round(x["valor_deduzido"] - ja_pago, 2)
+        dados, erro = ler_pagamento(pendente)
+        if erro:
+            flash(erro, "erro")
             return volta
-        db.execute("UPDATE deducoes SET status='PAGO', data_pagamento=?, ref_pagamento=?, obs_pagamento=?,"
-                   " pago_por=?, pago_em=? WHERE id=?",
-                   (data, f.get("ref_pagamento", "").strip() or None, obs, uid, ts, pid))
-        acao = (f"Pagamento do valor retido · {fmt_moeda(x['valor_deduzido'])} do invoice {d['invoice_origem']}"
-                f" (referente à dedução no invoice {x['invoice']})")
+        db.execute("INSERT INTO pagamentos_deducao (deducao_id, valor, data_pagamento, ref_pagamento, obs, pago_por,"
+                   " pago_em) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                   (pid, dados["valor"], dados["data"], dados["ref"], obs, uid, ts))
+        restante = round(pendente - dados["valor"], 2)
+        if restante <= TOLERANCIA:
+            db.execute("UPDATE deducoes SET status='PAGO' WHERE id=?", (pid,))
+        acao = (f"Pagamento do valor segurado · {fmt_moeda(dados['valor'])} do invoice {d['invoice_origem']}"
+                f" (referente à dedução no invoice {x['invoice']}) · Ref. {dados['ref']}")
+        if restante > TOLERANCIA:
+            acao += f" · parcial, restam {fmt_moeda(restante)}"
     registrar_etapa(d["id"], acao, d["status"], obs)
     db.commit()
-    flash(f"{ETAPAS[etapa]['titulo']}: concluído.", "ok")
+    if etapa == "pagar" and restante > TOLERANCIA:
+        flash(f"Pagamento parcial registrado. Restam {fmt_moeda(restante)} a pagar referente ao invoice {x['invoice']}.", "ok")
+    else:
+        flash(f"{ETAPAS[etapa]['titulo']}: concluído.", "ok")
     return volta
+
+
+def ler_pagamento(pendente):
+    """Valida data, valor (total ou parcial) e referência de um pagamento do Financeiro."""
+    f = request.form
+    valor = parse_num(f.get("valor_pago"))
+    dados = {"data": f.get("data_pagamento"), "ref": f.get("ref_pagamento", "").strip(),
+             "valor": round(valor, 2) if valor is not None else None}
+    if not dados["data"]:
+        return dados, "Informe a data do pagamento."
+    if dados["valor"] is None or dados["valor"] <= 0:
+        return dados, "Informe o valor pago."
+    if dados["valor"] > pendente + TOLERANCIA:
+        return dados, f"O valor pago ({fmt_moeda(dados['valor'])}) é maior que o valor pendente ({fmt_moeda(pendente)})."
+    if not dados["ref"]:
+        return dados, "Informe a referência do pagamento."
+    return dados, None
 
 
 # ---------------------------------------------------------------------------
@@ -1036,7 +1100,7 @@ def deducao_avancar(pid, etapa):
 @app.route("/deducoes/<int:pid>/desfazer", methods=["POST"])
 @somente_admin
 def deducao_desfazer(pid):
-    """Desfaz a última etapa da dedução (pagamento -> chegada -> exclusão da dedução)."""
+    """Desfaz a última etapa da dedução (último pagamento -> chegada -> exclusão da dedução)."""
     x, d = carregar_deducao(pid)
     volta = redirect(url_for("desconto_detalhe", id=d["id"]))
     motivo = request.form.get("motivo", "").strip()
@@ -1044,10 +1108,12 @@ def deducao_desfazer(pid):
         flash("Informe o motivo para desfazer.", "erro")
         return volta
     db = get_db()
-    if x["status"] == "PAGO":
-        db.execute("UPDATE deducoes SET status='AGUARDANDO_PAGAMENTO', data_pagamento=NULL, ref_pagamento=NULL,"
-                   " obs_pagamento=NULL, pago_por=NULL, pago_em=NULL WHERE id=?", (pid,))
-        acao = f"Pagamento desfeito · invoice {x['invoice']}"
+    ultimo = db.execute("SELECT * FROM pagamentos_deducao WHERE deducao_id = ? ORDER BY id DESC LIMIT 1",
+                        (pid,)).fetchone()
+    if ultimo:
+        db.execute("DELETE FROM pagamentos_deducao WHERE id = ?", (ultimo["id"],))
+        db.execute("UPDATE deducoes SET status='AGUARDANDO_PAGAMENTO' WHERE id=?", (pid,))
+        acao = f"Pagamento desfeito · {fmt_moeda(ultimo['valor'])} (Ref. {ultimo['ref_pagamento']}) · invoice {x['invoice']}"
     elif x["status"] == "AGUARDANDO_PAGAMENTO":
         db.execute("UPDATE deducoes SET status='AGUARDANDO_CHEGADA', data_chegada=NULL, obs_chegada=NULL,"
                    " recebido_por=NULL, recebido_em=NULL WHERE id=?", (pid,))

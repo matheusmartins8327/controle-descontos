@@ -1,4 +1,4 @@
-# Controle de Descontos – Fornecedores do Paquistão (v1.7)
+# Controle de Descontos – Fornecedores do Paquistão (v1.8)
 
 Sistema web para controlar descontos por má qualidade, desde a inspeção do invoice até o pagamento do valor retido.
 Todos os valores são em **dólar (US$)**.
@@ -88,7 +88,7 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 | 2 | Confirmar que o valor foi **segurado** no pagamento do invoice de origem (grava o **valor inicial segurado**) | Administrador |
 | 3 | Registrar o(s) **novo(s) invoice(s)** com a dedução: nº do invoice (obrigatório), valor deduzido (obrigatório) e observação (opcional). O desconto pode ser dividido em vários invoices | Importação |
 | 4 | Confirmar a **chegada** de cada invoice deduzido na fábrica | Importação |
-| 5 | **Pagar** a parte correspondente do valor segurado | Financeiro |
+| 5 | **Pagar** a parte correspondente do valor segurado: data, valor pago e referência do pagamento (obrigatórios) e observação (opcional). Aceita **pagamentos parciais**: a dedução fica "Aguardando pagamento (parcial)" até o total ser pago | Financeiro |
 
 ### Revalidação do valor
 - Depois da retenção, o Administrador pode **revalidar** o valor do desconto (com motivo obrigatório). O sistema guarda o **valor inicial segurado** e todas as revalidações; as etapas 3 a 5 usam apenas o **valor final**.

@@ -150,3 +150,10 @@ dd.pre { white-space: pre-line; }
 .revalidar summary { cursor: pointer; color: var(--pri); font-weight: 600; margin: .4rem 0 .8rem; }
 label.marcar { display: flex; gap: .5rem; align-items: flex-start; color: var(--txt); }
 label.marcar input { width: auto; margin-top: .2rem; }
+
+/* v1.8 - pagamentos parciais */
+.acao-linha form.form-pagamento { display: grid; grid-template-columns: 1fr 1fr; gap: .35rem .5rem; min-width: 300px; }
+.form-pagamento label { margin: 0; font-size: .75rem; }
+.form-pagamento input { width: 100%; }
+.form-pagamento button { grid-column: 1 / -1; justify-self: start; }
+.pagamento { margin-bottom: .35rem; }

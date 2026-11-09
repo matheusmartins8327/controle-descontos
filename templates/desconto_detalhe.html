@@ -105,14 +105,16 @@
   {% endif %}
   {% if resumo.diferenca_pendente > 0.005 and ativo %}
     {% if pode(ETAPAS.pagar_diferenca.perfil) %}
-    <form method="post" action="{{ url_for('desconto_pagar_diferenca', id=d.id) }}" onsubmit="return confirm('Registrar o pagamento de {{ resumo.diferenca_pendente|moeda }} ao fornecedor?')">
+    <form method="post" action="{{ url_for('desconto_pagar_diferenca', id=d.id) }}" onsubmit="return confirm('Registrar este pagamento ao fornecedor?')">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="grade">
         <label>Data do pagamento *<input type="date" name="data_pagamento" value="{{ hoje }}" required></label>
-        <label>Referência do pagamento<input name="ref_pagamento" placeholder="Nº da remessa / swift"></label>
-        <label class="largo">Observação<textarea name="obs" rows="2"></textarea></label>
+        <label>Valor pago (US$) *<input name="valor_pago" inputmode="decimal" placeholder="0,00" required>
+          <small>Pendente: {{ resumo.diferenca_pendente|moeda }} (aceita pagamento parcial)</small></label>
+        <label>Referência do pagamento *<input name="ref_pagamento" placeholder="Nº da remessa / swift" required></label>
+        <label class="largo">Observação (opcional)<textarea name="obs" rows="2"></textarea></label>
       </div>
-      <button class="btn primario">Pagar diferença de {{ resumo.diferenca_pendente|moeda }}</button>
+      <button class="btn primario">Registrar pagamento</button>
     </form>
     {% else %}<p class="vazio">Aguardando pagamento de {{ resumo.diferenca_pendente|moeda }} pelo <strong>{{ PERFIS[ETAPAS.pagar_diferenca.perfil] }}</strong>.</p>{% endif %}
   {% elif pagamentos_dif %}<p class="vazio">Diferença totalmente paga.</p>{% endif %}
@@ -146,7 +148,7 @@
   {% if deducoes %}
   <div class="rolagem">
   <table class="deducoes">
-    <thead><tr><th>Invoice</th><th class="num">Valor deduzido</th><th>Status</th><th>Chegada na fábrica</th><th>Pagamento do retido</th><th>Ação</th></tr></thead>
+    <thead><tr><th>Invoice</th><th class="num">Valor deduzido</th><th>Status</th><th>Chegada na fábrica</th><th>Pagamento do segurado</th><th>Ação</th></tr></thead>
     <tbody>
     {% for x in deducoes %}
       <tr>
@@ -154,9 +156,13 @@
           {% if x.data_invoice or x.valor_invoice %}<small class="bloco-linha">{{ x.data_invoice|data if x.data_invoice }}{{ ' · ' if x.data_invoice and x.valor_invoice }}{% if x.valor_invoice %}invoice de {{ x.valor_invoice|moeda }}{% endif %}</small>{% endif %}
           <small class="bloco-linha">por {{ nomes.get(x.deduzido_por, '?') }}{% if x.obs_deducao %} — {{ x.obs_deducao }}{% endif %}</small></td>
         <td class="num"><strong>{{ x.valor_deduzido|moeda }}</strong></td>
-        <td>{% with status=x.status %}<span class="status s-{{ status|lower }}">{{ STATUS_DEDUCAO[status] }}</span>{% endwith %}</td>
+        <td>{% with status=x.status %}<span class="status s-{{ status|lower }}">{{ STATUS_DEDUCAO[status] }}{{ ' (parcial)' if status == 'AGUARDANDO_PAGAMENTO' and x.pago > 0.005 }}</span>{% endwith %}</td>
         <td>{% if x.recebido_em %}{{ x.data_chegada|data }}<small class="bloco-linha">por {{ nomes.get(x.recebido_por, '?') }}{% if x.obs_chegada %} — {{ x.obs_chegada }}{% endif %}</small>{% else %}—{% endif %}</td>
-        <td>{% if x.pago_em %}{{ x.data_pagamento|data }}{% if x.ref_pagamento %} · Ref. {{ x.ref_pagamento }}{% endif %}<small class="bloco-linha">por {{ nomes.get(x.pago_por, '?') }}{% if x.obs_pagamento %} — {{ x.obs_pagamento }}{% endif %}</small>{% else %}—{% endif %}</td>
+        <td>{% if pagamentos.get(x.id) %}
+          {% for p in pagamentos[x.id] %}<div class="pagamento">{{ p.data_pagamento|data }} · <strong>{{ p.valor|moeda }}</strong> · Ref. {{ p.ref_pagamento }}
+            <small class="bloco-linha">por {{ p.usuario or '?' }}{% if p.obs %} — {{ p.obs }}{% endif %}</small></div>{% endfor %}
+          <small class="bloco-linha">Pago {{ x.pago|moeda }} de {{ x.valor_deduzido|moeda }}</small>
+        {% else %}—{% endif %}</td>
         <td class="acao-linha">
           {% if ativo and x.status == 'AGUARDANDO_CHEGADA' %}
             {% if pode(ETAPAS.receber.perfil) %}
@@ -169,17 +175,20 @@
             {% else %}<small>Aguardando {{ PERFIS[ETAPAS.receber.perfil] }}</small>{% endif %}
           {% elif ativo and x.status == 'AGUARDANDO_PAGAMENTO' %}
             {% if pode(ETAPAS.pagar.perfil) %}
-            <form method="post" action="{{ url_for('deducao_avancar', pid=x.id, etapa='pagar') }}" onsubmit="return confirm('Registrar o pagamento de {{ x.valor_deduzido|moeda }} do valor retido?')">
+            <form class="form-pagamento" method="post" action="{{ url_for('deducao_avancar', pid=x.id, etapa='pagar') }}" onsubmit="return confirm('Registrar este pagamento do valor segurado?')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="date" name="data_pagamento" value="{{ hoje }}" required title="Data do pagamento">
-              <input name="ref_pagamento" placeholder="Ref. (remessa / swift)">
-              <button class="btn pequeno primario">Pagar {{ x.valor_deduzido|moeda }}</button>
+              <label>Data *<input type="date" name="data_pagamento" value="{{ hoje }}" required></label>
+              <label>Valor pago (US$) *<input name="valor_pago" inputmode="decimal" placeholder="0,00" required>
+                <small>Pendente: {{ (x.valor_deduzido - x.pago)|moeda }}</small></label>
+              <label>Referência *<input name="ref_pagamento" placeholder="Remessa / swift" required></label>
+              <label>Observação<input name="obs" placeholder="Opcional"></label>
+              <button class="btn pequeno primario">Registrar pagamento</button>
             </form>
             {% else %}<small>Aguardando {{ PERFIS[ETAPAS.pagar.perfil] }}</small>{% endif %}
           {% elif x.status == 'PAGO' %}<small>Concluída</small>{% endif %}
           {% if g.usuario.perfil == 'admin' and ativo %}
           <details class="admin-desfazer">
-            <summary>{{ 'Excluir dedução' if x.status == 'AGUARDANDO_CHEGADA' else 'Desfazer última etapa' }}</summary>
+            <summary>{{ 'Excluir dedução' if x.status == 'AGUARDANDO_CHEGADA' else ('Desfazer último pagamento' if pagamentos.get(x.id) else 'Desfazer chegada') }}</summary>
             <form method="post" action="{{ url_for('deducao_desfazer', pid=x.id) }}" onsubmit="return confirm('Confirmar?')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input name="motivo" placeholder="Motivo *" required>
