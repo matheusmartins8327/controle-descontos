@@ -1,14 +1,13 @@
 """
 Controle de Descontos - Fornecedores do Paquistão
-Versão 1.0
 
 Fluxo:
-  1. Qualidade    -> registra o desconto após inspeção do invoice (invoice de origem)
-  2. Financeiro   -> confirma a retenção do valor no pagamento do invoice de origem
-  3. Compras      -> registra o(s) novo(s) invoice(s) firmado(s) com a dedução do valor.
-                     O desconto pode ser dividido em várias deduções (ex.: 10.000 = 4.000 + 6.000)
-  4. Recebimento  -> confirma a chegada de cada invoice deduzido na fábrica
-  5. Financeiro   -> paga a parte correspondente do valor retido do invoice de origem
+  1. Administrador -> cadastra o desconto após inspeção do invoice (invoice de origem);
+                      a partir do cadastro o valor já é considerado segurado
+  2. Importação    -> registra o(s) novo(s) invoice(s) firmado(s) com a dedução do valor.
+                      O desconto pode ser dividido em várias deduções (ex.: 10.000 = 4.000 + 6.000)
+  3. Importação    -> confirma a chegada de cada invoice deduzido na fábrica
+  4. Financeiro    -> paga (total ou parcialmente) a parte correspondente do valor segurado
 
 Todos os valores são em dólar (USD).
 """
@@ -30,7 +29,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 5
-VERSAO = "1.8"
+VERSAO = "1.9"
 
 # ---------------------------------------------------------------------------
 # Perfis e fluxo
@@ -45,7 +44,6 @@ PERFIS = {
 PERFIS_ANTIGOS = {"qualidade": "consulta", "compras": "importacao", "recebimento": "importacao"}
 
 STATUS = {
-    "AGUARDANDO_RETENCAO": "Aguardando retenção",
     "AGUARDANDO_DEDUCAO": "Aguardando dedução",
     "AGUARDANDO_CHEGADA": "Aguardando chegada",
     "AGUARDANDO_PAGAMENTO": "Aguardando pagamento",
@@ -63,7 +61,6 @@ STATUS_DEDUCAO = {
 # Etapas e perfil responsável
 ETAPAS = {
     "cadastrar": {"titulo": "Cadastrar desconto", "perfil": "admin"},
-    "reter": {"titulo": "Confirmar retenção", "perfil": "admin"},
     "deduzir": {"titulo": "Registrar dedução em invoice", "perfil": "importacao"},
     "receber": {"titulo": "Confirmar chegada na fábrica", "perfil": "importacao"},
     "pagar": {"titulo": "Pagar valor segurado", "perfil": "financeiro"},
@@ -120,7 +117,7 @@ CREATE TABLE IF NOT EXISTS descontos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     fornecedor_id INTEGER NOT NULL REFERENCES fornecedores(id),
     status TEXT NOT NULL,
-    -- Etapa 1: registro (Qualidade)
+    -- Etapa 1: cadastro (Administrador)
     invoice_origem TEXT NOT NULL,
     data_envio_relatorio TEXT,
     valor_invoice_origem REAL,
@@ -128,7 +125,7 @@ CREATE TABLE IF NOT EXISTS descontos (
     motivo TEXT,  -- observações
     registrado_por INTEGER REFERENCES usuarios(id),
     registrado_em TEXT,
-    -- Etapa 2: retenção (Administrador). valor_retido = valor inicial segurado (nunca muda);
+    -- Valor segurado no cadastro. valor_retido = valor inicial segurado (nunca muda);
     -- valor_segurado = total segurado (aumenta se o valor for revalidado para cima antes de qualquer pagamento);
     -- valor_desconto = valor final (pode ser revalidado), usado nas etapas seguintes
     valor_retido REAL,
@@ -142,12 +139,12 @@ CREATE TABLE IF NOT EXISTS descontos (
     cancelado_por INTEGER REFERENCES usuarios(id),
     cancelado_em TEXT
 );
--- Etapas 3 a 5: cada desconto pode ser abatido em um ou mais invoices
+-- Etapas 2 a 4: cada desconto pode ser abatido em um ou mais invoices
 CREATE TABLE IF NOT EXISTS deducoes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     desconto_id INTEGER NOT NULL REFERENCES descontos(id),
     status TEXT NOT NULL,
-    -- Etapa 3: dedução em novo invoice (Compras)
+    -- Etapa 2: dedução em novo invoice (Importação)
     invoice TEXT NOT NULL,
     data_invoice TEXT,
     valor_invoice REAL,
@@ -155,12 +152,12 @@ CREATE TABLE IF NOT EXISTS deducoes (
     obs_deducao TEXT,
     deduzido_por INTEGER REFERENCES usuarios(id),
     deduzido_em TEXT,
-    -- Etapa 4: chegada do invoice deduzido (Recebimento)
+    -- Etapa 3: chegada do invoice deduzido (Importação)
     data_chegada TEXT,
     obs_chegada TEXT,
     recebido_por INTEGER REFERENCES usuarios(id),
     recebido_em TEXT,
-    -- Etapa 5: pagamento da parte correspondente do valor retido (Financeiro)
+    -- Etapa 4: pagamento da parte correspondente do valor segurado (Financeiro)
     data_pagamento TEXT,
     ref_pagamento TEXT,
     obs_pagamento TEXT,
@@ -177,7 +174,7 @@ CREATE TABLE IF NOT EXISTS historico (
     observacao TEXT,
     criado_em TEXT NOT NULL
 );
--- Revalidações do valor do desconto após a retenção (somente administrador)
+-- Revalidações do valor do desconto (somente administrador)
 CREATE TABLE IF NOT EXISTS revisoes_valor (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     desconto_id INTEGER NOT NULL REFERENCES descontos(id),
@@ -187,7 +184,7 @@ CREATE TABLE IF NOT EXISTS revisoes_valor (
     usuario_id INTEGER REFERENCES usuarios(id),
     criado_em TEXT NOT NULL
 );
--- Etapa 5: pagamentos (totais ou parciais) do valor segurado referente a cada dedução (Financeiro)
+-- Etapa 4: pagamentos (totais ou parciais) do valor segurado referente a cada dedução (Financeiro)
 CREATE TABLE IF NOT EXISTS pagamentos_deducao (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     deducao_id INTEGER NOT NULL REFERENCES deducoes(id),
@@ -249,6 +246,10 @@ def init_db():
         # versão 1.5: valor inicial segurado separado do valor final
         if "valor_retido" not in colunas:
             db.execute("ALTER TABLE descontos ADD COLUMN valor_retido REAL")
+        # versão 1.9: não existe mais a etapa de retenção; o valor é segurado no cadastro
+        db.execute("UPDATE descontos SET retido_em = registrado_em, retido_por = registrado_por,"
+                   " data_retencao = substr(registrado_em, 1, 10), status = 'AGUARDANDO_DEDUCAO'"
+                   " WHERE status = 'AGUARDANDO_RETENCAO'")
         db.execute("UPDATE descontos SET valor_retido = valor_desconto"
                    " WHERE retido_em IS NOT NULL AND valor_retido IS NULL")
         # versão 1.6: total segurado separado do valor inicial segurado
@@ -528,7 +529,6 @@ SQL_DIFERENCA_PENDENTE = (
 # Filtros do painel. "Aguardando chegada/pagamento" considera as deduções do desconto.
 FILTROS_STATUS = {
     "ABERTOS": "d.status NOT IN ('CONCLUIDO', 'CANCELADO')",
-    "AGUARDANDO_RETENCAO": "d.status = 'AGUARDANDO_RETENCAO'",
     "AGUARDANDO_DEDUCAO": "d.status = 'AGUARDANDO_DEDUCAO'",
     "AGUARDANDO_CHEGADA": "d.status <> 'CANCELADO' AND EXISTS (SELECT 1 FROM deducoes x"
                           " WHERE x.desconto_id = d.id AND x.status = 'AGUARDANDO_CHEGADA')",
@@ -557,16 +557,14 @@ def tem_pagamento(d):
 
 
 def atualizar_status(desconto_id):
-    """Recalcula o status do desconto a partir da retenção e das deduções."""
+    """Recalcula o status do desconto a partir das deduções e dos pagamentos."""
     db = get_db()
     d = db.execute(SQL_LISTA + " WHERE d.id = ?", (desconto_id,)).fetchone()
     if d["status"] == "CANCELADO":
         return d["status"]
     pendentes = {r["status"] for r in db.execute(
         "SELECT DISTINCT status FROM deducoes WHERE desconto_id = ? AND status <> 'PAGO'", (desconto_id,))}
-    if not d["retido_em"]:
-        novo = "AGUARDANDO_RETENCAO"
-    elif saldo_a_deduzir(d) > TOLERANCIA:
+    if saldo_a_deduzir(d) > TOLERANCIA:
         novo = "AGUARDANDO_DEDUCAO"
     elif "AGUARDANDO_CHEGADA" in pendentes:
         novo = "AGUARDANDO_CHEGADA"
@@ -593,9 +591,6 @@ def listar_pendencias():
     db = get_db()
     pend = []
     ativos = "d.status NOT IN ('CANCELADO', 'CONCLUIDO')"
-    if pode(ETAPAS["reter"]["perfil"]):
-        for d in db.execute(SQL_LISTA + " WHERE d.status = 'AGUARDANDO_RETENCAO' ORDER BY d.id"):
-            pend.append({"d": d, "acao": ETAPAS["reter"]["titulo"], "invoice": None, "valor": d["valor_desconto"]})
     if pode(ETAPAS["deduzir"]["perfil"]):
         for d in db.execute(SQL_LISTA + " WHERE d.status = 'AGUARDANDO_DEDUCAO' ORDER BY d.id"):
             pend.append({"d": d, "acao": "Deduzir saldo em invoice", "invoice": None, "valor": saldo_a_deduzir(d)})
@@ -641,7 +636,7 @@ def painel():
     descontos = db.execute(sql, params).fetchall()
 
     contagem = {}
-    for chave in ("AGUARDANDO_RETENCAO", "AGUARDANDO_DEDUCAO", "CONCLUIDO"):
+    for chave in ("AGUARDANDO_DEDUCAO", "CONCLUIDO"):
         contagem[chave] = db.execute(
             f"SELECT COUNT(*) FROM descontos d WHERE {FILTROS_STATUS[chave]}").fetchone()[0]
     for chave in ("AGUARDANDO_CHEGADA", "AGUARDANDO_PAGAMENTO"):
@@ -660,7 +655,7 @@ def painel():
 
 
 # ---------------------------------------------------------------------------
-# Registro / edição do desconto (Etapa 1 - Qualidade)
+# Cadastro / edição do desconto (Etapa 1 - Administrador)
 # ---------------------------------------------------------------------------
 def obter_fornecedor(nome):
     """Retorna o id do fornecedor pelo nome; cadastra automaticamente se for novo."""
@@ -709,18 +704,21 @@ def desconto_novo():
     if request.method == "POST":
         dados, erros = validar_form_desconto()
         if not erros:
+            # o valor é considerado segurado a partir do cadastro
+            ts = agora()
             cur = db.execute(
                 "INSERT INTO descontos (fornecedor_id, status, invoice_origem, data_envio_relatorio,"
-                " valor_invoice_origem, valor_desconto, motivo, registrado_por, registrado_em)"
-                " VALUES (?, 'AGUARDANDO_RETENCAO', ?, ?, ?, ?, ?, ?, ?)",
+                " valor_invoice_origem, valor_desconto, valor_retido, valor_segurado, motivo, registrado_por,"
+                " registrado_em, data_retencao, retido_por, retido_em)"
+                " VALUES (?, 'AGUARDANDO_DEDUCAO', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (obter_fornecedor(dados["fornecedor"]), dados["invoice_origem"], dados["data_envio_relatorio"],
-                 dados["valor_invoice_origem"], dados["valor_desconto"], dados["motivo"],
-                 g.usuario["id"], agora()),
+                 dados["valor_invoice_origem"], dados["valor_desconto"], dados["valor_desconto"],
+                 dados["valor_desconto"], dados["motivo"], g.usuario["id"], ts, ts[:10], g.usuario["id"], ts),
             )
-            registrar_historico(cur.lastrowid, "Desconto registrado", None, "AGUARDANDO_RETENCAO",
-                                fmt_moeda(dados["valor_desconto"]))
+            registrar_historico(cur.lastrowid, f"Desconto cadastrado · {fmt_moeda(dados['valor_desconto'])} segurado"
+                                f" no invoice {dados['invoice_origem']}", None, "AGUARDANDO_DEDUCAO")
             db.commit()
-            flash("Desconto registrado. Aguardando retenção pelo Financeiro.", "ok")
+            flash("Desconto cadastrado e valor segurado. Aguardando dedução pela Importação.", "ok")
             return redirect(url_for("desconto_detalhe", id=cur.lastrowid))
         for e in erros:
             flash(e, "erro")
@@ -733,30 +731,41 @@ def desconto_novo():
 def desconto_editar(id):
     db = get_db()
     d = carregar_desconto(id)
-    # Valores só podem ser alterados antes da retenção
-    if d["status"] != "AGUARDANDO_RETENCAO" or not pode(ETAPAS["cadastrar"]["perfil"]):
+    if d["status"] in ("CONCLUIDO", "CANCELADO") or not pode(ETAPAS["cadastrar"]["perfil"]):
         abort(403)
+    # O valor só pode ser corrigido aqui enquanto nada aconteceu com ele (sem revalidação, dedução ou
+    # pagamento); depois disso, qualquer mudança de valor é feita pela revalidação.
+    valor_editavel = (not d["invoices_deducao"] and not d["diferenca_paga"] and not db.execute(
+        "SELECT 1 FROM revisoes_valor WHERE desconto_id = ?", (id,)).fetchone())
     fornecedores = db.execute("SELECT * FROM fornecedores WHERE ativo = 1 ORDER BY nome").fetchall()
     if request.method == "POST":
         dados, erros = validar_form_desconto()
+        if not valor_editavel:
+            dados["valor_desconto"] = d["valor_desconto"]
+            erros = [e for e in erros if "desconto" not in e.lower()]
         if not erros:
             db.execute(
                 "UPDATE descontos SET fornecedor_id=?, invoice_origem=?, data_envio_relatorio=?,"
-                " valor_invoice_origem=?, valor_desconto=?, motivo=? WHERE id=?",
+                " valor_invoice_origem=?, valor_desconto=?, valor_retido=?, valor_segurado=?, motivo=? WHERE id=?",
                 (obter_fornecedor(dados["fornecedor"]), dados["invoice_origem"], dados["data_envio_relatorio"],
-                 dados["valor_invoice_origem"], dados["valor_desconto"], dados["motivo"], id),
+                 dados["valor_invoice_origem"], dados["valor_desconto"],
+                 dados["valor_desconto"] if valor_editavel else d["valor_retido"],
+                 dados["valor_desconto"] if valor_editavel else d["valor_segurado"], dados["motivo"], id),
             )
             obs = None
             if dados["valor_desconto"] != d["valor_desconto"]:
-                obs = f"Valor alterado de {fmt_moeda(d['valor_desconto'])} para {fmt_moeda(dados['valor_desconto'])}"
+                obs = (f"Valor corrigido de {fmt_moeda(d['valor_desconto'])} para "
+                       f"{fmt_moeda(dados['valor_desconto'])} (valor segurado atualizado)")
             registrar_historico(id, "Registro editado", obs=obs)
             db.commit()
             flash("Desconto atualizado.", "ok")
             return redirect(url_for("desconto_detalhe", id=id))
         for e in erros:
             flash(e, "erro")
-        return render_template("desconto_form.html", fornecedores=fornecedores, d=dados, editando=True, id=id)
-    return render_template("desconto_form.html", fornecedores=fornecedores, d=dict(d), editando=True, id=id)
+        return render_template("desconto_form.html", fornecedores=fornecedores, d=dados, editando=True, id=id,
+                               valor_editavel=valor_editavel)
+    return render_template("desconto_form.html", fornecedores=fornecedores, d=dict(d), editando=True, id=id,
+                           valor_editavel=valor_editavel)
 
 
 def carregar_desconto(id):
@@ -811,34 +820,7 @@ def desconto_detalhe(id):
 
 
 # ---------------------------------------------------------------------------
-# Etapa 2 - Retenção (Administrador)
-# ---------------------------------------------------------------------------
-@app.route("/descontos/<int:id>/reter", methods=["POST"])
-@login_obrigatorio
-def desconto_reter(id):
-    if not pode(ETAPAS["reter"]["perfil"]):
-        abort(403)
-    d = carregar_desconto(id)
-    if d["status"] != "AGUARDANDO_RETENCAO":
-        flash("A retenção deste desconto já foi registrada.", "erro")
-        return redirect(url_for("desconto_detalhe", id=id))
-    data = request.form.get("data_retencao")
-    if not data:
-        flash("Informe a data da retenção.", "erro")
-        return redirect(url_for("desconto_detalhe", id=id))
-    obs = request.form.get("obs", "").strip() or None
-    db = get_db()
-    db.execute("UPDATE descontos SET valor_retido=valor_desconto, valor_segurado=valor_desconto, data_retencao=?, obs_retencao=?, retido_por=?,"
-               " retido_em=? WHERE id=?", (data, obs, g.usuario["id"], agora(), id))
-    registrar_etapa(id, f"Retenção confirmada · {fmt_moeda(d['valor_desconto'])} no invoice {d['invoice_origem']}",
-                    d["status"], obs)
-    db.commit()
-    flash("Retenção confirmada. Aguardando dedução pela Importação.", "ok")
-    return redirect(url_for("desconto_detalhe", id=id))
-
-
-# ---------------------------------------------------------------------------
-# Revalidação do valor após a retenção (somente administrador)
+# Revalidação do valor (somente administrador)
 # O valor inicial segurado (valor_retido) é preservado; o valor final (valor_desconto)
 # passa a valer para as etapas seguintes. O valor final pode ficar acima do segurado
 # somente enquanto nenhum pagamento foi registrado: nesse caso o valor adicional também
@@ -850,7 +832,7 @@ def desconto_revalidar(id):
     d = carregar_desconto(id)
     volta = redirect(url_for("desconto_detalhe", id=id))
     if d["valor_retido"] is None or d["status"] in ("CONCLUIDO", "CANCELADO"):
-        flash("O valor só pode ser revalidado depois da retenção e antes da conclusão.", "erro")
+        flash("O valor não pode mais ser revalidado: o desconto já foi concluído ou cancelado.", "erro")
         return volta
     novo = parse_num(request.form.get("valor_final"))
     novo = round(novo, 2) if novo is not None else None
@@ -962,7 +944,7 @@ def pagamento_diferenca_desfazer(pid):
 
 
 # ---------------------------------------------------------------------------
-# Etapa 3 - Dedução em um ou mais invoices (Compras)
+# Etapa 2 - Dedução em um ou mais invoices (Importação)
 # ---------------------------------------------------------------------------
 @app.route("/descontos/<int:id>/deducoes", methods=["POST"])
 @login_obrigatorio
@@ -1023,8 +1005,8 @@ def carregar_deducao(pid):
 
 
 # ---------------------------------------------------------------------------
-# Etapa 4 - Chegada do invoice deduzido (Recebimento)
-# Etapa 5 - Pagamento da parte do valor retido (Financeiro)
+# Etapa 3 - Chegada do invoice deduzido (Importação)
+# Etapa 4 - Pagamento da parte do valor segurado (Financeiro)
 # ---------------------------------------------------------------------------
 @app.route("/deducoes/<int:pid>/<etapa>", methods=["POST"])
 @login_obrigatorio
@@ -1124,30 +1106,6 @@ def deducao_desfazer(pid):
     registrar_etapa(d["id"], acao, d["status"], motivo)
     db.commit()
     flash("Etapa desfeita.", "ok")
-    return volta
-
-
-@app.route("/descontos/<int:id>/desfazer-retencao", methods=["POST"])
-@somente_admin
-def desconto_desfazer_retencao(id):
-    d = carregar_desconto(id)
-    volta = redirect(url_for("desconto_detalhe", id=id))
-    motivo = request.form.get("motivo", "").strip()
-    if not d["retido_em"] or d["status"] == "CANCELADO":
-        flash("Não há retenção a desfazer.", "erro")
-    elif d["invoices_deducao"]:
-        flash("Desfaça/exclua as deduções antes de desfazer a retenção.", "erro")
-    elif d["diferenca_paga"]:
-        flash("Desfaça o pagamento da diferença antes de desfazer a retenção.", "erro")
-    elif not motivo:
-        flash("Informe o motivo para desfazer.", "erro")
-    else:
-        db = get_db()
-        db.execute("UPDATE descontos SET valor_retido=NULL, valor_segurado=NULL, data_retencao=NULL, obs_retencao=NULL, retido_por=NULL,"
-                   " retido_em=NULL WHERE id=?", (id,))
-        registrar_etapa(id, "Retenção desfeita", d["status"], motivo)
-        db.commit()
-        flash("Retenção desfeita.", "ok")
     return volta
 
 

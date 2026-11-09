@@ -23,7 +23,7 @@
   {% endif %}
   <div class="{{ 'destaque-valor' if revisoes }}"><small>Valor final{{ ' (revalidado)' if revisoes }}</small><strong>{{ d.valor_desconto|moeda }}</strong></div>
   <div><small>Deduzido em invoices</small><strong>{{ resumo.deduzido|moeda }}</strong></div>
-  <div class="{{ 'alerta' if d.retido_em and resumo.saldo > 0.005 }}"><small>Saldo a deduzir</small><strong>{{ resumo.saldo|moeda }}</strong></div>
+  <div class="{{ 'alerta' if resumo.saldo > 0.005 and ativo }}"><small>Saldo a deduzir</small><strong>{{ resumo.saldo|moeda }}</strong></div>
   <div><small>Segurado já pago</small><strong>{{ resumo.pago|moeda }}</strong></div>
   <div class="{{ 'alerta' if resumo.diferenca_pendente > 0.005 }}"><small>Segurado em aberto</small><strong>{{ resumo.retido_aberto|moeda }}</strong></div>
 </section>
@@ -35,13 +35,12 @@
 
 <ol class="trilha">
   {% set passos = [
-    ('Registro', ETAPAS.cadastrar.perfil, d.registrado_em is not none, nomes.get(d.registrado_por, '?') ~ ' · ' ~ (d.registrado_em|data)),
-    ('Retenção', ETAPAS.reter.perfil, d.retido_em is not none, (nomes.get(d.retido_por, '?') ~ ' · ' ~ (d.data_retencao|data)) if d.retido_em else ''),
+    ('Cadastro e retenção', ETAPAS.cadastrar.perfil, d.registrado_em is not none, nomes.get(d.registrado_por, '?') ~ ' · ' ~ (d.registrado_em|data)),
     ('Dedução', ETAPAS.deduzir.perfil, d.retido_em and resumo.saldo <= 0.005, (resumo.deduzido|moeda) ~ ' em ' ~ resumo.n ~ ' invoice(s)' if resumo.n else ''),
     ('Chegada', ETAPAS.receber.perfil, resumo.n and resumo.saldo <= 0.005 and resumo.chegaram == resumo.n, (resumo.chegaram ~ ' de ' ~ resumo.n ~ ' invoice(s)') if resumo.n else ''),
     ('Pagamento', ETAPAS.pagar.perfil, d.status == 'CONCLUIDO', (resumo.pagas ~ ' de ' ~ resumo.n ~ ' parcela(s)' ~ (' + diferença' if resumo.diferenca > 0.005 else '')) if resumo.n or resumo.diferenca > 0.005 else ''),
   ] %}
-  {% set atual = {'AGUARDANDO_RETENCAO': 1, 'AGUARDANDO_DEDUCAO': 2, 'AGUARDANDO_CHEGADA': 3, 'AGUARDANDO_PAGAMENTO': 4}.get(d.status) %}
+  {% set atual = {'AGUARDANDO_DEDUCAO': 1, 'AGUARDANDO_CHEGADA': 2, 'AGUARDANDO_PAGAMENTO': 3}.get(d.status) %}
   {% for nome, perfil, feito, info in passos %}
   <li class="{{ 'feito' if feito else ('atual' if atual == loop.index0) }}">
     <span class="bola">{{ loop.index }}</span>
@@ -54,24 +53,6 @@
 
 {% if d.status == 'CANCELADO' %}
 <div class="flash erro">Cancelado por {{ nomes.get(d.cancelado_por, '?') }} em {{ d.cancelado_em|data }} — {{ d.motivo_cancelamento }}</div>
-{% endif %}
-
-{# ---------- Etapa 2: retenção ---------- #}
-{% if d.status == 'AGUARDANDO_RETENCAO' %}
-<section class="bloco acao-etapa">
-  <h2>Próxima etapa: {{ ETAPAS.reter.titulo }} <small>· {{ PERFIS[ETAPAS.reter.perfil] }}</small></h2>
-  {% if pode(ETAPAS.reter.perfil) %}
-  <form method="post" action="{{ url_for('desconto_reter', id=d.id) }}" onsubmit="return confirm('Confirmar a retenção?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <p>Confirme que o valor de <strong>{{ d.valor_desconto|moeda }}</strong> foi retido no pagamento do invoice <strong>{{ d.invoice_origem }}</strong>.</p>
-    <div class="grade">
-      <label>Data da retenção *<input type="date" name="data_retencao" value="{{ hoje }}" required></label>
-      <label class="largo">Observação<textarea name="obs" rows="2"></textarea></label>
-    </div>
-    <button class="btn primario">{{ ETAPAS.reter.titulo }}</button>
-  </form>
-  {% else %}<p class="vazio">Aguardando ação de um usuário com perfil <strong>{{ PERFIS[ETAPAS.reter.perfil] }}</strong>.</p>{% endif %}
-</section>
 {% endif %}
 
 {# ---------- Diferença entre valor segurado e valor final ---------- #}
@@ -215,7 +196,7 @@
   <table>
     <thead><tr><th>Data</th><th class="num">Valor anterior</th><th class="num">Novo valor</th><th>Motivo</th><th>Por</th></tr></thead>
     <tbody>
-      <tr class="inativo"><td>{{ d.retido_em|data }}</td><td class="num">—</td><td class="num">{{ d.valor_retido|moeda }}</td><td>Valor inicial segurado</td><td>{{ nomes.get(d.retido_por, '?') }}</td></tr>
+      <tr class="inativo"><td>{{ d.retido_em|data }}</td><td class="num">—</td><td class="num">{{ d.valor_retido|moeda }}</td><td>Valor inicial segurado (cadastro)</td><td>{{ nomes.get(d.retido_por, '?') }}</td></tr>
       {% for r in revisoes %}
       <tr><td>{{ r.criado_em|data }}</td><td class="num">{{ r.valor_anterior|moeda }}</td><td class="num"><strong>{{ r.valor_novo|moeda }}</strong></td><td>{{ r.motivo }}</td><td>{{ r.usuario or '?' }}</td></tr>
       {% endfor %}
@@ -249,7 +230,7 @@
 
 <section class="bloco">
   <h2>Invoice inspecionado (origem)
-    {% if d.status == 'AGUARDANDO_RETENCAO' and pode(ETAPAS.cadastrar.perfil) %}<a class="btn pequeno" href="{{ url_for('desconto_editar', id=d.id) }}">Editar</a>{% endif %}
+    {% if d.status not in ('CONCLUIDO', 'CANCELADO') and pode(ETAPAS.cadastrar.perfil) %}<a class="btn pequeno" href="{{ url_for('desconto_editar', id=d.id) }}">Editar</a>{% endif %}
   </h2>
   <dl>
     <dt>Fornecedor</dt><dd>{{ d.fornecedor }}</dd>
@@ -263,7 +244,7 @@
     <dt>Valor do desconto</dt><dd>{{ d.valor_desconto|moeda }}</dd>
     {% endif %}
     <dt>Observações</dt><dd class="pre">{{ d.motivo or '—' }}</dd>
-    {% if d.retido_em %}<dt>Retido em</dt><dd>{{ d.data_retencao|data }} por {{ nomes.get(d.retido_por, '?') }}{% if d.obs_retencao %} — {{ d.obs_retencao }}{% endif %}</dd>{% endif %}
+    {% if d.retido_em %}<dt>Segurado em</dt><dd>{{ d.data_retencao|data }} por {{ nomes.get(d.retido_por, '?') }}{% if d.obs_retencao %} — {{ d.obs_retencao }}{% endif %}</dd>{% endif %}
   </dl>
 </section>
 
@@ -281,16 +262,9 @@
 <section class="bloco admin">
   <h2>Ações do administrador</h2>
   {% if deducoes %}
-  <p class="vazio">Para desfazer a retenção ou cancelar o desconto, primeiro exclua as deduções (na tabela acima).</p>
+  <p class="vazio">Para cancelar o desconto, primeiro exclua as deduções (na tabela acima).</p>
   {% else %}
   <div class="duas-colunas">
-    {% if d.retido_em %}
-    <form method="post" action="{{ url_for('desconto_desfazer_retencao', id=d.id) }}" onsubmit="return confirm('Desfazer a retenção?')">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>Desfazer retenção — motivo<input name="motivo" required></label>
-      <button class="btn">Desfazer retenção</button>
-    </form>
-    {% endif %}
     <form method="post" action="{{ url_for('desconto_cancelar', id=d.id) }}" onsubmit="return confirm('Cancelar este desconto?')">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Cancelar desconto — motivo<input name="motivo_cancelamento" required></label>

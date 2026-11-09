@@ -157,3 +157,7 @@ label.marcar input { width: auto; margin-top: .2rem; }
 .form-pagamento input { width: 100%; }
 .form-pagamento button { grid-column: 1 / -1; justify-self: start; }
 .pagamento { margin-bottom: .35rem; }
+
+/* v1.9 - fluxo em 4 etapas (sem retenção separada) */
+.fluxo, .trilha { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 800px) { .fluxo, .trilha { grid-template-columns: 1fr 1fr; } }
