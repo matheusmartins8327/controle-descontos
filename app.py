@@ -30,7 +30,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 5
-VERSAO = "1.6"
+VERSAO = "1.7"
 
 # ---------------------------------------------------------------------------
 # Perfis e fluxo
@@ -769,7 +769,7 @@ def desconto_detalhe(id):
         "retido_aberto": round(d["valor_segurado"] - pago_total, 2) if d["valor_segurado"] is not None else 0,
         "diferenca": round(d["valor_segurado"] - d["valor_desconto"], 2) if d["valor_segurado"] is not None else 0,
         "diferenca_pendente": diferenca_pendente(d),
-        "minimo_revalidacao": max(d["total_deduzido"], 0.01),
+        "minimo_revalidacao": d["total_deduzido"],
         "tem_pagamento": tem_pagamento(d),
         "maximo_revalidacao": round(d["valor_segurado"] - d["diferenca_paga"], 2) if d["valor_segurado"] is not None else None,
         "n": len(deducoes),
@@ -829,8 +829,8 @@ def desconto_revalidar(id):
     maximo = round(d["valor_segurado"] - d["diferenca_paga"], 2)
     aumento = novo is not None and novo > d["valor_segurado"] + TOLERANCIA
     erro = None
-    if not novo or novo <= 0:
-        erro = "Informe o valor final do desconto."
+    if novo is None or novo < 0:
+        erro = "Informe o valor final do desconto (use 0 para zerar o desconto)."
     elif not motivo:
         erro = "Informe o motivo da revalidação."
     elif abs(novo - d["valor_desconto"]) <= TOLERANCIA:
@@ -854,6 +854,8 @@ def desconto_revalidar(id):
                " VALUES (?, ?, ?, ?, ?, ?)", (id, d["valor_desconto"], novo, motivo, g.usuario["id"], agora()))
     db.execute("UPDATE descontos SET valor_desconto = ? WHERE id = ?", (novo, id))
     acao = f"Valor revalidado · de {fmt_moeda(d['valor_desconto'])} para {fmt_moeda(novo)}"
+    if novo == 0:
+        acao += " · desconto zerado"
     if aumento:
         db.execute("UPDATE descontos SET valor_segurado = ? WHERE id = ?", (novo, id))
         acao += f" · total segurado aumentado de {fmt_moeda(d['valor_segurado'])} para {fmt_moeda(novo)}"
@@ -863,6 +865,11 @@ def desconto_revalidar(id):
     if aumento:
         flash(f"Valor revalidado. O valor adicional de {fmt_moeda(novo - d['valor_segurado'])} também deve ser"
               f" segurado no invoice {d['invoice_origem']}.", "ok")
+    elif novo == 0 and dif > TOLERANCIA:
+        flash(f"Desconto zerado. O Financeiro deve devolver ao fornecedor o valor segurado de {fmt_moeda(dif)};"
+              " o processo será concluído após esse pagamento.", "ok")
+    elif novo == 0:
+        flash("Desconto zerado. Processo concluído.", "ok")
     elif dif > TOLERANCIA:
         flash(f"Valor revalidado. A diferença de {fmt_moeda(dif)} ficou pendente de pagamento pelo Financeiro.", "ok")
     else:

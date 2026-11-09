@@ -78,8 +78,13 @@
 {% if resumo.diferenca > 0.005 or pagamentos_dif %}
 <section class="bloco {{ 'acao-etapa' if resumo.diferenca_pendente > 0.005 and ativo }}">
   <h2>{{ ETAPAS.pagar_diferenca.titulo }} <small>· {{ PERFIS[ETAPAS.pagar_diferenca.perfil] }}</small></h2>
+  {% if d.valor_desconto == 0 %}
+  <p>O desconto foi <strong>zerado</strong> na revalidação. Todo o valor segurado ({{ d.valor_segurado|moeda }}) precisa ser devolvido ao fornecedor
+     referente ao invoice <strong>{{ d.invoice_origem }}</strong>. O processo é concluído após esse pagamento.</p>
+  {% else %}
   <p>O valor final ({{ d.valor_desconto|moeda }}) ficou <strong>{{ resumo.diferenca|moeda }}</strong> abaixo do valor segurado
      ({{ d.valor_segurado|moeda }}). Essa diferença precisa ser paga ao fornecedor referente ao invoice <strong>{{ d.invoice_origem }}</strong>.</p>
+  {% endif %}
   {% if pagamentos_dif %}
   <ul class="historico">
     {% for p in pagamentos_dif %}
@@ -219,7 +224,7 @@
       <div class="grade">
         <label>Valor final do desconto (US$) *<input name="valor_final" inputmode="decimal" value="{{ d.valor_desconto|num }}" required>
           {% if resumo.tem_pagamento %}<small>Entre {{ resumo.minimo_revalidacao|moeda }} e {{ resumo.maximo_revalidacao|moeda }} (já há pagamento registrado, não é possível segurar valor adicional)</small>
-          {% else %}<small>Mínimo: {{ resumo.minimo_revalidacao|moeda }}. Pode ser maior que o segurado ({{ d.valor_segurado|moeda }}), se o valor adicional também for segurado.</small>{% endif %}</label>
+          {% else %}<small>Mínimo: {{ resumo.minimo_revalidacao|moeda }} (use 0 para zerar o desconto). Pode ser maior que o segurado ({{ d.valor_segurado|moeda }}), se o valor adicional também for segurado.</small>{% endif %}</label>
         <label class="largo">Motivo da revalidação *<textarea name="motivo" rows="2" required></textarea></label>
         {% if not resumo.tem_pagamento %}
         <label class="largo marcar"><input type="checkbox" name="confirmo_segurar" value="1">
