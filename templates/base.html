@@ -17,6 +17,7 @@
       <a href="{{ url_for('fornecedores') }}" class="{{ 'ativo' if request.endpoint == 'fornecedores' }}">Fornecedores</a>
       <a href="{{ url_for('relatorios') }}" class="{{ 'ativo' if request.endpoint == 'relatorios' }}">Relatórios</a>
       {% if g.usuario.perfil == 'admin' %}<a href="{{ url_for('usuarios') }}" class="{{ 'ativo' if request.endpoint in ('usuarios', 'usuario_form') }}">Usuários</a>
+      <a href="{{ url_for('notificacoes') }}" class="{{ 'ativo' if request.endpoint == 'notificacoes' }}">Notificações</a>
       <a href="{{ url_for('sistema') }}" class="{{ 'ativo' if request.endpoint == 'sistema' }}">Sistema</a>{% endif %}
     </nav>
     <div class="quem">

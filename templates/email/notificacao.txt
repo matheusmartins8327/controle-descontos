@@ -1,0 +1,19 @@
+{{ c.titulo }}
+Controle de Descontos · Fornecedores do Paquistão
+
+Olá, equipe Financeira.
+
+{{ c.acao }}
+{% if c.detalhe %}
+{{ c.detalhe }}
+{% endif %}
+{% for rotulo, valor in c.linhas %}{{ rotulo }}: {{ valor }}
+{% endfor %}
+{% if c.link_ciencia %}Por favor, confirme que leu e está de acordo:
+{{ c.link_ciencia }}
+
+A confirmação é feita pelos destinatários principais deste e-mail.
+{% else %}Este e-mail é apenas informativo e não precisa de confirmação.
+{% endif %}
+--
+E-mail automático do Controle de Descontos.

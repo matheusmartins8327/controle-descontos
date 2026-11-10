@@ -161,3 +161,27 @@ label.marcar input { width: auto; margin-top: .2rem; }
 /* v1.9 - fluxo em 4 etapas (sem retenção separada) */
 .fluxo, .trilha { grid-template-columns: repeat(4, 1fr); }
 @media (max-width: 800px) { .fluxo, .trilha { grid-template-columns: 1fr 1fr; } }
+
+/* v2.0 - notificações por e-mail ao Financeiro */
+.s-aguardando_ciencia { background: #fdf2fa; color: #c11574; }
+.s-chegou { background: var(--ok-claro); color: var(--ok); }
+.ciencia, .envio { display: inline-block; padding: .1rem .55rem; border-radius: 99px; font-size: .78rem; font-weight: 600; white-space: nowrap; }
+.c-ok { background: var(--ok-claro); color: var(--ok); }
+.c-pendente { background: var(--alerta-claro); color: var(--alerta); }
+.c-anulada, .c-nao { background: #f2f4f7; color: var(--suave); }
+.e-enviado { background: var(--ok-claro); color: var(--ok); }
+.e-falhou, .e-aguardando { background: var(--erro-claro); color: var(--erro); }
+.e-teste { background: var(--info-claro); color: var(--info); }
+.e-legado { background: #f2f4f7; color: var(--suave); }
+.erro-texto { color: var(--erro); }
+.flash.aviso-box { background: var(--alerta-claro); color: var(--alerta); }
+.notificacoes td { vertical-align: top; }
+.acoes-notificacao { white-space: nowrap; }
+.acoes-notificacao form { display: inline; }
+.linha-teste { display: flex; gap: .6rem; align-items: flex-end; flex-wrap: wrap; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--borda); }
+.linha-teste label { margin: 0; flex: 0 1 320px; }
+.ciencia-cartao { max-width: 560px; }
+.ciencia-cartao .acao-email { font-size: 1.1rem; font-weight: 600; }
+.ciencia-cartao dl { margin: 1rem 0 1.4rem; }
+.btn.grande { padding: .8rem 1.6rem; font-size: 1.05rem; }
+.botoes-ciencia { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: .6rem; }

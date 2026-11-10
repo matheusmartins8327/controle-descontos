@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block titulo %}Ciência do Financeiro{% endblock %}
+{% block conteudo %}
+<div class="cartao ciencia-cartao">
+  <p class="sub">Controle de Descontos · Fornecedores do Paquistão</p>
+  <h1>{{ c.titulo }}</h1>
+  <p class="acao-email">{{ c.acao }}</p>
+  {% if c.detalhe %}<p class="sub">{{ c.detalhe }}</p>{% endif %}
+  <dl>{% for rotulo, valor in c.linhas %}<dt>{{ rotulo }}</dt><dd>{{ valor }}</dd>{% endfor %}</dl>
+
+  {% if n.anulada_em %}
+    <div class="flash erro">Esta notificação foi anulada e não precisa mais de confirmação. {{ n.anulada_motivo }}</div>
+  {% elif n.ciencia_em %}
+    <div class="flash ok">✔ Ciência registrada por <strong>{{ n.ciencia_por }}</strong> em {{ n.ciencia_em|data }}. Obrigado!</div>
+  {% else %}
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% if principais|length == 1 %}
+        <input type="hidden" name="quem" value="{{ principais[0][1] }}">
+        <button class="btn primario grande">Li e estou de acordo</button>
+        <p class="sub">Confirmando como {{ principais[0][0] }}.</p>
+      {% else %}
+        <p><strong>Li e estou de acordo</strong> — clique no seu nome:</p>
+        <div class="botoes-ciencia">
+          {% for nome, email in principais %}
+          <button class="btn primario grande" name="quem" value="{{ email }}">{{ nome }}</button>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

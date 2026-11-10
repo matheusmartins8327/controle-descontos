@@ -27,6 +27,7 @@
     <thead><tr><th>Etapa</th><th>Perfil responsável</th></tr></thead>
     <tbody>
       {% for k, e in ETAPAS.items() %}<tr><td>{{ e.titulo }}</td><td>{{ PERFIS[e.perfil] }}</td></tr>{% endfor %}
+      <tr><td>Ciência dos eventos (segurar e liberar valores)</td><td>Financeiro — por e-mail, sem login (destinatários em Notificações)</td></tr>
       <tr><td>Revalidar valor, editar cadastro, cancelar e desfazer etapas</td><td>{{ PERFIS['admin'] }}</td></tr>
     </tbody>
   </table>

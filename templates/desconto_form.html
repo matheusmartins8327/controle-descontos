@@ -7,19 +7,19 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="grade">
     <label class="largo">Nome do fornecedor *
-      <input name="fornecedor" list="lista-fornecedores" value="{{ d.fornecedor or '' }}" required autocomplete="off">
+      <input name="fornecedor" list="lista-fornecedores" value="{{ d.fornecedor or '' }}" required autocomplete="off" {{ 'readonly' if editando and not valor_editavel }}>
       <datalist id="lista-fornecedores">{% for f in fornecedores %}<option value="{{ f.nome }}">{% endfor %}</datalist>
       <small>Escolha da lista ou digite um nome novo (será cadastrado automaticamente).</small>
     </label>
-    <label>Invoice inspecionado *<input name="invoice_origem" value="{{ d.invoice_origem or '' }}" required></label>
+    <label>Invoice inspecionado *<input name="invoice_origem" value="{{ d.invoice_origem or '' }}" required {{ 'readonly' if editando and not valor_editavel }}></label>
     <label>Data de envio do relatório *<input type="date" name="data_envio_relatorio" value="{{ d.data_envio_relatorio or '' }}" required></label>
     <label>Valor total do invoice (US$) *<input name="valor_invoice_origem" inputmode="decimal" value="{{ d.valor_invoice_origem|num }}" placeholder="0,00" required></label>
     {% if editando and not valor_editavel %}
     <label>Valor final do desconto (US$)<input name="valor_desconto" value="{{ d.valor_desconto|num }}" readonly>
-      <small>Já houve revalidação, dedução ou pagamento: altere o valor pela <strong>Revalidação do valor</strong>.</small></label>
+      <small>Já houve revalidação, dedução ou liberação: fornecedor, invoice e valor ficam travados (o valor é alterado pela <strong>Revalidação do valor</strong>).</small></label>
     {% else %}
     <label>Valor do desconto (US$) *<input name="valor_desconto" inputmode="decimal" value="{{ d.valor_desconto|num }}" placeholder="0,00" required>
-      <small>Este é o valor segurado no invoice inspecionado.</small></label>
+      <small>Este é o valor segurado no invoice inspecionado. O Financeiro recebe um e-mail para segurá-lo.</small></label>
     {% endif %}
     <label class="largo">Observações<textarea name="motivo" rows="4">{{ d.motivo or '' }}</textarea></label>
   </div>

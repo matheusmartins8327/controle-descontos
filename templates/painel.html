@@ -2,11 +2,16 @@
 {% block titulo %}Painel{% endblock %}
 {% block conteudo %}
 <h1>Painel</h1>
+{% if alerta_email %}
+  {% if alerta_email.falhas %}<div class="flash erro">{{ alerta_email.falhas }} e-mail(s) ao Financeiro não foram enviados. <a href="{{ url_for('notificacoes', f='falhas') }}#registro">Ver e reenviar</a></div>{% endif %}
+  {% if alerta_email.sem_principal %}<div class="flash aviso-box">Nenhum destinatário principal cadastrado para os e-mails do Financeiro. <a href="{{ url_for('notificacoes') }}#destinatarios">Cadastrar</a></div>
+  {% elif alerta_email.modo_teste %}<div class="flash aviso-box">Os e-mails ao Financeiro estão em <strong>modo de teste</strong> (não são enviados). <a href="{{ url_for('notificacoes') }}">Configurar envio</a></div>{% endif %}
+{% endif %}
 
 {% set cards = [
   ('AGUARDANDO_DEDUCAO', 'Saldo a deduzir', ETAPAS.deduzir.perfil, 'descontos'),
   ('AGUARDANDO_CHEGADA', 'Aguardando chegada', ETAPAS.receber.perfil, 'invoices'),
-  ('AGUARDANDO_PAGAMENTO', 'Aguardando pagamento', ETAPAS.pagar.perfil, 'pagamentos'),
+  ('AGUARDANDO_CIENCIA', 'Aguardando ciência', None, 'e-mails'),
   ('CONCLUIDO', 'Concluídos', None, 'descontos'),
 ] %}
 <section class="fluxo">
@@ -14,7 +19,7 @@
   <a class="fluxo-etapa {{ 'sel' if filtro_status == s }}" href="{{ url_for('painel', status=s) }}">
     <span class="n">{{ contagem[s] }} <small>{{ unidade }}</small></span>
     <span class="rot">{{ rotulo }}</span>
-    <small>{{ PERFIS[perfil] if perfil else 'Processo encerrado' }}</small>
+    <small>{{ PERFIS[perfil] if perfil else ('Financeiro, por e-mail' if s == 'AGUARDANDO_CIENCIA' else 'Processo encerrado') }}</small>
   </a>
   {% endfor %}
 </section>
@@ -62,7 +67,7 @@
   {% if descontos %}
   <div class="rolagem">
   <table>
-    <thead><tr><th>Código</th><th>Fornecedor</th><th>Invoice origem</th><th class="num">Desconto (final)</th><th class="num">Deduzido</th><th class="num">Pago</th><th>Invoices dedução</th><th>Status</th><th>Registrado</th></tr></thead>
+    <thead><tr><th>Código</th><th>Fornecedor</th><th>Invoice origem</th><th class="num">Desconto (final)</th><th class="num">Deduzido</th><th>Invoices dedução</th><th>Status</th><th>Registrado</th></tr></thead>
     <tbody>
     {% for d in descontos %}
       <tr class="clicavel" onclick="location='{{ url_for('desconto_detalhe', id=d.id) }}'">
@@ -71,7 +76,6 @@
         <td>{{ d.invoice_origem }}</td>
         <td class="num">{{ d.valor_desconto|moeda }}</td>
         <td class="num">{{ d.total_deduzido|moeda }}</td>
-        <td class="num">{{ d.total_pago|moeda }}</td>
         <td>{{ d.invoices_deducao or '—' }}</td>
         <td>{% with status=d.status %}{% include "_status.html" %}{% endwith %}</td>
         <td>{{ d.registrado_em|data }}</td>

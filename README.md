@@ -1,4 +1,4 @@
-# Controle de Descontos – Fornecedores do Paquistão (v1.9)
+# Controle de Descontos – Fornecedores do Paquistão (v2.0)
 
 Sistema web para controlar descontos por má qualidade, desde a inspeção do invoice até o pagamento do valor retido.
 Todos os valores são em **dólar (US$)**.
@@ -23,7 +23,7 @@ Os usuários acessam pelo navegador, de qualquer lugar (o link pode ser salvo no
 5. Abra `https://matheusmartins8327.pythonanywhere.com`, informe o código de instalação e crie sua conta de administrador.
 
 ### Atualizações
-- **Automáticas:** a tarefa diária faz backup do banco e instala a versão mais recente publicada no GitHub.
+- **Automáticas:** a tarefa diária faz backup do banco, reenvia e-mails que falharam e instala a versão mais recente publicada no GitHub.
 - **Na hora:** menu **Sistema** → **Verificar e instalar atualização** (somente administrador).
 
 ### Cuidados
@@ -84,28 +84,54 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 
 | # | Etapa | Responsável |
 |---|-------|-------------|
-| 1 | Cadastrar o desconto após a inspeção: fornecedor, invoice inspecionado, data de envio do relatório, valor total do invoice, valor do desconto (fechado) e observações. **Ao cadastrar, o valor já fica segurado** (não há etapa de retenção separada) | Administrador |
-| 2 | Registrar o(s) **novo(s) invoice(s)** com a dedução: nº do invoice (obrigatório), valor deduzido (obrigatório) e observação (opcional). O desconto pode ser dividido em vários invoices | Importação |
+| 1 | Cadastrar o desconto após a inspeção (fornecedor, invoice inspecionado, data de envio do relatório, valor total do invoice, valor do desconto e observações). **Ao cadastrar, o valor já fica segurado** | Administrador |
+| 2 | Registrar o(s) **novo(s) invoice(s)** com a dedução: nº do invoice e valor deduzido (obrigatórios) e observação (opcional). O desconto pode ser dividido em vários invoices | Importação |
 | 3 | Confirmar a **chegada** de cada invoice deduzido na fábrica | Importação |
-| 4 | **Pagar** a parte correspondente do valor segurado: data, valor pago e referência do pagamento (obrigatórios) e observação (opcional). Aceita **pagamentos parciais** | Financeiro |
+| 4 | **Ciência do Financeiro** pelo link do e-mail (o Financeiro não usa o sistema) | Financeiro, por e-mail |
+
+O desconto fica **Concluído** quando todo o valor foi deduzido, todos os invoices chegaram e o Financeiro deu ciência de todos os e-mails.
+
+### E-mails ao Financeiro
+Um e-mail informativo é enviado a cada evento que exige ação do Financeiro:
+
+| Evento | O que o e-mail pede |
+|---|---|
+| Cadastro do desconto | Segurar o valor no pagamento do invoice de origem |
+| Revalidação para cima | Segurar o valor adicional |
+| Chegada do invoice deduzido | Liberar a parte correspondente do valor segurado |
+| Revalidação para baixo / desconto zerado | Liberar a diferença ao fornecedor |
+| Cancelamento | Liberar o valor segurado |
+| Correção (ex.: chegada desfeita, cadastro corrigido) | Desconsiderar o e-mail anterior (não pede ciência) |
+
+- O e-mail **não tem link para o sistema**: só o botão **Confirmar ciência**, que abre uma página sem login com o botão **"Li e estou de acordo"** (um por destinatário principal). São 2 cliques de propósito: a proteção de links do Outlook abre os links automaticamente, e um clique só seria "confirmado" pelo robô.
+- **Destinatários** (menu **Notificações**): **Principal** recebe em "Para" e confirma; **Cópia** recebe em "Cc". Basta a confirmação de um principal.
+- **Registro**: cada e-mail fica registrado no desconto e no menu **Notificações** (enviado, falhou, ciência, quem confirmou e quando), com **Ver e-mail** e **Reenviar**.
+- **Falhas**: o sistema tenta de novo na hora, avisa no painel e a tarefa diária reenvia automaticamente.
+
+### Configurar o envio (Gmail)
+1. Crie uma conta Gmail dedicada ao sistema (ex.: `controle.descontos.empresa@gmail.com`).
+2. Na conta Google: **Segurança → Verificação em duas etapas** (ativar) → **Senhas de app** → gere uma senha (16 letras).
+3. No sistema, menu **Notificações**: informe o e-mail remetente e a senha de app, salve, use **Enviar teste** e, funcionando, mude o modo para **Ativo**.
+4. Cadastre os destinatários e peça ao Financeiro para marcar o remetente como **confiável** (para não cair no lixo eletrônico).
+
+Enquanto o modo estiver em **Teste**, os e-mails são apenas registrados (dá para ver cada um em **Ver e-mail**). Ao ativar, use **Enviar agora os e-mails pendentes** para mandar os gerados durante o teste.
+A senha de app fica somente no servidor (`instance/gmail_senha_app.txt`), nunca no GitHub.
 
 ### Revalidação do valor
-- Depois do cadastro, o Administrador pode **revalidar** o valor do desconto (com motivo obrigatório). O sistema guarda o **valor inicial segurado** e todas as revalidações; as etapas 3 a 5 usam apenas o **valor final**.
-- O valor final não pode ser menor que o total já deduzido em invoices.
-- O valor final pode ser **zerado** (US$ 0). Nesse caso não há dedução: o Financeiro devolve ao fornecedor todo o valor segurado e o processo é concluído após esse pagamento.
-- O valor final pode ficar **acima** do segurado somente enquanto **nenhum pagamento** foi registrado para o desconto. Nesse caso, o Administrador confirma que o invoice de origem ainda não foi pago e o valor adicional também é segurado (o sistema mostra o "Total segurado"). Depois de qualquer pagamento, não é possível segurar valor adicional.
-- Se o valor final ficar **menor** que o segurado, a diferença vira uma pendência do Financeiro (**Pagar diferença ao fornecedor**), para não deixar valor em aberto no invoice. O desconto só é concluído depois desse pagamento.
+- Depois do cadastro, o Administrador pode **revalidar** o valor do desconto (com motivo obrigatório). O sistema guarda o **valor inicial segurado** e todas as revalidações; as etapas seguintes usam apenas o **valor final**.
+- O valor final não pode ser menor que o total já deduzido em invoices. Pode ser **zerado** (US$ 0).
+- Pode ficar **acima** do segurado somente enquanto o Financeiro ainda não foi avisado para liberar nenhuma parte; o Administrador confirma que o invoice de origem ainda não foi pago.
 
 ### Regras gerais
-- Somente o Administrador cadastra, edita (enquanto o desconto não for concluído; o valor só pode ser corrigido no cadastro enquanto não houver revalidação, dedução ou pagamento) e revalida valores, cancela descontos e desfaz etapas (sempre com motivo).
+- Somente o Administrador cadastra, edita (fornecedor, invoice e valor só enquanto não houver revalidação, dedução ou liberação), revalida, cancela e desfaz etapas (sempre com motivo).
 - O perfil **Consulta** apenas visualiza.
 - Tudo fica registrado no histórico (quem, quando, o quê).
 
 ## Usuários e perfis
 
 - Limite de **5 usuários ativos** (incluindo o administrador). Configurável em `MAX_USUARIOS` no `app.py`.
-- Perfis: Administrador, Importação, Financeiro e Consulta (somente leitura).
-- Ao atualizar para a versão 1.5, usuários dos perfis antigos são convertidos: Compras e Recebimento → Importação; Qualidade → Consulta.
+- Perfis: Administrador, Importação e Consulta (somente leitura). O Financeiro não precisa de usuário: é avisado por e-mail.
+- Usuários de perfis antigos são convertidos automaticamente: Compras e Recebimento → Importação; Qualidade e Financeiro → Consulta.
 - Somente o Administrador cria, edita, ativa/desativa usuários e redefine senhas.
 
 ## Backup

@@ -7,29 +7,33 @@ Fluxo:
   2. Importação    -> registra o(s) novo(s) invoice(s) firmado(s) com a dedução do valor.
                       O desconto pode ser dividido em várias deduções (ex.: 10.000 = 4.000 + 6.000)
   3. Importação    -> confirma a chegada de cada invoice deduzido na fábrica
-  4. Financeiro    -> paga (total ou parcialmente) a parte correspondente do valor segurado
+  4. Financeiro    -> não usa o sistema: recebe e-mails automáticos a cada evento que exige
+                      ação (segurar ou liberar valores) e confirma a ciência pelo link do e-mail
 
 Todos os valores são em dólar (USD).
 """
 import glob
+import json
 import os
 import re
-import socket
-import subprocess
 import secrets
+import socket
 import sqlite3
+import subprocess
 from datetime import datetime, timedelta
 from functools import wraps
 
-from flask import (Flask, abort, flash, g, redirect, render_template, request,
-                   session, url_for)
+from flask import (Flask, abort, flash, g, has_request_context, redirect, render_template,
+                   request, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
+
+import email_envio
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 5
-VERSAO = "1.9"
+VERSAO = "2.0"
 
 # ---------------------------------------------------------------------------
 # Perfis e fluxo
@@ -37,16 +41,17 @@ VERSAO = "1.9"
 PERFIS = {
     "admin": "Administrador",
     "importacao": "Importação",
-    "financeiro": "Financeiro",
     "consulta": "Consulta (somente leitura)",
 }
-# perfis da versão anterior -> perfis atuais (aplicado automaticamente ao iniciar)
-PERFIS_ANTIGOS = {"qualidade": "consulta", "compras": "importacao", "recebimento": "importacao"}
+# perfis de versões anteriores -> perfis atuais (aplicado automaticamente ao iniciar).
+# Desde a versão 2.0 o Financeiro não usa o sistema: é avisado por e-mail.
+PERFIS_ANTIGOS = {"qualidade": "consulta", "compras": "importacao", "recebimento": "importacao",
+                  "financeiro": "consulta"}
 
 STATUS = {
     "AGUARDANDO_DEDUCAO": "Aguardando dedução",
     "AGUARDANDO_CHEGADA": "Aguardando chegada",
-    "AGUARDANDO_PAGAMENTO": "Aguardando pagamento",
+    "AGUARDANDO_CIENCIA": "Aguardando ciência do Financeiro",
     "CONCLUIDO": "Concluído",
     "CANCELADO": "Cancelado",
 }
@@ -54,8 +59,7 @@ STATUS = {
 # Status de cada dedução (parcela do desconto abatida em um invoice)
 STATUS_DEDUCAO = {
     "AGUARDANDO_CHEGADA": "Aguardando chegada",
-    "AGUARDANDO_PAGAMENTO": "Aguardando pagamento",
-    "PAGO": "Pago",
+    "CHEGOU": "Chegou na fábrica",
 }
 
 # Etapas e perfil responsável
@@ -63,8 +67,23 @@ ETAPAS = {
     "cadastrar": {"titulo": "Cadastrar desconto", "perfil": "admin"},
     "deduzir": {"titulo": "Registrar dedução em invoice", "perfil": "importacao"},
     "receber": {"titulo": "Confirmar chegada na fábrica", "perfil": "importacao"},
-    "pagar": {"titulo": "Pagar valor segurado", "perfil": "financeiro"},
-    "pagar_diferenca": {"titulo": "Pagar diferença ao fornecedor", "perfil": "financeiro"},
+}
+
+# E-mails ao Financeiro: um por evento. Todos pedem ciência, exceto a anulação (correção).
+NOTIFICACOES = {
+    "SEGURAR": "Segurar valor do desconto",
+    "SEGURAR_ADICIONAL": "Segurar valor adicional",
+    "LIBERAR_CHEGADA": "Liberar valor segurado (invoice deduzido chegou)",
+    "LIBERAR_DIFERENCA": "Liberar diferença ao fornecedor",
+    "LIBERAR_CANCELAMENTO": "Liberar valor segurado (desconto cancelado)",
+    "ANULACAO": "Correção: desconsiderar e-mail anterior",
+}
+ENVIO_STATUS = {
+    "AGUARDANDO": "Aguardando envio",
+    "ENVIADO": "Enviado",
+    "FALHOU": "Falhou",
+    "TESTE": "Modo de teste (não enviado)",
+    "LEGADO": "Versão anterior",
 }
 
 TOLERANCIA = 0.005  # diferença de arredondamento aceita (meio centavo)
@@ -157,7 +176,7 @@ CREATE TABLE IF NOT EXISTS deducoes (
     obs_chegada TEXT,
     recebido_por INTEGER REFERENCES usuarios(id),
     recebido_em TEXT,
-    -- Etapa 4: pagamento da parte correspondente do valor segurado (Financeiro)
+    -- Pagamento registrado pelo Financeiro (somente versões anteriores à 2.0)
     data_pagamento TEXT,
     ref_pagamento TEXT,
     obs_pagamento TEXT,
@@ -184,7 +203,7 @@ CREATE TABLE IF NOT EXISTS revisoes_valor (
     usuario_id INTEGER REFERENCES usuarios(id),
     criado_em TEXT NOT NULL
 );
--- Etapa 4: pagamentos (totais ou parciais) do valor segurado referente a cada dedução (Financeiro)
+-- Pagamentos lançados pelo Financeiro nas versões anteriores à 2.0 (mantidos como histórico)
 CREATE TABLE IF NOT EXISTS pagamentos_deducao (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     deducao_id INTEGER NOT NULL REFERENCES deducoes(id),
@@ -196,7 +215,7 @@ CREATE TABLE IF NOT EXISTS pagamentos_deducao (
     pago_em TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pagamentos_deducao ON pagamentos_deducao(deducao_id);
--- Pagamento ao fornecedor da diferença quando o valor final fica menor que o valor segurado
+-- Pagamentos de diferença lançados nas versões anteriores à 2.0 (mantidos como histórico)
 CREATE TABLE IF NOT EXISTS pagamentos_diferenca (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     desconto_id INTEGER NOT NULL REFERENCES descontos(id),
@@ -207,6 +226,45 @@ CREATE TABLE IF NOT EXISTS pagamentos_diferenca (
     pago_por INTEGER REFERENCES usuarios(id),
     pago_em TEXT NOT NULL
 );
+-- Configurações gerais (envio de e-mails etc.)
+CREATE TABLE IF NOT EXISTS configuracoes (
+    chave TEXT PRIMARY KEY,
+    valor TEXT
+);
+-- Quem recebe os e-mails do Financeiro: principal (Para, confirma a ciência) ou copia (Cc)
+CREATE TABLE IF NOT EXISTS destinatarios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    tipo TEXT NOT NULL,
+    ativo INTEGER NOT NULL DEFAULT 1,
+    criado_em TEXT NOT NULL
+);
+-- Um registro por evento comunicado ao Financeiro (e-mail + ciência)
+CREATE TABLE IF NOT EXISTS notificacoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    desconto_id INTEGER NOT NULL REFERENCES descontos(id),
+    deducao_id INTEGER REFERENCES deducoes(id),
+    tipo TEXT NOT NULL,
+    valor REAL,
+    detalhe TEXT,
+    exige_ciencia INTEGER NOT NULL DEFAULT 1,
+    referencia_id INTEGER REFERENCES notificacoes(id),
+    token TEXT NOT NULL UNIQUE,
+    criado_em TEXT NOT NULL,
+    criado_por INTEGER REFERENCES usuarios(id),
+    envio_status TEXT NOT NULL,
+    tentativas INTEGER NOT NULL DEFAULT 0,
+    ultimo_erro TEXT,
+    enviado_em TEXT,
+    enviado_para TEXT,
+    enviado_cc TEXT,
+    ciencia_em TEXT,
+    ciencia_por TEXT,
+    anulada_em TEXT,
+    anulada_motivo TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_notificacoes_desconto ON notificacoes(desconto_id);
 CREATE TABLE IF NOT EXISTS tentativas_login (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT NOT NULL,
@@ -266,6 +324,57 @@ def init_db():
             " AND NOT EXISTS (SELECT 1 FROM pagamentos_deducao p WHERE p.deducao_id = x.id)")
         for antigo, novo in PERFIS_ANTIGOS.items():
             db.execute("UPDATE usuarios SET perfil = ? WHERE perfil = ?", (novo, antigo))
+        migrar_v2(db)
+
+
+def migrar_v2(db):
+    """Versão 2.0: o Financeiro deixa de lançar pagamentos e passa a receber e-mails com ciência.
+
+    - Deduções que já chegaram (aguardando pagamento ou pagas) passam a "Chegou na fábrica".
+    - Valores pagos na versão anterior viram notificações já confirmadas (registro histórico).
+    - Valores que ainda aguardavam pagamento viram notificações "aguardando envio".
+    """
+    if db.execute("SELECT 1 FROM configuracoes WHERE chave = 'migracao_v2'").fetchone():
+        return
+    ts = agora()
+
+    def notificacao(desconto_id, deducao_id, tipo, valor, legado_em=None):
+        db.execute(
+            "INSERT INTO notificacoes (desconto_id, deducao_id, tipo, valor, token, criado_em, envio_status,"
+            " ciencia_em, ciencia_por) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (desconto_id, deducao_id, tipo, round(valor, 2), secrets.token_urlsafe(24), legado_em or ts,
+             "LEGADO" if legado_em else "AGUARDANDO", legado_em,
+             "Pagamento registrado no sistema (versão anterior)" if legado_em else None))
+
+    deducoes = db.execute(
+        "SELECT x.id, x.desconto_id, x.valor_deduzido, x.status, d.status AS status_desconto,"
+        " COALESCE((SELECT SUM(p.valor) FROM pagamentos_deducao p WHERE p.deducao_id = x.id), 0),"
+        " (SELECT MAX(p.pago_em) FROM pagamentos_deducao p WHERE p.deducao_id = x.id)"
+        " FROM deducoes x JOIN descontos d ON d.id = x.desconto_id"
+        " WHERE x.status IN ('AGUARDANDO_PAGAMENTO', 'PAGO')").fetchall()
+    for pid, did, valor, _st, st_desc, pago, pago_em in deducoes:
+        if pago > TOLERANCIA:
+            notificacao(did, pid, "LIBERAR_CHEGADA", pago, legado_em=pago_em or ts)
+        if valor - pago > TOLERANCIA and st_desc != "CANCELADO":
+            notificacao(did, pid, "LIBERAR_CHEGADA", valor - pago)
+        db.execute("UPDATE deducoes SET status = 'CHEGOU' WHERE id = ?", (pid,))
+    for did, segurado, final, st_desc, pago, pago_em in db.execute(
+            "SELECT d.id, d.valor_segurado, d.valor_desconto, d.status,"
+            " COALESCE((SELECT SUM(p.valor) FROM pagamentos_diferenca p WHERE p.desconto_id = d.id), 0),"
+            " (SELECT MAX(p.pago_em) FROM pagamentos_diferenca p WHERE p.desconto_id = d.id)"
+            " FROM descontos d WHERE d.valor_segurado IS NOT NULL").fetchall():
+        if pago > TOLERANCIA:
+            notificacao(did, None, "LIBERAR_DIFERENCA", pago, legado_em=pago_em or ts)
+        if segurado - final - pago > TOLERANCIA and st_desc != "CANCELADO":
+            notificacao(did, None, "LIBERAR_DIFERENCA", segurado - final - pago)
+    db.execute("UPDATE descontos SET status = 'AGUARDANDO_CIENCIA' WHERE status = 'AGUARDANDO_PAGAMENTO'")
+    db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('migracao_v2', ?)", (ts,))
+    db.execute("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('email_modo', 'teste')")
+    db.commit()
+    with app.app_context():
+        for (did,) in db.execute("SELECT id FROM descontos WHERE status NOT IN ('CANCELADO')").fetchall():
+            atualizar_status(did)
+        get_db().commit()
 
 
 def agora():
@@ -276,7 +385,8 @@ def registrar_historico(desconto_id, acao, status_anterior=None, status_novo=Non
     get_db().execute(
         "INSERT INTO historico (desconto_id, usuario_id, acao, status_anterior, status_novo, observacao, criado_em)"
         " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (desconto_id, g.usuario["id"], acao, status_anterior, status_novo, obs, agora()),
+        (desconto_id, g.usuario["id"] if g.get("usuario") else None, acao, status_anterior, status_novo, obs,
+         agora()),
     )
 
 
@@ -369,7 +479,7 @@ def codigo_desconto(d):
 
 app.jinja_env.globals.update(
     csrf_token=csrf_token, PERFIS=PERFIS, STATUS=STATUS, ETAPAS=ETAPAS,
-    STATUS_DEDUCAO=STATUS_DEDUCAO, pode=pode,
+    STATUS_DEDUCAO=STATUS_DEDUCAO, NOTIFICACOES=NOTIFICACOES, ENVIO_STATUS=ENVIO_STATUS, pode=pode,
     codigo_desconto=codigo_desconto, MAX_USUARIOS=MAX_USUARIOS, VERSAO=VERSAO,
 )
 app.jinja_env.filters["moeda"] = fmt_moeda
@@ -513,28 +623,27 @@ def minha_senha():
 SQL_LISTA = """
 SELECT d.*, f.nome AS fornecedor,
     COALESCE((SELECT SUM(x.valor_deduzido) FROM deducoes x WHERE x.desconto_id = d.id), 0) AS total_deduzido,
-    COALESCE((SELECT SUM(p.valor) FROM pagamentos_deducao p JOIN deducoes x ON x.id = p.deducao_id
-              WHERE x.desconto_id = d.id), 0) AS total_pago,
+    COALESCE((SELECT SUM(x.valor_deduzido) FROM deducoes x
+              WHERE x.desconto_id = d.id AND x.status = 'CHEGOU'), 0) AS total_chegado,
     (SELECT GROUP_CONCAT(x.invoice, ', ') FROM deducoes x WHERE x.desconto_id = d.id) AS invoices_deducao,
-    COALESCE((SELECT SUM(p.valor) FROM pagamentos_diferenca p WHERE p.desconto_id = d.id), 0) AS diferenca_paga
+    COALESCE((SELECT SUM(n.valor) FROM notificacoes n WHERE n.desconto_id = d.id
+              AND n.tipo = 'LIBERAR_DIFERENCA' AND n.anulada_em IS NULL), 0) AS diferenca_solicitada,
+    COALESCE((SELECT SUM(n.valor) FROM notificacoes n WHERE n.desconto_id = d.id
+              AND n.tipo = 'LIBERAR_CANCELAMENTO' AND n.anulada_em IS NULL), 0) AS cancelamento_solicitado,
+    (SELECT COUNT(*) FROM notificacoes n WHERE n.desconto_id = d.id AND n.exige_ciencia = 1
+     AND n.ciencia_em IS NULL AND n.anulada_em IS NULL) AS ciencias_pendentes
 FROM descontos d JOIN fornecedores f ON f.id = d.fornecedor_id
 """
 
-# Diferença segurada a mais (valor inicial segurado - valor final) que ainda não foi paga ao fornecedor
-SQL_DIFERENCA_PENDENTE = (
-    "(d.valor_segurado IS NOT NULL AND d.valor_segurado - d.valor_desconto"
-    " - COALESCE((SELECT SUM(p.valor) FROM pagamentos_diferenca p WHERE p.desconto_id = d.id), 0) > 0.005)"
-)
+SQL_CIENCIA_PENDENTE = ("n.exige_ciencia = 1 AND n.ciencia_em IS NULL AND n.anulada_em IS NULL")
 
-# Filtros do painel. "Aguardando chegada/pagamento" considera as deduções do desconto.
+# Filtros do painel. "Aguardando chegada/ciência" consideram as deduções e os e-mails do desconto.
 FILTROS_STATUS = {
     "ABERTOS": "d.status NOT IN ('CONCLUIDO', 'CANCELADO')",
     "AGUARDANDO_DEDUCAO": "d.status = 'AGUARDANDO_DEDUCAO'",
     "AGUARDANDO_CHEGADA": "d.status <> 'CANCELADO' AND EXISTS (SELECT 1 FROM deducoes x"
                           " WHERE x.desconto_id = d.id AND x.status = 'AGUARDANDO_CHEGADA')",
-    "AGUARDANDO_PAGAMENTO": "d.status <> 'CANCELADO' AND (EXISTS (SELECT 1 FROM deducoes x"
-                            " WHERE x.desconto_id = d.id AND x.status = 'AGUARDANDO_PAGAMENTO')"
-                            f" OR {SQL_DIFERENCA_PENDENTE})",
+    "AGUARDANDO_CIENCIA": f"EXISTS (SELECT 1 FROM notificacoes n WHERE n.desconto_id = d.id AND {SQL_CIENCIA_PENDENTE})",
     "CONCLUIDO": "d.status = 'CONCLUIDO'",
     "CANCELADO": "d.status = 'CANCELADO'",
 }
@@ -544,32 +653,30 @@ def saldo_a_deduzir(d):
     return round(d["valor_desconto"] - d["total_deduzido"], 2)
 
 
-def diferenca_pendente(d):
-    """Parte do valor segurado que ficou acima do valor final e ainda não foi paga ao fornecedor."""
-    if d["valor_segurado"] is None:
-        return 0
-    return max(round(d["valor_segurado"] - d["valor_desconto"] - d["diferenca_paga"], 2), 0)
+def liberacao_solicitada(d):
+    """Quanto do valor segurado já foi pedido ao Financeiro para liberar ao fornecedor."""
+    return round(d["total_chegado"] + d["diferenca_solicitada"] + d["cancelamento_solicitado"], 2)
 
 
-def tem_pagamento(d):
-    """Algum pagamento do valor segurado já foi registrado (parcelas ou diferença)?"""
-    return d["total_pago"] > TOLERANCIA or d["diferenca_paga"] > TOLERANCIA
+def tem_liberacao(d):
+    """Já foi pedido ao Financeiro para liberar alguma parte do valor segurado?"""
+    return liberacao_solicitada(d) > TOLERANCIA
 
 
 def atualizar_status(desconto_id):
-    """Recalcula o status do desconto a partir das deduções e dos pagamentos."""
+    """Recalcula o status do desconto a partir das deduções e da ciência do Financeiro."""
     db = get_db()
     d = db.execute(SQL_LISTA + " WHERE d.id = ?", (desconto_id,)).fetchone()
     if d["status"] == "CANCELADO":
         return d["status"]
-    pendentes = {r["status"] for r in db.execute(
-        "SELECT DISTINCT status FROM deducoes WHERE desconto_id = ? AND status <> 'PAGO'", (desconto_id,))}
+    aguardando_chegada = db.execute(
+        "SELECT 1 FROM deducoes WHERE desconto_id = ? AND status = 'AGUARDANDO_CHEGADA'", (desconto_id,)).fetchone()
     if saldo_a_deduzir(d) > TOLERANCIA:
         novo = "AGUARDANDO_DEDUCAO"
-    elif "AGUARDANDO_CHEGADA" in pendentes:
+    elif aguardando_chegada:
         novo = "AGUARDANDO_CHEGADA"
-    elif "AGUARDANDO_PAGAMENTO" in pendentes or diferenca_pendente(d) > TOLERANCIA:
-        novo = "AGUARDANDO_PAGAMENTO"
+    elif d["ciencias_pendentes"]:
+        novo = "AGUARDANDO_CIENCIA"
     else:
         novo = "CONCLUIDO"
     if novo != d["status"]:
@@ -582,7 +689,8 @@ def registrar_etapa(desconto_id, acao, status_anterior, obs=None):
     novo = atualizar_status(desconto_id)
     registrar_historico(desconto_id, acao, status_anterior, novo, obs)
     if novo == "CONCLUIDO" and status_anterior != "CONCLUIDO":
-        registrar_historico(desconto_id, "Processo concluído", obs="Todo o valor segurado foi deduzido e pago.")
+        registrar_historico(desconto_id, "Processo concluído",
+                            obs="Valor deduzido e o Financeiro deu ciência de todas as notificações.")
     return novo
 
 
@@ -590,27 +698,27 @@ def listar_pendencias():
     """Ações pendentes para o perfil do usuário logado."""
     db = get_db()
     pend = []
-    ativos = "d.status NOT IN ('CANCELADO', 'CONCLUIDO')"
     if pode(ETAPAS["deduzir"]["perfil"]):
         for d in db.execute(SQL_LISTA + " WHERE d.status = 'AGUARDANDO_DEDUCAO' ORDER BY d.id"):
             pend.append({"d": d, "acao": "Deduzir saldo em invoice", "invoice": None, "valor": saldo_a_deduzir(d)})
-    for etapa, status in (("receber", "AGUARDANDO_CHEGADA"), ("pagar", "AGUARDANDO_PAGAMENTO")):
-        if not pode(ETAPAS[etapa]["perfil"]):
-            continue
-        linhas = db.execute(
-            "SELECT x.id AS deducao_id, x.invoice, x.valor_deduzido, d.id,"
-            " COALESCE((SELECT SUM(p.valor) FROM pagamentos_deducao p WHERE p.deducao_id = x.id), 0) AS pago"
-            f" FROM deducoes x JOIN descontos d ON d.id = x.desconto_id WHERE x.status = ? AND {ativos} ORDER BY x.id",
-            (status,)).fetchall()
-        for x in linhas:
-            d = db.execute(SQL_LISTA + " WHERE d.id = ?", (x["id"],)).fetchone()
-            acao = ETAPAS[etapa]["titulo"] + (" (restante)" if x["pago"] > TOLERANCIA else "")
-            pend.append({"d": d, "acao": acao, "invoice": x["invoice"],
-                         "valor": round(x["valor_deduzido"] - x["pago"], 2)})
-    if pode(ETAPAS["pagar_diferenca"]["perfil"]):
-        for d in db.execute(SQL_LISTA + f" WHERE {ativos} AND {SQL_DIFERENCA_PENDENTE} ORDER BY d.id"):
-            pend.append({"d": d, "acao": ETAPAS["pagar_diferenca"]["titulo"], "invoice": None,
-                         "valor": diferenca_pendente(d)})
+    if pode(ETAPAS["receber"]["perfil"]):
+        for x in db.execute(
+                "SELECT x.invoice, x.valor_deduzido, x.desconto_id FROM deducoes x JOIN descontos d"
+                " ON d.id = x.desconto_id WHERE x.status = 'AGUARDANDO_CHEGADA' AND d.status <> 'CANCELADO'"
+                " ORDER BY x.id").fetchall():
+            d = db.execute(SQL_LISTA + " WHERE d.id = ?", (x["desconto_id"],)).fetchone()
+            pend.append({"d": d, "acao": ETAPAS["receber"]["titulo"], "invoice": x["invoice"],
+                         "valor": x["valor_deduzido"]})
+    if g.usuario["perfil"] == "admin":
+        for n in db.execute(
+                "SELECT n.*, x.invoice FROM notificacoes n LEFT JOIN deducoes x ON x.id = n.deducao_id"
+                f" WHERE ({SQL_CIENCIA_PENDENTE}) OR n.envio_status IN ('FALHOU', 'AGUARDANDO') ORDER BY n.id"):
+            d = db.execute(SQL_LISTA + " WHERE d.id = ?", (n["desconto_id"],)).fetchone()
+            if n["envio_status"] in ("FALHOU", "AGUARDANDO"):
+                acao = f"E-mail não enviado: {NOTIFICACOES[n['tipo']]}"
+            else:
+                acao = f"Aguardando ciência do Financeiro: {NOTIFICACOES[n['tipo']]}"
+            pend.append({"d": d, "acao": acao, "invoice": n["invoice"], "valor": n["valor"]})
     return pend
 
 
@@ -639,18 +747,17 @@ def painel():
     for chave in ("AGUARDANDO_DEDUCAO", "CONCLUIDO"):
         contagem[chave] = db.execute(
             f"SELECT COUNT(*) FROM descontos d WHERE {FILTROS_STATUS[chave]}").fetchone()[0]
-    for chave in ("AGUARDANDO_CHEGADA", "AGUARDANDO_PAGAMENTO"):
-        contagem[chave] = db.execute(
-            "SELECT COUNT(*) FROM deducoes x JOIN descontos d ON d.id = x.desconto_id"
-            " WHERE x.status = ? AND d.status <> 'CANCELADO'", (chave,)).fetchone()[0]
-    contagem["AGUARDANDO_PAGAMENTO"] += db.execute(
-        f"SELECT COUNT(*) FROM descontos d WHERE d.status <> 'CANCELADO' AND {SQL_DIFERENCA_PENDENTE}").fetchone()[0]
+    contagem["AGUARDANDO_CHEGADA"] = db.execute(
+        "SELECT COUNT(*) FROM deducoes x JOIN descontos d ON d.id = x.desconto_id"
+        " WHERE x.status = 'AGUARDANDO_CHEGADA' AND d.status <> 'CANCELADO'").fetchone()[0]
+    contagem["AGUARDANDO_CIENCIA"] = db.execute(
+        f"SELECT COUNT(*) FROM notificacoes n WHERE {SQL_CIENCIA_PENDENTE}").fetchone()[0]
 
     fornecedores = db.execute("SELECT id, nome FROM fornecedores ORDER BY nome").fetchall()
     return render_template(
         "painel.html", descontos=descontos, pendencias=listar_pendencias(), contagem=contagem,
         fornecedores=fornecedores, filtro_status=filtro_status,
-        filtro_fornecedor=filtro_fornecedor, busca=busca,
+        filtro_fornecedor=filtro_fornecedor, busca=busca, alerta_email=alerta_email(),
     )
 
 
@@ -717,8 +824,10 @@ def desconto_novo():
             )
             registrar_historico(cur.lastrowid, f"Desconto cadastrado · {fmt_moeda(dados['valor_desconto'])} segurado"
                                 f" no invoice {dados['invoice_origem']}", None, "AGUARDANDO_DEDUCAO")
+            criar_notificacao(cur.lastrowid, "SEGURAR", dados["valor_desconto"])
             db.commit()
             flash("Desconto cadastrado e valor segurado. Aguardando dedução pela Importação.", "ok")
+            enviar_novas()
             return redirect(url_for("desconto_detalhe", id=cur.lastrowid))
         for e in erros:
             flash(e, "erro")
@@ -733,32 +842,45 @@ def desconto_editar(id):
     d = carregar_desconto(id)
     if d["status"] in ("CONCLUIDO", "CANCELADO") or not pode(ETAPAS["cadastrar"]["perfil"]):
         abort(403)
-    # O valor só pode ser corrigido aqui enquanto nada aconteceu com ele (sem revalidação, dedução ou
-    # pagamento); depois disso, qualquer mudança de valor é feita pela revalidação.
-    valor_editavel = (not d["invoices_deducao"] and not d["diferenca_paga"] and not db.execute(
+    # Fornecedor, invoice e valor (o que foi informado ao Financeiro para segurar) só podem ser
+    # corrigidos aqui enquanto nada aconteceu com o desconto (sem revalidação, dedução ou liberação).
+    # Depois disso, mudanças de valor são feitas pela revalidação.
+    valor_editavel = (not d["invoices_deducao"] and not tem_liberacao(d) and not db.execute(
         "SELECT 1 FROM revisoes_valor WHERE desconto_id = ?", (id,)).fetchone())
     fornecedores = db.execute("SELECT * FROM fornecedores WHERE ativo = 1 ORDER BY nome").fetchall()
     if request.method == "POST":
         dados, erros = validar_form_desconto()
         if not valor_editavel:
-            dados["valor_desconto"] = d["valor_desconto"]
-            erros = [e for e in erros if "desconto" not in e.lower()]
+            dados.update(fornecedor=d["fornecedor"], invoice_origem=d["invoice_origem"],
+                         valor_desconto=d["valor_desconto"])
+            erros = [e for e in erros if "desconto" not in e.lower() and "fornecedor" not in e.lower()
+                     and "invoice inspecionado" not in e.lower()]
         if not erros:
+            fornecedor_id = obter_fornecedor(dados["fornecedor"])
             db.execute(
                 "UPDATE descontos SET fornecedor_id=?, invoice_origem=?, data_envio_relatorio=?,"
                 " valor_invoice_origem=?, valor_desconto=?, valor_retido=?, valor_segurado=?, motivo=? WHERE id=?",
-                (obter_fornecedor(dados["fornecedor"]), dados["invoice_origem"], dados["data_envio_relatorio"],
+                (fornecedor_id, dados["invoice_origem"], dados["data_envio_relatorio"],
                  dados["valor_invoice_origem"], dados["valor_desconto"],
                  dados["valor_desconto"] if valor_editavel else d["valor_retido"],
                  dados["valor_desconto"] if valor_editavel else d["valor_segurado"], dados["motivo"], id),
             )
-            obs = None
+            mudou = []
             if dados["valor_desconto"] != d["valor_desconto"]:
-                obs = (f"Valor corrigido de {fmt_moeda(d['valor_desconto'])} para "
-                       f"{fmt_moeda(dados['valor_desconto'])} (valor segurado atualizado)")
-            registrar_historico(id, "Registro editado", obs=obs)
+                mudou.append(f"valor de {fmt_moeda(d['valor_desconto'])} para {fmt_moeda(dados['valor_desconto'])}")
+            if dados["invoice_origem"] != d["invoice_origem"]:
+                mudou.append(f"invoice de {d['invoice_origem']} para {dados['invoice_origem']}")
+            if fornecedor_id != d["fornecedor_id"]:
+                mudou.append(f"fornecedor de {d['fornecedor']} para {dados['fornecedor']}")
+            obs = ("Corrigido: " + "; ".join(mudou)) if mudou else None
+            registrar_historico(id, "Cadastro editado", obs=obs)
+            if mudou:
+                # o Financeiro recebeu a instrução de segurar com os dados antigos: corrige e reenvia
+                anular_notificacoes(id, "SEGURAR", f"Cadastro corrigido: {'; '.join(mudou)}.")
+                criar_notificacao(id, "SEGURAR", dados["valor_desconto"])
             db.commit()
-            flash("Desconto atualizado.", "ok")
+            flash("Desconto atualizado." + (" O Financeiro foi avisado da correção." if mudou else ""), "ok")
+            enviar_novas()
             return redirect(url_for("desconto_detalhe", id=id))
         for e in erros:
             flash(e, "erro")
@@ -780,14 +902,13 @@ def carregar_desconto(id):
 def desconto_detalhe(id):
     db = get_db()
     d = carregar_desconto(id)
-    deducoes = db.execute(
-        "SELECT x.*, COALESCE((SELECT SUM(p.valor) FROM pagamentos_deducao p WHERE p.deducao_id = x.id), 0) AS pago"
-        " FROM deducoes x WHERE x.desconto_id = ? ORDER BY x.id", (id,)).fetchall()
-    pagamentos = {}
-    for p in db.execute(
-            "SELECT p.*, u.nome AS usuario FROM pagamentos_deducao p JOIN deducoes x ON x.id = p.deducao_id"
-            " LEFT JOIN usuarios u ON u.id = p.pago_por WHERE x.desconto_id = ? ORDER BY p.id", (id,)):
-        pagamentos.setdefault(p["deducao_id"], []).append(p)
+    deducoes = db.execute("SELECT * FROM deducoes WHERE desconto_id = ? ORDER BY id", (id,)).fetchall()
+    notificacoes = db.execute(
+        "SELECT n.*, x.invoice FROM notificacoes n LEFT JOIN deducoes x ON x.id = n.deducao_id"
+        " WHERE n.desconto_id = ? ORDER BY n.id", (id,)).fetchall()
+    # notificação de liberação vigente de cada dedução que chegou
+    liberacao_por_deducao = {n["deducao_id"]: n for n in notificacoes
+                             if n["tipo"] == "LIBERAR_CHEGADA" and not n["anulada_em"]}
     historico = db.execute(
         "SELECT h.*, u.nome AS usuario FROM historico h LEFT JOIN usuarios u ON u.id = h.usuario_id"
         " WHERE h.desconto_id = ? ORDER BY h.id", (id,)
@@ -796,35 +917,34 @@ def desconto_detalhe(id):
     revisoes = db.execute(
         "SELECT r.*, u.nome AS usuario FROM revisoes_valor r LEFT JOIN usuarios u ON u.id = r.usuario_id"
         " WHERE r.desconto_id = ? ORDER BY r.id", (id,)).fetchall()
-    pagamentos_dif = db.execute(
-        "SELECT p.*, u.nome AS usuario FROM pagamentos_diferenca p LEFT JOIN usuarios u ON u.id = p.pago_por"
-        " WHERE p.desconto_id = ? ORDER BY p.id", (id,)).fetchall()
-    pago_total = round(d["total_pago"] + d["diferenca_paga"], 2)
+    liberado = liberacao_solicitada(d)
+    com_ciencia = [n for n in notificacoes if n["exige_ciencia"] and not n["anulada_em"]]
     resumo = {
         "deduzido": d["total_deduzido"],
+        "chegado": d["total_chegado"],
         "saldo": saldo_a_deduzir(d),
-        "pago": pago_total,
-        "retido_aberto": round(d["valor_segurado"] - pago_total, 2) if d["valor_segurado"] is not None else 0,
+        "liberado": liberado,
+        "a_liberar": round(d["valor_segurado"] - liberado, 2) if d["valor_segurado"] is not None else 0,
         "diferenca": round(d["valor_segurado"] - d["valor_desconto"], 2) if d["valor_segurado"] is not None else 0,
-        "diferenca_pendente": diferenca_pendente(d),
         "minimo_revalidacao": d["total_deduzido"],
-        "tem_pagamento": tem_pagamento(d),
-        "maximo_revalidacao": round(d["valor_segurado"] - d["diferenca_paga"], 2) if d["valor_segurado"] is not None else None,
+        "tem_liberacao": tem_liberacao(d),
+        "maximo_revalidacao": round(d["valor_segurado"] - d["diferenca_solicitada"], 2),
         "n": len(deducoes),
-        "chegaram": sum(1 for x in deducoes if x["status"] != "AGUARDANDO_CHEGADA"),
-        "pagas": sum(1 for x in deducoes if x["status"] == "PAGO"),
+        "chegaram": sum(1 for x in deducoes if x["status"] == "CHEGOU"),
+        "ciencias": len([n for n in com_ciencia if n["ciencia_em"]]),
+        "ciencias_total": len(com_ciencia),
     }
-    return render_template("desconto_detalhe.html", d=d, deducoes=deducoes, pagamentos=pagamentos, revisoes=revisoes,
-                           pagamentos_dif=pagamentos_dif, historico=historico, nomes=nomes, resumo=resumo,
-                           hoje=datetime.now().strftime("%Y-%m-%d"))
+    return render_template("desconto_detalhe.html", d=d, deducoes=deducoes, notificacoes=notificacoes,
+                           liberacao_por_deducao=liberacao_por_deducao, revisoes=revisoes, historico=historico,
+                           nomes=nomes, resumo=resumo, hoje=datetime.now().strftime("%Y-%m-%d"))
 
 
 # ---------------------------------------------------------------------------
 # Revalidação do valor (somente administrador)
 # O valor inicial segurado (valor_retido) é preservado; o valor final (valor_desconto)
 # passa a valer para as etapas seguintes. O valor final pode ficar acima do segurado
-# somente enquanto nenhum pagamento foi registrado: nesse caso o valor adicional também
-# é segurado (valor_segurado acompanha o valor final).
+# somente enquanto nenhuma liberação foi pedida ao Financeiro: nesse caso o valor adicional
+# também é segurado (valor_segurado acompanha o valor final) e o Financeiro é avisado.
 # ---------------------------------------------------------------------------
 @app.route("/descontos/<int:id>/revalidar", methods=["POST"])
 @somente_admin
@@ -837,7 +957,7 @@ def desconto_revalidar(id):
     novo = parse_num(request.form.get("valor_final"))
     novo = round(novo, 2) if novo is not None else None
     motivo = request.form.get("motivo", "").strip()
-    maximo = round(d["valor_segurado"] - d["diferenca_paga"], 2)
+    maximo = round(d["valor_segurado"] - d["diferenca_solicitada"], 2)
     aumento = novo is not None and novo > d["valor_segurado"] + TOLERANCIA
     erro = None
     if novo is None or novo < 0:
@@ -849,14 +969,15 @@ def desconto_revalidar(id):
     elif novo < d["total_deduzido"] - TOLERANCIA:
         erro = (f"O valor final não pode ser menor que o total já deduzido em invoices "
                 f"({fmt_moeda(d['total_deduzido'])}). Exclua deduções antes, se necessário.")
-    elif aumento and tem_pagamento(d):
-        erro = (f"Já existe pagamento registrado para este desconto, então o Financeiro não tem como segurar valor"
-                f" adicional. O valor final pode ser no máximo {fmt_moeda(maximo)}.")
+    elif aumento and tem_liberacao(d):
+        erro = (f"O Financeiro já foi avisado para liberar parte do valor segurado, então não é possível segurar"
+                f" valor adicional. O valor final pode ser no máximo {fmt_moeda(maximo)}.")
     elif aumento and request.form.get("confirmo_segurar") != "1":
         erro = (f"O novo valor é maior que o segurado ({fmt_moeda(d['valor_segurado'])}). Marque a confirmação de que"
                 f" o invoice {d['invoice_origem']} ainda não foi pago e o valor adicional também será segurado.")
     elif not aumento and novo > maximo + TOLERANCIA:
-        erro = f"O valor final não pode ser maior que {fmt_moeda(maximo)} (valor segurado menos a diferença já paga)."
+        erro = (f"O valor final não pode ser maior que {fmt_moeda(maximo)} "
+                "(valor segurado menos a diferença já informada ao Financeiro para liberar).")
     if erro:
         flash(erro, "erro")
         return volta
@@ -864,83 +985,34 @@ def desconto_revalidar(id):
     db.execute("INSERT INTO revisoes_valor (desconto_id, valor_anterior, valor_novo, motivo, usuario_id, criado_em)"
                " VALUES (?, ?, ?, ?, ?, ?)", (id, d["valor_desconto"], novo, motivo, g.usuario["id"], agora()))
     db.execute("UPDATE descontos SET valor_desconto = ? WHERE id = ?", (novo, id))
+    contexto = f"Valor do desconto revalidado de {fmt_moeda(d['valor_desconto'])} para {fmt_moeda(novo)}. Motivo: {motivo}"
     acao = f"Valor revalidado · de {fmt_moeda(d['valor_desconto'])} para {fmt_moeda(novo)}"
     if novo == 0:
         acao += " · desconto zerado"
+    dif = 0
     if aumento:
         db.execute("UPDATE descontos SET valor_segurado = ? WHERE id = ?", (novo, id))
         acao += f" · total segurado aumentado de {fmt_moeda(d['valor_segurado'])} para {fmt_moeda(novo)}"
+        criar_notificacao(id, "SEGURAR_ADICIONAL", novo - d["valor_segurado"],
+                          detalhe=f"{contexto} O total segurado passa a ser {fmt_moeda(novo)}.")
+    else:
+        dif = round(d["valor_segurado"] - novo - d["diferenca_solicitada"], 2)
+        if dif > TOLERANCIA:
+            criar_notificacao(id, "LIBERAR_DIFERENCA", dif, detalhe=(
+                f"{contexto} O desconto foi zerado: todo o valor segurado deve ser liberado." if novo == 0
+                else contexto))
     registrar_etapa(id, acao, d["status"], motivo)
     db.commit()
-    dif = round(max(d["valor_segurado"], novo) - novo - d["diferenca_paga"], 2)
     if aumento:
-        flash(f"Valor revalidado. O valor adicional de {fmt_moeda(novo - d['valor_segurado'])} também deve ser"
-              f" segurado no invoice {d['invoice_origem']}.", "ok")
-    elif novo == 0 and dif > TOLERANCIA:
-        flash(f"Desconto zerado. O Financeiro deve devolver ao fornecedor o valor segurado de {fmt_moeda(dif)};"
-              " o processo será concluído após esse pagamento.", "ok")
-    elif novo == 0:
-        flash("Desconto zerado. Processo concluído.", "ok")
+        flash(f"Valor revalidado. O Financeiro foi avisado para segurar o valor adicional de "
+              f"{fmt_moeda(novo - d['valor_segurado'])} no invoice {d['invoice_origem']}.", "ok")
     elif dif > TOLERANCIA:
-        flash(f"Valor revalidado. A diferença de {fmt_moeda(dif)} ficou pendente de pagamento pelo Financeiro.", "ok")
+        flash(f"Valor revalidado. O Financeiro foi avisado para liberar {fmt_moeda(dif)} ao fornecedor"
+              f"{' (desconto zerado)' if novo == 0 else ''}.", "ok")
     else:
         flash("Valor revalidado.", "ok")
+    enviar_novas()
     return volta
-
-
-@app.route("/descontos/<int:id>/pagar-diferenca", methods=["POST"])
-@login_obrigatorio
-def desconto_pagar_diferenca(id):
-    if not pode(ETAPAS["pagar_diferenca"]["perfil"]):
-        abort(403)
-    d = carregar_desconto(id)
-    volta = redirect(url_for("desconto_detalhe", id=id))
-    valor = diferenca_pendente(d)
-    if d["status"] == "CANCELADO" or valor <= TOLERANCIA:
-        flash("Não há diferença pendente de pagamento.", "erro")
-        return volta
-    dados, erro = ler_pagamento(valor)
-    if erro:
-        flash(erro, "erro")
-        return volta
-    obs = request.form.get("obs", "").strip() or None
-    db = get_db()
-    db.execute("INSERT INTO pagamentos_diferenca (desconto_id, valor, data_pagamento, ref_pagamento, obs, pago_por,"
-               " pago_em) VALUES (?, ?, ?, ?, ?, ?, ?)",
-               (id, dados["valor"], dados["data"], dados["ref"], obs, g.usuario["id"], agora()))
-    restante = round(valor - dados["valor"], 2)
-    acao = (f"Diferença paga ao fornecedor · {fmt_moeda(dados['valor'])} do invoice {d['invoice_origem']}"
-            f" · Ref. {dados['ref']}")
-    if restante > TOLERANCIA:
-        acao += f" · parcial, restam {fmt_moeda(restante)}"
-    registrar_etapa(id, acao, d["status"], obs)
-    db.commit()
-    if restante > TOLERANCIA:
-        flash(f"Pagamento parcial de {fmt_moeda(dados['valor'])} registrado. Restam {fmt_moeda(restante)} da diferença.", "ok")
-    else:
-        flash(f"Pagamento da diferença de {fmt_moeda(dados['valor'])} registrado.", "ok")
-    return volta
-
-
-@app.route("/pagamentos-diferenca/<int:pid>/desfazer", methods=["POST"])
-@somente_admin
-def pagamento_diferenca_desfazer(pid):
-    p = get_db().execute("SELECT * FROM pagamentos_diferenca WHERE id = ?", (pid,)).fetchone()
-    if p is None:
-        abort(404)
-    d = carregar_desconto(p["desconto_id"])
-    motivo = request.form.get("motivo", "").strip()
-    if not motivo:
-        flash("Informe o motivo para desfazer.", "erro")
-    elif d["status"] == "CANCELADO":
-        flash("Este desconto está cancelado.", "erro")
-    else:
-        db = get_db()
-        db.execute("DELETE FROM pagamentos_diferenca WHERE id = ?", (pid,))
-        registrar_etapa(d["id"], f"Pagamento da diferença desfeito · {fmt_moeda(p['valor'])}", d["status"], motivo)
-        db.commit()
-        flash("Pagamento da diferença desfeito.", "ok")
-    return redirect(url_for("desconto_detalhe", id=d["id"]))
 
 
 # ---------------------------------------------------------------------------
@@ -960,7 +1032,6 @@ def deducao_nova(id):
     invoice = f.get("invoice", "").strip()
     valor = parse_num(f.get("valor_deduzido"))
     valor = round(valor, 2) if valor is not None else None
-    valor_invoice = parse_num(f.get("valor_invoice"))
     saldo = saldo_a_deduzir(d)
     erro = None
     if not invoice:
@@ -971,8 +1042,6 @@ def deducao_nova(id):
         erro = "Informe o valor deduzido neste invoice."
     elif valor > saldo + TOLERANCIA:
         erro = f"O valor deduzido ({fmt_moeda(valor)}) é maior que o saldo a deduzir ({fmt_moeda(saldo)})."
-    elif valor_invoice is not None and valor > valor_invoice + TOLERANCIA:
-        erro = "O valor deduzido não pode ser maior que o valor do invoice."
     elif get_db().execute("SELECT 1 FROM deducoes WHERE desconto_id = ? AND lower(invoice) = lower(?)",
                           (id, invoice)).fetchone():
         erro = f"O invoice {invoice} já tem uma dedução registrada para este desconto."
@@ -982,9 +1051,9 @@ def deducao_nova(id):
     obs = f.get("obs", "").strip() or None
     db = get_db()
     db.execute(
-        "INSERT INTO deducoes (desconto_id, status, invoice, data_invoice, valor_invoice, valor_deduzido,"
-        " obs_deducao, deduzido_por, deduzido_em) VALUES (?, 'AGUARDANDO_CHEGADA', ?, ?, ?, ?, ?, ?, ?)",
-        (id, invoice, f.get("data_invoice") or None, valor_invoice, valor, obs, g.usuario["id"], agora()),
+        "INSERT INTO deducoes (desconto_id, status, invoice, valor_deduzido, obs_deducao, deduzido_por, deduzido_em)"
+        " VALUES (?, 'AGUARDANDO_CHEGADA', ?, ?, ?, ?, ?)",
+        (id, invoice, valor, obs, g.usuario["id"], agora()),
     )
     restante = round(saldo - valor, 2)
     registrar_etapa(id, f"Dedução registrada · {fmt_moeda(valor)} no invoice {invoice}", d["status"],
@@ -1006,74 +1075,34 @@ def carregar_deducao(pid):
 
 # ---------------------------------------------------------------------------
 # Etapa 3 - Chegada do invoice deduzido (Importação)
-# Etapa 4 - Pagamento da parte do valor segurado (Financeiro)
+# Etapa 4 - O Financeiro é avisado por e-mail para liberar a parte correspondente do valor segurado
 # ---------------------------------------------------------------------------
-@app.route("/deducoes/<int:pid>/<etapa>", methods=["POST"])
+@app.route("/deducoes/<int:pid>/receber", methods=["POST"])
 @login_obrigatorio
-def deducao_avancar(pid, etapa):
-    if etapa not in ("receber", "pagar"):
-        abort(404)
-    if not pode(ETAPAS[etapa]["perfil"]):
+def deducao_receber(pid):
+    if not pode(ETAPAS["receber"]["perfil"]):
         abort(403)
     x, d = carregar_deducao(pid)
     volta = redirect(url_for("desconto_detalhe", id=d["id"]))
-    esperado = "AGUARDANDO_CHEGADA" if etapa == "receber" else "AGUARDANDO_PAGAMENTO"
-    if x["status"] != esperado or d["status"] == "CANCELADO":
-        flash("Esta dedução não está mais nesta etapa. A página foi atualizada.", "erro")
+    if x["status"] != "AGUARDANDO_CHEGADA" or d["status"] == "CANCELADO":
+        flash("Esta dedução não está mais aguardando chegada. A página foi atualizada.", "erro")
         return volta
-    f, uid, ts = request.form, g.usuario["id"], agora()
-    obs = f.get("obs", "").strip() or None
+    data = request.form.get("data_chegada")
+    if not data:
+        flash("Informe a data de chegada na fábrica.", "erro")
+        return volta
+    obs = request.form.get("obs", "").strip() or None
     db = get_db()
-    if etapa == "receber":
-        data = f.get("data_chegada")
-        if not data:
-            flash("Informe a data de chegada na fábrica.", "erro")
-            return volta
-        db.execute("UPDATE deducoes SET status='AGUARDANDO_PAGAMENTO', data_chegada=?, obs_chegada=?,"
-                   " recebido_por=?, recebido_em=? WHERE id=?", (data, obs, uid, ts, pid))
-        acao = f"Chegada confirmada · invoice {x['invoice']}"
-    else:
-        ja_pago = db.execute("SELECT COALESCE(SUM(valor), 0) FROM pagamentos_deducao WHERE deducao_id = ?",
-                             (pid,)).fetchone()[0]
-        pendente = round(x["valor_deduzido"] - ja_pago, 2)
-        dados, erro = ler_pagamento(pendente)
-        if erro:
-            flash(erro, "erro")
-            return volta
-        db.execute("INSERT INTO pagamentos_deducao (deducao_id, valor, data_pagamento, ref_pagamento, obs, pago_por,"
-                   " pago_em) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                   (pid, dados["valor"], dados["data"], dados["ref"], obs, uid, ts))
-        restante = round(pendente - dados["valor"], 2)
-        if restante <= TOLERANCIA:
-            db.execute("UPDATE deducoes SET status='PAGO' WHERE id=?", (pid,))
-        acao = (f"Pagamento do valor segurado · {fmt_moeda(dados['valor'])} do invoice {d['invoice_origem']}"
-                f" (referente à dedução no invoice {x['invoice']}) · Ref. {dados['ref']}")
-        if restante > TOLERANCIA:
-            acao += f" · parcial, restam {fmt_moeda(restante)}"
-    registrar_etapa(d["id"], acao, d["status"], obs)
+    db.execute("UPDATE deducoes SET status='CHEGOU', data_chegada=?, obs_chegada=?, recebido_por=?, recebido_em=?"
+               " WHERE id=?", (data, obs, g.usuario["id"], agora(), pid))
+    criar_notificacao(d["id"], "LIBERAR_CHEGADA", x["valor_deduzido"], deducao_id=pid, detalhe=(
+        f"O invoice {x['invoice']}, com dedução de {fmt_moeda(x['valor_deduzido'])}, chegou à fábrica em "
+        f"{fmt_data(data)}." + (f" Observação: {obs}" if obs else "")))
+    registrar_etapa(d["id"], f"Chegada confirmada · invoice {x['invoice']}", d["status"], obs)
     db.commit()
-    if etapa == "pagar" and restante > TOLERANCIA:
-        flash(f"Pagamento parcial registrado. Restam {fmt_moeda(restante)} a pagar referente ao invoice {x['invoice']}.", "ok")
-    else:
-        flash(f"{ETAPAS[etapa]['titulo']}: concluído.", "ok")
+    flash(f"Chegada confirmada. O Financeiro foi avisado para liberar {fmt_moeda(x['valor_deduzido'])}.", "ok")
+    enviar_novas()
     return volta
-
-
-def ler_pagamento(pendente):
-    """Valida data, valor (total ou parcial) e referência de um pagamento do Financeiro."""
-    f = request.form
-    valor = parse_num(f.get("valor_pago"))
-    dados = {"data": f.get("data_pagamento"), "ref": f.get("ref_pagamento", "").strip(),
-             "valor": round(valor, 2) if valor is not None else None}
-    if not dados["data"]:
-        return dados, "Informe a data do pagamento."
-    if dados["valor"] is None or dados["valor"] <= 0:
-        return dados, "Informe o valor pago."
-    if dados["valor"] > pendente + TOLERANCIA:
-        return dados, f"O valor pago ({fmt_moeda(dados['valor'])}) é maior que o valor pendente ({fmt_moeda(pendente)})."
-    if not dados["ref"]:
-        return dados, "Informe a referência do pagamento."
-    return dados, None
 
 
 # ---------------------------------------------------------------------------
@@ -1082,7 +1111,7 @@ def ler_pagamento(pendente):
 @app.route("/deducoes/<int:pid>/desfazer", methods=["POST"])
 @somente_admin
 def deducao_desfazer(pid):
-    """Desfaz a última etapa da dedução (último pagamento -> chegada -> exclusão da dedução)."""
+    """Desfaz a última etapa da dedução (chegada -> exclusão da dedução)."""
     x, d = carregar_deducao(pid)
     volta = redirect(url_for("desconto_detalhe", id=d["id"]))
     motivo = request.form.get("motivo", "").strip()
@@ -1090,22 +1119,20 @@ def deducao_desfazer(pid):
         flash("Informe o motivo para desfazer.", "erro")
         return volta
     db = get_db()
-    ultimo = db.execute("SELECT * FROM pagamentos_deducao WHERE deducao_id = ? ORDER BY id DESC LIMIT 1",
-                        (pid,)).fetchone()
-    if ultimo:
-        db.execute("DELETE FROM pagamentos_deducao WHERE id = ?", (ultimo["id"],))
-        db.execute("UPDATE deducoes SET status='AGUARDANDO_PAGAMENTO' WHERE id=?", (pid,))
-        acao = f"Pagamento desfeito · {fmt_moeda(ultimo['valor'])} (Ref. {ultimo['ref_pagamento']}) · invoice {x['invoice']}"
-    elif x["status"] == "AGUARDANDO_PAGAMENTO":
+    if x["status"] == "CHEGOU":
         db.execute("UPDATE deducoes SET status='AGUARDANDO_CHEGADA', data_chegada=NULL, obs_chegada=NULL,"
                    " recebido_por=NULL, recebido_em=NULL WHERE id=?", (pid,))
+        anular_notificacoes(d["id"], "LIBERAR_CHEGADA", f"Chegada do invoice {x['invoice']} desfeita: {motivo}",
+                            deducao_id=pid)
         acao = f"Chegada desfeita · invoice {x['invoice']}"
     else:
+        db.execute("UPDATE notificacoes SET deducao_id = NULL WHERE deducao_id = ?", (pid,))
         db.execute("DELETE FROM deducoes WHERE id=?", (pid,))
         acao = f"Dedução excluída · {fmt_moeda(x['valor_deduzido'])} no invoice {x['invoice']}"
     registrar_etapa(d["id"], acao, d["status"], motivo)
     db.commit()
     flash("Etapa desfeita.", "ok")
+    enviar_novas()
     return volta
 
 
@@ -1118,8 +1145,6 @@ def desconto_cancelar(id):
         flash("Este desconto já está encerrado.", "erro")
     elif d["invoices_deducao"]:
         flash("Este desconto já possui deduções. Exclua as deduções antes de cancelar.", "erro")
-    elif d["diferenca_paga"]:
-        flash("Este desconto já teve diferença paga ao fornecedor. Desfaça o pagamento antes de cancelar.", "erro")
     elif not motivo:
         flash("Informe o motivo do cancelamento.", "erro")
     else:
@@ -1127,9 +1152,378 @@ def desconto_cancelar(id):
         db.execute("UPDATE descontos SET status='CANCELADO', motivo_cancelamento=?, cancelado_por=?,"
                    " cancelado_em=? WHERE id=?", (motivo, g.usuario["id"], agora(), id))
         registrar_historico(id, "Desconto cancelado", d["status"], "CANCELADO", motivo)
+        a_liberar = round(d["valor_segurado"] - liberacao_solicitada(d), 2)
+        if a_liberar > TOLERANCIA:
+            criar_notificacao(id, "LIBERAR_CANCELAMENTO", a_liberar,
+                              detalhe=f"O desconto foi cancelado. Motivo: {motivo}")
         db.commit()
-        flash("Desconto cancelado.", "ok")
+        flash("Desconto cancelado." + (f" O Financeiro foi avisado para liberar {fmt_moeda(a_liberar)}."
+                                       if a_liberar > TOLERANCIA else ""), "ok")
+        enviar_novas()
     return redirect(url_for("desconto_detalhe", id=id))
+
+
+# ---------------------------------------------------------------------------
+# Notificações por e-mail ao Financeiro
+# Cada evento que exige ação do Financeiro gera um registro em `notificacoes` e um e-mail
+# informativo (sem acesso ao sistema). O e-mail traz apenas um link para a página de ciência,
+# onde um destinatário principal confirma com um botão que leu e está de acordo.
+# ---------------------------------------------------------------------------
+ARQ_SENHA_EMAIL = os.path.join(INSTANCE_DIR, "gmail_senha_app.txt")
+
+
+def config(chave, padrao=None):
+    r = get_db().execute("SELECT valor FROM configuracoes WHERE chave = ?", (chave,)).fetchone()
+    return r["valor"] if r and r["valor"] is not None else padrao
+
+
+def salvar_config(chave, valor):
+    get_db().execute("INSERT INTO configuracoes (chave, valor) VALUES (?, ?)"
+                     " ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor", (chave, valor))
+
+
+def senha_email():
+    try:
+        with open(ARQ_SENHA_EMAIL) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def salvar_senha_email(senha):
+    os.makedirs(INSTANCE_DIR, exist_ok=True)
+    with open(ARQ_SENHA_EMAIL, "w") as f:
+        f.write(senha.replace(" ", ""))
+    os.chmod(ARQ_SENHA_EMAIL, 0o600)
+
+
+def lembrar_endereco():
+    """Guarda o endereço do sistema para montar o link de ciência (também usado pela tarefa diária)."""
+    if has_request_context():
+        base = request.url_root.rstrip("/")
+        if os.environ.get("HTTPS") == "1" and base.startswith("http://"):
+            base = "https://" + base[len("http://"):]
+        if config("url_base") != base:
+            salvar_config("url_base", base)
+
+
+def criar_notificacao(desconto_id, tipo, valor=None, deducao_id=None, detalhe=None, referencia_id=None):
+    """Registra o evento; o e-mail é enviado depois do commit, por enviar_novas()."""
+    lembrar_endereco()
+    cur = get_db().execute(
+        "INSERT INTO notificacoes (desconto_id, deducao_id, tipo, valor, detalhe, exige_ciencia, referencia_id,"
+        " token, criado_em, criado_por, envio_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AGUARDANDO')",
+        (desconto_id, deducao_id, tipo, round(valor, 2) if valor is not None else None, detalhe,
+         0 if tipo == "ANULACAO" else 1, referencia_id, secrets.token_urlsafe(24), agora(),
+         g.usuario["id"] if g.get("usuario") else None))
+    g.setdefault("notificacoes_novas", []).append(cur.lastrowid)
+    return cur.lastrowid
+
+
+def anular_notificacoes(desconto_id, tipo, motivo, deducao_id=None):
+    """Anula notificações vigentes de um tipo. As que já chegaram ao Financeiro geram e-mail de correção."""
+    db = get_db()
+    sql = "SELECT * FROM notificacoes WHERE desconto_id = ? AND tipo = ? AND anulada_em IS NULL"
+    params = [desconto_id, tipo]
+    if deducao_id is not None:
+        sql += " AND deducao_id = ?"
+        params.append(deducao_id)
+    for n in db.execute(sql, params).fetchall():
+        db.execute("UPDATE notificacoes SET anulada_em = ?, anulada_motivo = ? WHERE id = ?", (agora(), motivo, n["id"]))
+        if n["envio_status"] in ("ENVIADO", "TESTE"):
+            criar_notificacao(desconto_id, "ANULACAO", n["valor"], deducao_id=n["deducao_id"], detalhe=motivo,
+                              referencia_id=n["id"])
+
+
+def destinatarios_ativos():
+    linhas = get_db().execute("SELECT nome, email, tipo FROM destinatarios WHERE ativo = 1 ORDER BY nome").fetchall()
+    return ([(r["nome"], r["email"]) for r in linhas if r["tipo"] == "principal"],
+            [(r["nome"], r["email"]) for r in linhas if r["tipo"] == "copia"])
+
+
+def conteudo_notificacao(n):
+    """Monta assunto e textos do e-mail (sem links para o sistema, apenas o link de ciência)."""
+    db = get_db()
+    d = db.execute(SQL_LISTA + " WHERE d.id = ?", (n["desconto_id"],)).fetchone()
+    x = db.execute("SELECT * FROM deducoes WHERE id = ?", (n["deducao_id"],)).fetchone() if n["deducao_id"] else None
+    valor = fmt_moeda(n["valor"]) if n["valor"] is not None else ""
+    origem, forn = d["invoice_origem"], d["fornecedor"]
+    acoes = {
+        "SEGURAR": f"Segurar {valor} no pagamento do invoice {origem} do fornecedor {forn}.",
+        "SEGURAR_ADICIONAL": f"Segurar o valor adicional de {valor} no invoice {origem} do fornecedor {forn}.",
+        "LIBERAR_CHEGADA": f"Liberar ao fornecedor {forn} {valor} do valor segurado no invoice {origem}.",
+        "LIBERAR_DIFERENCA": f"Liberar ao fornecedor {forn} {valor} do valor segurado no invoice {origem}.",
+        "LIBERAR_CANCELAMENTO": f"Liberar ao fornecedor {forn} {valor} segurado no invoice {origem}.",
+    }
+    if n["tipo"] == "ANULACAO":
+        ref = db.execute("SELECT * FROM notificacoes WHERE id = ?", (n["referencia_id"],)).fetchone()
+        acao = (f"Desconsiderar o e-mail de {fmt_data(ref['criado_em'])}: \"{NOTIFICACOES[ref['tipo']]}\""
+                f"{' de ' + fmt_moeda(ref['valor']) if ref['valor'] is not None else ''}.")
+    else:
+        acao = acoes[n["tipo"]]
+    linhas = [("Fornecedor", forn), ("Invoice inspecionado", origem)]
+    if d["valor_invoice_origem"]:
+        linhas.append(("Valor total do invoice", fmt_moeda(d["valor_invoice_origem"])))
+    if x:
+        linhas.append(("Invoice com dedução", x["invoice"]))
+    if n["valor"] is not None:
+        linhas.append(("Valor", valor))
+    linhas.append(("Referência", f"{codigo_desconto(d)} · {fmt_data(n['criado_em'])}"))
+    base = config("url_base", "")
+    return {
+        "assunto": f"[Descontos] {NOTIFICACOES[n['tipo']]} · {valor + ' · ' if valor else ''}{forn} · {origem}",
+        "titulo": NOTIFICACOES[n["tipo"]],
+        "acao": acao,
+        "detalhe": n["detalhe"],
+        "linhas": linhas,
+        "link_ciencia": f"{base}/ciencia/{n['token']}" if n["exige_ciencia"] else None,
+    }
+
+
+def enviar_notificacao(nid, forcar=False):
+    """Envia (ou registra, no modo de teste) o e-mail de uma notificação. Retorna (ok, mensagem)."""
+    db = get_db()
+    n = db.execute("SELECT * FROM notificacoes WHERE id = ?", (nid,)).fetchone()
+    para, copia = destinatarios_ativos()
+    ts = agora()
+    if config("email_modo", "teste") != "ativo" and not forcar:
+        db.execute("UPDATE notificacoes SET envio_status = 'TESTE', enviado_em = ?, enviado_para = ?, enviado_cc = ?"
+                   " WHERE id = ?", (ts, json.dumps(para), json.dumps(copia), nid))
+        db.commit()
+        return True, None
+    erro = None
+    if not para:
+        erro = "Nenhum destinatário principal ativo cadastrado."
+    elif not config("email_remetente") or not senha_email():
+        erro = "Configure o e-mail remetente (Gmail) e a senha de app."
+    if not erro:
+        c = conteudo_notificacao(n)
+        html = render_template("email/notificacao.html", c=c, copia=copia)
+        texto = render_template("email/notificacao.txt", c=c, copia=copia)
+        for tentativa in (1, 2):
+            try:
+                email_envio.enviar(config("email_remetente"), config("email_nome", "Controle de Descontos"),
+                                   senha_email(), para, copia, c["assunto"], texto, html)
+                erro = None
+                break
+            except email_envio.FalhaEnvio as e:
+                erro = str(e)
+    if erro:
+        db.execute("UPDATE notificacoes SET envio_status = 'FALHOU', tentativas = tentativas + 1, ultimo_erro = ?"
+                   " WHERE id = ?", (erro, nid))
+    else:
+        db.execute("UPDATE notificacoes SET envio_status = 'ENVIADO', tentativas = tentativas + 1, ultimo_erro = NULL,"
+                   " enviado_em = ?, enviado_para = ?, enviado_cc = ? WHERE id = ?",
+                   (ts, json.dumps(para), json.dumps(copia), nid))
+    db.commit()
+    return erro is None, erro
+
+
+def enviar_novas():
+    """Envia os e-mails das notificações criadas nesta requisição (chamar após o commit)."""
+    for nid in g.pop("notificacoes_novas", []):
+        ok, erro = enviar_notificacao(nid)
+        if not ok:
+            flash(f"Atenção: o e-mail ao Financeiro não foi enviado ({erro}). Ele pode ser reenviado em "
+                  "Notificações e será tentado novamente automaticamente.", "erro")
+
+
+def alerta_email():
+    """Resumo para alertas do administrador no painel."""
+    if not g.get("usuario") or g.usuario["perfil"] != "admin":
+        return None
+    db = get_db()
+    return {
+        "modo_teste": config("email_modo", "teste") != "ativo",
+        "falhas": db.execute("SELECT COUNT(*) FROM notificacoes WHERE envio_status IN ('FALHOU', 'AGUARDANDO')"
+                             ).fetchone()[0],
+        "sem_principal": not destinatarios_ativos()[0],
+    }
+
+
+def tarefa_envios():
+    """Usada pela tarefa diária: reenvia e-mails que falharam ou ficaram aguardando."""
+    with app.app_context():
+        if config("email_modo", "teste") != "ativo":
+            print("Envio de e-mails em modo de teste: nada a reenviar.")
+            return
+        ids = [r[0] for r in get_db().execute(
+            "SELECT id FROM notificacoes WHERE envio_status IN ('FALHOU', 'AGUARDANDO') ORDER BY id")]
+        for nid in ids:
+            ok, erro = enviar_notificacao(nid)
+            print(f"Notificação {nid}: {'enviada' if ok else 'falhou - ' + erro}")
+        if not ids:
+            print("Nenhum e-mail pendente de envio.")
+
+
+# --- Página de ciência (acesso pelo link do e-mail, sem login) --------------------------------
+def principais_da_notificacao(n):
+    if n["enviado_para"]:
+        return [tuple(p) for p in json.loads(n["enviado_para"])]
+    return destinatarios_ativos()[0]
+
+
+@app.route("/ciencia/<token>", methods=["GET", "POST"])
+def ciencia(token):
+    db = get_db()
+    n = db.execute("SELECT * FROM notificacoes WHERE token = ?", (token,)).fetchone()
+    if n is None or not n["exige_ciencia"]:
+        abort(404)
+    principais = principais_da_notificacao(n)
+    if request.method == "POST" and not n["ciencia_em"] and not n["anulada_em"]:
+        escolhido = request.form.get("quem", "")
+        pessoa = next((p for p in principais if p[1] == escolhido), None)
+        if pessoa:
+            d = db.execute("SELECT status FROM descontos WHERE id = ?", (n["desconto_id"],)).fetchone()
+            quem = f"{pessoa[0]} <{pessoa[1]}>"
+            db.execute("UPDATE notificacoes SET ciencia_em = ?, ciencia_por = ? WHERE id = ?", (agora(), quem, n["id"]))
+            registrar_etapa(n["desconto_id"], f"Ciência do Financeiro · {NOTIFICACOES[n['tipo']]}"
+                            f"{' · ' + fmt_moeda(n['valor']) if n['valor'] is not None else ''}", d["status"],
+                            f"Confirmado por {quem}")
+            db.commit()
+            n = db.execute("SELECT * FROM notificacoes WHERE id = ?", (n["id"],)).fetchone()
+    return render_template("ciencia.html", n=n, c=conteudo_notificacao(n), principais=principais)
+
+
+# --- Tela de gestão (somente administrador) ----------------------------------------------------
+@app.route("/notificacoes")
+@somente_admin
+def notificacoes():
+    db = get_db()
+    filtro = request.args.get("f", "pendentes")
+    where = {
+        "pendentes": f"({SQL_CIENCIA_PENDENTE}) OR n.envio_status IN ('FALHOU', 'AGUARDANDO')",
+        "falhas": "n.envio_status IN ('FALHOU', 'AGUARDANDO')",
+    }.get(filtro, "1 = 1")
+    lista = db.execute(
+        "SELECT n.*, f.nome AS fornecedor, d.invoice_origem, x.invoice FROM notificacoes n"
+        " JOIN descontos d ON d.id = n.desconto_id JOIN fornecedores f ON f.id = d.fornecedor_id"
+        f" LEFT JOIN deducoes x ON x.id = n.deducao_id WHERE {where} ORDER BY n.id DESC LIMIT 300").fetchall()
+    destinatarios = db.execute("SELECT * FROM destinatarios ORDER BY ativo DESC, tipo DESC, nome").fetchall()
+    teste_pendentes = db.execute(
+        f"SELECT COUNT(*) FROM notificacoes n WHERE n.envio_status = 'TESTE' AND {SQL_CIENCIA_PENDENTE}").fetchone()[0]
+    return render_template(
+        "notificacoes.html", lista=lista, filtro=filtro, destinatarios=destinatarios,
+        modo=config("email_modo", "teste"), remetente=config("email_remetente", ""),
+        nome_remetente=config("email_nome", "Controle de Descontos"), tem_senha=bool(senha_email()),
+        teste_pendentes=teste_pendentes, alerta_email=alerta_email(),
+        json_loads=json.loads)
+
+
+@app.route("/notificacoes/configuracao", methods=["POST"])
+@somente_admin
+def notificacoes_configuracao():
+    f = request.form
+    remetente = f.get("remetente", "").strip().lower()
+    modo = "ativo" if f.get("modo") == "ativo" else "teste"
+    if remetente and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", remetente):
+        flash("E-mail remetente inválido.", "erro")
+        return redirect(url_for("notificacoes"))
+    if f.get("senha", "").strip():
+        salvar_senha_email(f["senha"].strip())
+    if modo == "ativo" and (not remetente or not senha_email()):
+        flash("Para ativar o envio, informe o e-mail remetente e a senha de app.", "erro")
+        modo = "teste"
+    salvar_config("email_remetente", remetente)
+    salvar_config("email_nome", f.get("nome", "").strip() or "Controle de Descontos")
+    salvar_config("email_modo", modo)
+    get_db().commit()
+    flash("Configuração de envio salva." + (" Envio ATIVO." if modo == "ativo" else " Modo de teste."), "ok")
+    return redirect(url_for("notificacoes"))
+
+
+@app.route("/notificacoes/teste", methods=["POST"])
+@somente_admin
+def notificacoes_teste():
+    destino = request.form.get("email_teste", "").strip()
+    if not config("email_remetente") or not senha_email():
+        flash("Configure o e-mail remetente e a senha de app antes do teste.", "erro")
+    elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", destino):
+        flash("Informe um e-mail válido para o teste.", "erro")
+    else:
+        try:
+            email_envio.enviar(config("email_remetente"), config("email_nome", "Controle de Descontos"), senha_email(),
+                               [("", destino)], [], "[Descontos] E-mail de teste",
+                               "Este é um e-mail de teste do Controle de Descontos. O envio está funcionando.",
+                               "<p>Este é um e-mail de teste do <strong>Controle de Descontos</strong>. "
+                               "O envio está funcionando.</p>")
+            flash(f"E-mail de teste enviado para {destino}. Confira a caixa de entrada (e o lixo eletrônico).", "ok")
+        except email_envio.FalhaEnvio as e:
+            flash(f"O teste falhou: {e}", "erro")
+    return redirect(url_for("notificacoes"))
+
+
+@app.route("/notificacoes/destinatarios", methods=["POST"])
+@somente_admin
+def notificacoes_destinatarios():
+    f = request.form
+    db = get_db()
+    nome, email = f.get("nome", "").strip(), f.get("email", "").strip().lower()
+    tipo = "copia" if f.get("tipo") == "copia" else "principal"
+    ativo = 0 if f.get("ativo") == "0" else 1
+    if not nome or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        flash("Informe nome e um e-mail válido.", "erro")
+        return redirect(url_for("notificacoes") + "#destinatarios")
+    try:
+        if f.get("id", "").isdigit():
+            db.execute("UPDATE destinatarios SET nome=?, email=?, tipo=?, ativo=? WHERE id=?",
+                       (nome, email, tipo, ativo, int(f["id"])))
+            flash("Destinatário atualizado.", "ok")
+        else:
+            db.execute("INSERT INTO destinatarios (nome, email, tipo, ativo, criado_em) VALUES (?, ?, ?, 1, ?)",
+                       (nome, email, tipo, agora()))
+            flash("Destinatário cadastrado.", "ok")
+        db.commit()
+    except sqlite3.IntegrityError:
+        flash("Este e-mail já está cadastrado.", "erro")
+    return redirect(url_for("notificacoes") + "#destinatarios")
+
+
+@app.route("/notificacoes/<int:nid>/enviar", methods=["POST"])
+@somente_admin
+def notificacao_enviar(nid):
+    if get_db().execute("SELECT 1 FROM notificacoes WHERE id = ?", (nid,)).fetchone() is None:
+        abort(404)
+    lembrar_endereco()
+    ok, erro = enviar_notificacao(nid)
+    if ok:
+        flash("E-mail enviado." if config("email_modo", "teste") == "ativo" else
+              "Registrado em modo de teste (nenhum e-mail saiu).", "ok")
+    else:
+        flash(f"O envio falhou: {erro}", "erro")
+    return redirect(request.form.get("voltar") or url_for("notificacoes"))
+
+
+@app.route("/notificacoes/enviar-pendentes", methods=["POST"])
+@somente_admin
+def notificacoes_enviar_pendentes():
+    """Envia as que falharam/aguardam e, se pedido, as geradas em modo de teste ainda sem ciência."""
+    if config("email_modo", "teste") != "ativo":
+        flash("Ative o envio antes de enviar as notificações pendentes.", "erro")
+        return redirect(url_for("notificacoes"))
+    lembrar_endereco()
+    status = ["'FALHOU'", "'AGUARDANDO'"]
+    sql = f"SELECT n.id FROM notificacoes n WHERE n.envio_status IN ({', '.join(status)})"
+    if request.form.get("incluir_teste") == "1":
+        sql += f" OR (n.envio_status = 'TESTE' AND {SQL_CIENCIA_PENDENTE})"
+    ids = [r[0] for r in get_db().execute(sql + " ORDER BY n.id")]
+    falhas = [erro for ok, erro in (enviar_notificacao(i) for i in ids) if not ok]
+    if falhas:
+        flash(f"{len(ids) - len(falhas)} enviado(s), {len(falhas)} com falha: {falhas[0]}", "erro")
+    else:
+        flash(f"{len(ids)} e-mail(s) enviado(s).", "ok")
+    return redirect(url_for("notificacoes"))
+
+
+@app.route("/notificacoes/<int:nid>/previa")
+@somente_admin
+def notificacao_previa(nid):
+    n = get_db().execute("SELECT * FROM notificacoes WHERE id = ?", (nid,)).fetchone()
+    if n is None:
+        abort(404)
+    lembrar_endereco()
+    para, copia = destinatarios_ativos()
+    return render_template("email/notificacao.html", c=conteudo_notificacao(n), copia=copia, previa=True)
 
 
 # ---------------------------------------------------------------------------
