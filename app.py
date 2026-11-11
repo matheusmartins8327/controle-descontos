@@ -32,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.3"
+VERSAO = "3.4"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -542,16 +542,9 @@ def calcular(inv):
         " WHERE x.invoice_id = ? ORDER BY x.id", (iid,)).fetchall()
     r["deducoes_aplicadas"] = round(sum(x["valor"] for x in r["deducoes_recebidas"]), 2)
     r["valor_invoice"] = round(r["itens_total"] - r["deducoes_aplicadas"], 2)
-    # com deduções, cada item recebe o desconto proporcional ao seu valor (apenas exibição):
-    # preço com desconto = preço original x (total com desconto / total original)
-    fator = r["valor_invoice"] / r["itens_total"] if r["itens_total"] else 1
-    r["itens_com_desconto"] = []
-    acumulado = 0
-    for n, x in enumerate(r["itens"], 1):
-        total = round(x["quantidade"] * x["valor_unit"], 2)
-        total_desc = round(total * fator, 2) if n < len(r["itens"]) else round(r["valor_invoice"] - acumulado, 2)
-        acumulado += total_desc
-        r["itens_com_desconto"].append({"preco": x["valor_unit"] * fator, "total": total_desc})
+    # com deduções, cada item recebe o desconto proporcional ao seu valor (apenas exibição)
+    linhas, _t, _td = itens_com_desconto([dict(x) for x in r["itens"]], r["deducoes_aplicadas"])
+    r["itens_com_desconto"] = [{"preco": x["preco_desc"], "total": x["total_desc"]} for x in linhas]
 
     # desconto deste invoice (por má qualidade)
     d = db.execute("SELECT * FROM descontos WHERE invoice_id = ?", (iid,)).fetchone()
@@ -1203,6 +1196,115 @@ def importar_itens():
         it["quantidade_fmt"] = fmt_qtd(it["quantidade"])
         it["valor_unit_fmt"] = fmt_num(it["valor_unit"])
     return jsonify({"itens": itens, "erros": erros})
+
+
+def itens_com_desconto(itens, deducoes):
+    """Calcula, para exibição/exportação, o preço e o total com desconto de cada item (rateio proporcional)."""
+    total = round(sum(it["quantidade"] * it["valor_unit"] for it in itens), 2)
+    total_desc = round(total - deducoes, 2)
+    fator = total_desc / total if total else 1
+    linhas, acumulado = [], 0
+    for n, it in enumerate(itens, 1):
+        t = round(it["quantidade"] * it["valor_unit"], 2)
+        td = round(t * fator, 2) if n < len(itens) else round(total_desc - acumulado, 2)
+        acumulado += td
+        linhas.append(dict(it, total=t, preco_desc=it["valor_unit"] * fator, total_desc=td))
+    return linhas, total, total_desc
+
+
+def planilha_itens(itens, deducoes, moeda, cabecalho):
+    """Gera o .xlsx da tabela de itens com os valores calculados."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    linhas, total, total_desc = itens_com_desconto(itens, deducoes)
+    com_desc = deducoes > TOLERANCIA
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Itens"
+    for rotulo, valor in cabecalho:
+        ws.append([rotulo, valor])
+        ws.cell(ws.max_row, 1).font = Font(bold=True)
+    ws.append([])
+    colunas = ["Código", "Descrição", "Quantidade", f"Preço Original ({moeda})", f"Total ({moeda})"]
+    if com_desc:
+        colunas += [f"Preço com Desconto ({moeda})", f"Total com Desconto ({moeda})"]
+    ws.append(colunas)
+    linha_cab = ws.max_row
+    destaque = PatternFill("solid", start_color="E6F3EE")
+    for c in ws[linha_cab]:
+        c.font = Font(bold=True)
+        c.alignment = Alignment(horizontal="center", wrap_text=True)
+    for it in linhas:
+        valores = [it.get("codigo") or "", it.get("item") or "", it["quantidade"], it["valor_unit"], it["total"]]
+        if com_desc:
+            valores += [round(it["preco_desc"], 4), it["total_desc"]]
+        ws.append(valores)
+    ultima = ws.max_row
+    ws.append(["", "Valor total do invoice", None, None, total] + (["", total_desc] if com_desc else []))
+    for c in ws[ws.max_row]:
+        c.font = Font(bold=True)
+    if com_desc:
+        ws.append(["", "(−) Descontos aplicados", None, None, deducoes])
+        ws.append(["", "Valor final", None, None, total_desc])
+        for r in (ws.max_row - 1, ws.max_row):
+            for c in ws[r]:
+                c.font = Font(bold=True)
+    for linha in ws.iter_rows(min_row=linha_cab + 1, max_row=ws.max_row):
+        for c in linha:
+            if c.column == 3:
+                c.number_format = "#,##0.##"
+            elif c.column == 6:
+                c.number_format = "#,##0.0000"
+            elif c.column >= 4:
+                c.number_format = "#,##0.00"
+            if com_desc and c.column >= 6 and c.row <= ultima:
+                c.fill = destaque
+    for col, largura in zip("ABCDEFG", (16, 42, 12, 18, 16, 22, 22)):
+        ws.column_dimensions[col].width = largura
+    ws.freeze_panes = ws.cell(linha_cab + 1, 1)
+    saida = io.BytesIO()
+    wb.save(saida)
+    return saida.getvalue()
+
+
+def resposta_xlsx(conteudo, nome):
+    nome = re.sub(r"[^A-Za-z0-9._-]+", "_", nome)
+    return Response(conteudo, headers={"Content-Disposition": f"attachment; filename={nome}"},
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.route("/invoices/<int:id>/itens.xlsx")
+@login_obrigatorio
+def exportar_itens(id):
+    r = carregar_invoice(id)
+    itens = [dict(x) for x in r["itens"]]
+    cabecalho = [("Fornecedor", r["fornecedor"]), ("Invoice", r["numero"]), ("Moeda", r["moeda"]),
+                 ("Data de assinatura", fmt_data(r["data_assinatura"])), ("Condição de pagamento", condicao_texto(r))]
+    for x in r["deducoes_recebidas"]:
+        cabecalho.append((f"Desconto deduzido (invoice {x['invoice_origem']})", x["valor"]))
+    return resposta_xlsx(planilha_itens(itens, r["deducoes_aplicadas"], r["moeda"], cabecalho),
+                         f"itens-{r['fornecedor']}-{r['numero']}.xlsx")
+
+
+@app.route("/invoices/itens-tela.xlsx", methods=["POST"])
+@login_obrigatorio
+def exportar_itens_tela():
+    """Exporta os itens que estão na tela de cadastro/correção, antes de salvar."""
+    if not pode("importacao"):
+        abort(403)
+    dados, itens, _erros = ler_form_invoice()
+    itens = [it for it in itens if it["quantidade"] and it["valor_unit"] is not None]
+    if not itens:
+        flash("Não há itens válidos para exportar.", "erro")
+        return redirect(request.referrer or url_for("invoice_novo"))
+    deducoes = parse_num(request.form.get("deducoes_existentes")) or 0
+    deducoes += sum(parse_num(v) or 0 for k, v in request.form.items() if k.startswith("ded_"))
+    cabecalho = [("Fornecedor", dados["fornecedor"]), ("Invoice", dados["numero"] or "(não salvo)"),
+                 ("Moeda", dados["moeda"]), ("Situação", "Rascunho exportado antes de salvar")]
+    if deducoes > TOLERANCIA:
+        cabecalho.append(("Descontos aplicados", round(deducoes, 2)))
+    return resposta_xlsx(planilha_itens(itens, round(deducoes, 2), dados["moeda"], cabecalho),
+                         f"itens-{dados['fornecedor'] or 'invoice'}-{dados['numero'] or 'rascunho'}.xlsx")
 
 
 @app.route("/invoices/modelo-itens.xlsx")

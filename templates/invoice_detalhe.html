@@ -54,7 +54,8 @@
 
 {# ---------- dados e itens ---------- #}
 <section class="bloco">
-  <h2>Dados do invoice {% if imp %}<a class="btn pequeno" href="{{ url_for('invoice_editar', id=r.id) }}">Editar</a>{% endif %}</h2>
+  <h2>Dados do invoice {% if imp %}<a class="btn pequeno" href="{{ url_for('invoice_editar', id=r.id) }}">Editar</a>{% endif %}
+    <a class="btn pequeno" href="{{ url_for('exportar_itens', id=r.id) }}">Exportar itens para Excel</a></h2>
   <dl class="dl-colunas">
     <dt>Fornecedor</dt><dd>{{ r.fornecedor }}</dd>
     <dt>Nº do invoice</dt><dd>{{ r.numero }}</dd>

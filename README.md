@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v3.3)
+# Controle de Invoices e Descontos (v3.4)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -101,6 +101,7 @@ O invoice fica **Concluído** quando está pago, o desconto (se houver) foi dedu
 - Com desconto deduzido no invoice, aparecem duas colunas calculadas (somente exibição): **Preço com desconto** = preço original × (total com desconto ÷ total original) e **Total com desconto** por item, cuja soma é exatamente o total original − descontos aplicados.
 - Para invoices extensos, use **Carregar itens de uma planilha Excel** na criação (ou correção) do invoice: colunas **Código, Descrição, Quantidade, Preço Original** (o botão **Baixar modelo** traz a planilha pronta). Aceita .xlsx e .csv, até 2.000 itens; linhas inválidas são apontadas pelo número.
 - Código, quantidade e preço são obrigatórios em cada item.
+- **Exportar itens para Excel**: na tela do invoice (itens salvos) ou no cadastro/correção (o que está na tela, antes de salvar), com Código, Descrição, Quantidade, Preço Original, Total e, havendo desconto, Preço com Desconto, Total com Desconto e os totais.
 
 ### Regras de pagamento
 - **Condição de pagamento em parcelas** que somam 100% (ex.: 25% antecipado + 75% 60 dias após a HAWB).

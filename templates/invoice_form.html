@@ -77,6 +77,8 @@
   </table>
   </div>
   <button type="button" class="btn pequeno" id="add-item">+ Adicionar item</button>
+  <button type="button" class="btn pequeno" id="exportar-itens" title="Exporta os itens da tela com os valores calculados">Exportar itens para Excel</button>
+  {% if editando %}<input type="hidden" name="deducoes_existentes" value="{{ (deducoes_aplicadas or 0)|num }}">{% endif %}
 
   {% if not editando %}
   <section id="janela-descontos" class="janela-descontos" hidden>
@@ -197,6 +199,14 @@
       el.classList.toggle('erro-texto', deducoes > totalItens + 0.005);
     }
   }
+
+  // ---- exportar os itens da tela (antes de salvar) para Excel
+  document.getElementById('exportar-itens').addEventListener('click', () => {
+    const form = document.getElementById('form-invoice'), acao = form.getAttribute('action');
+    form.action = '{{ url_for('exportar_itens_tela') }}';
+    form.submit();  // submit() não dispara a validação dos campos obrigatórios
+    if (acao === null) form.removeAttribute('action'); else form.action = acao;
+  });
 
   // ---- carga de itens por planilha
   const botaoCarga = document.getElementById('carregar-itens');
