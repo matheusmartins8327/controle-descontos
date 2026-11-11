@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v3.1)
+# Controle de Invoices e Descontos (v3.2)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -85,26 +85,26 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 
 | # | Etapa | Quem informa | Informações |
 |---|-------|--------------|-------------|
-| 1 | Criação do invoice | Importação | Fornecedor, nº, moeda, **data de assinatura**, condição de pagamento, agente de carga, despachante, grupo de consolidação, coleta programada e itens (código, descrição, quantidade, preço original e preço com desconto), digitados ou **carregados de uma planilha Excel**. Ao criar, aparece a **janela de descontos aprovados** do fornecedor (mesma moeda) para deduzir um ou mais, total ou parcialmente |
+| 1 | Criação do invoice | Importação | Fornecedor, nº, moeda, **data de assinatura**, **condição de pagamento** (uma ou mais parcelas), agente de carga, despachante, grupo de consolidação, coleta programada e itens (código, descrição, quantidade e preço original), digitados ou **carregados de uma planilha Excel**. Aparece a **janela de descontos aprovados** do fornecedor (mesma moeda) para deduzir um ou mais, total ou parcialmente; o **valor final** é calculado após as deduções |
 | 2 | Coleta | Importação | Data da HAWB e data real de coleta |
-| 3 | Embarque | Importação / Financeiro | ETD e ETA planejados e reais; banco de débito (Financeiro) |
-| 4 | Desembaraço | Importação | Data de registro no Brasil; DUIMP e boleto do ICMS (links do OneDrive) |
-| 5 | Canal | Importação | Cor do canal, exigências da ANVISA, data programada de chegada e data de desembaraço |
-| 6 | Chegada na fábrica | Importação | Data real de chegada |
-| 7 | Inspeção | Engenharia (administrador) | Fim da inspeção e se há desconto; se sim: valor, data do relatório e aprovação do fornecedor (Enviado → Aprovado) |
-| 8 | Pagamento | Financeiro | Pagamento do invoice (integral, ou parcial quando há valor segurado), com Swift |
-| 9 | Dedução e liberação | Importação / Financeiro | O desconto é deduzido em próximo(s) invoice(s); quando eles chegam, o Financeiro libera o valor segurado, com Swift |
+| 3 | Embarque | Importação / Financeiro | ETD e ETA planejados (obrigatórios para salvar), ETD e ETA reais; **banco de débito** (Financeiro, obrigatório para concluir a etapa) |
+| 4 | Desembaraço | Importação | Data de registro no Brasil → **DUIMP e boleto do ICMS anexados** (obrigatórios para seguir) → data de parametrização, canal, exigências da ANVISA e data de desembaraço |
+| 5 | Transporte | Importação | Data programada de chegada (obrigatória) e data real de chegada na fábrica |
+| 6 | Inspeção | Engenharia (administrador) | Fim da inspeção e se há desconto; se sim: valor, data do relatório e aprovação do fornecedor (Enviado → Aprovado) |
+| 7 | Pagamento | Financeiro | Pagamento de cada parcela (integral, ou parcial quando há valor segurado), com Swift |
+| 8 | Dedução e liberação | Importação / Financeiro | O desconto é deduzido em próximo(s) invoice(s); quando eles chegam, o Financeiro libera o valor segurado, com Swift |
 
 O invoice fica **Concluído** quando está pago, o desconto (se houver) foi deduzido e liberado, e todos os pagamentos têm Swift.
 
 ### Itens e carga por planilha
-- **Valor total do invoice** = soma de quantidade × preço com desconto de cada item. O **preço original** é apenas histórico (não entra no total).
-- Para invoices extensos, use **Carregar itens de uma planilha Excel** na criação (ou edição) do invoice: colunas **Código, Descrição, Quantidade, Preço Original, Preço Descontado** (o botão **Baixar modelo** traz a planilha pronta). Aceita .xlsx e .csv, até 2.000 itens; linhas inválidas são apontadas pelo número.
-- Código, quantidade e preço com desconto são obrigatórios em cada item.
+- **Valor total do invoice** = soma de quantidade × preço original de cada item. **Valor final** = valor total − deduções de descontos aplicadas no invoice.
+- Para invoices extensos, use **Carregar itens de uma planilha Excel** na criação (ou correção) do invoice: colunas **Código, Descrição, Quantidade, Preço Original** (o botão **Baixar modelo** traz a planilha pronta). Aceita .xlsx e .csv, até 2.000 itens; linhas inválidas são apontadas pelo número.
+- Código, quantidade e preço são obrigatórios em cada item.
 
 ### Regras de pagamento
-- **Vencimento**: antecipado = data de assinatura + 5 dias; a prazo = data da HAWB + prazo da condição. Antes da HAWB, a previsão usa a coleta programada (marcada como **estimada**).
-- **A pagar** = valor total do invoice − deduções de descontos anteriores aplicadas nele.
+- **Condição de pagamento em parcelas** que somam 100% (ex.: 25% antecipado + 75% 60 dias após a HAWB).
+- **Vencimento de cada parcela**: antecipada = data de assinatura + 5 dias; a prazo = data da HAWB (registrada na Coleta) + dias. **Antes da HAWB, a parcela a prazo fica sem vencimento** (não há estimativa).
+- Pagamentos são distribuídos nas parcelas por ordem de vencimento; o valor segurado sai das parcelas que vencem por último.
 - **Valor segurado**: com desconto, o invoice é pago menos o valor do desconto. Só é possível segurar o que ainda não foi pago: se o invoice já foi pago (ex.: antecipado), o desconto é apenas deduzido no próximo invoice.
 - **Liberação do segurado**: conforme os invoices com a dedução chegam à fábrica. Se o desconto for revalidado para baixo (ou zerado), a diferença fica disponível na hora.
 - **Swift**: pode ser anexado depois (fica pendente), mas o processo só termina com todos os Swifts.
@@ -121,6 +121,9 @@ Filtros por período, moeda e fornecedor e **exportação para Excel (CSV)**.
 Cada documento é um link: salve o arquivo na pasta do OneDrive (o sistema sugere `ano/Fornecedor - Invoice`), copie o link e cole no invoice.
 O link da pasta principal é configurado em **Sistema** e fica somente no servidor (não vai para o GitHub).
 A tabela de documentos já prevê uma futura integração automática com o OneDrive (Microsoft Graph, que depende de liberação da TI).
+
+### Correções
+Quem lança cada informação pode corrigi-la: a Importação corrige dados, itens, condição, etapas, deduções e documentos; o Financeiro corrige pagamentos, Swifts e banco de débito; o Administrador corrige a inspeção (o valor do desconto, pela revalidação). Toda correção fica no histórico com o valor anterior e o novo.
 
 ## Usuários e perfis
 - Até **10 usuários ativos**.

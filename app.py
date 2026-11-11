@@ -32,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.1"
+VERSAO = "3.2"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -47,7 +47,8 @@ PERFIS = {
 PERFIS_ANTIGOS = {"qualidade": "consulta", "compras": "importacao", "recebimento": "importacao"}
 
 MOEDAS = {"USD": "US$", "EUR": "€", "BRL": "R$"}
-CONDICOES = {"ANTECIPADO": "Antecipado", "PRAZO": "Prazo após a HAWB"}
+# Condição de pagamento: uma ou mais parcelas (ex.: 25% antecipado + 75% 60 dias após a HAWB)
+CONDICOES = {"ANTECIPADO": "Antecipado", "PRAZO": "Após a HAWB"}
 PRAZO_ANTECIPADO_DIAS = 5          # pagamento antecipado: data de assinatura + 5 dias
 CUSTO_IMPORTACAO_ESTIMADO = 0.40   # visibilidade do Financeiro a partir do embarque
 CORES_CANAL = ["Verde", "Amarelo", "Vermelho", "Cinza"]
@@ -64,28 +65,29 @@ TIPOS_PAGAMENTO = {"PRINCIPAL": "Pagamento do invoice", "LIBERACAO": "Liberaçã
 CAMPOS_ETAPA = {
     "COLETA": [("data_hawb", "Data da HAWB", "data", True),
                ("data_coleta", "Data real de coleta", "data", True)],
-    "EMBARQUE": [("etd_planejado", "ETD planejado", "data", False),
+    "EMBARQUE": [("etd_planejado", "ETD planejado", "data", True),
                  ("etd_real", "ETD real", "data", True),
-                 ("eta_planejado", "ETA planejado", "data", False),
+                 ("eta_planejado", "ETA planejado", "data", True),
                  ("eta_real", "ETA real", "data", True)],
-    "DESEMBARACO": [("data_registro_br", "Data de registro no Brasil", "data", True)],
-    "CANAL": [("cor_canal", "Cor do canal", "canal", True),
-              ("exigencias_anvisa", "Exigências da ANVISA", "texto", False),
-              ("data_prog_chegada", "Data programada de chegada", "data", False),
-              ("data_desembaraco", "Data de desembaraço", "data", True)],
-    "CHEGADA": [("data_chegada", "Data real de chegada na fábrica", "data", True)],
+    "DESEMBARACO": [("data_registro_br", "Data de registro no Brasil", "data", True),
+                    ("data_parametrizacao", "Data de parametrização", "data", True),
+                    ("cor_canal", "Canal", "canal", True),
+                    ("exigencias_anvisa", "Exigências da ANVISA", "texto", False),
+                    ("data_desembaraco", "Data de desembaraço", "data", True)],
+    "CHEGADA": [("data_prog_chegada", "Data programada de chegada", "data", True),
+                ("data_chegada", "Data real de chegada na fábrica", "data", True)],
 }
-TITULO_ETAPA = {
-    "COLETA": "Coleta", "EMBARQUE": "Embarque", "DESEMBARACO": "Desembaraço",
-    "CANAL": "Canal", "CHEGADA": "Chegada na fábrica",
-}
+# campos que precisam estar preenchidos para salvar a etapa (os demais podem ser informados depois)
+CAMPOS_PARA_SALVAR = {"EMBARQUE": ["etd_planejado", "eta_planejado"], "CHEGADA": ["data_prog_chegada"]}
+# após o registro no Brasil, o desembaraço só segue com estes documentos anexados
+DOCUMENTOS_REGISTRO = ("DUIMP", "BOLETO_ICMS")
+TITULO_ETAPA = {"COLETA": "Coleta", "EMBARQUE": "Embarque", "DESEMBARACO": "Desembaraço", "CHEGADA": "Transporte"}
 # Situação atual do invoice (calculada) e quem age nela
 SITUACOES = {
     "COLETA": ("Aguardando coleta", "importacao"),
     "EMBARQUE": ("Em embarque", "importacao"),
     "DESEMBARACO": ("Em desembaraço", "importacao"),
-    "CANAL": ("Acompanhamento do canal", "importacao"),
-    "CHEGADA": ("Aguardando chegada", "importacao"),
+    "CHEGADA": ("Em transporte para a fábrica", "importacao"),
     "INSPECAO": ("Aguardando inspeção", "admin"),
     "PAGAMENTO": ("Aguardando pagamento", "financeiro"),
     "DEDUCAO": ("Desconto aguardando dedução", "importacao"),
@@ -94,7 +96,7 @@ SITUACOES = {
     "CONCLUIDO": ("Concluído", None),
     "CANCELADO": ("Cancelado", None),
 }
-ORDEM_LOGISTICA = ["COLETA", "EMBARQUE", "DESEMBARACO", "CANAL", "CHEGADA"]
+ORDEM_LOGISTICA = ["COLETA", "EMBARQUE", "DESEMBARACO", "CHEGADA"]
 
 TOLERANCIA = 0.005  # diferença de arredondamento aceita (meio centavo)
 
@@ -159,8 +161,8 @@ CREATE TABLE IF NOT EXISTS invoices (
     moeda TEXT NOT NULL,
     -- Criação (Importação)
     data_assinatura TEXT NOT NULL,
-    condicao_tipo TEXT NOT NULL,          -- ANTECIPADO | PRAZO
-    condicao_dias INTEGER,                -- dias após a HAWB (condição PRAZO)
+    condicao_tipo TEXT NOT NULL,          -- ANTECIPADO | PRAZO | MISTA (detalhe em condicao_parcelas)
+    condicao_dias INTEGER,                -- dias após a HAWB (condição de parcela única a prazo)
     agente_carga TEXT,
     despachante TEXT,
     grupo_consolidacao TEXT,
@@ -175,6 +177,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     eta_real TEXT,
     banco_debito TEXT,                    -- informado pelo Financeiro
     data_registro_br TEXT,
+    data_parametrizacao TEXT,
     cor_canal TEXT,
     exigencias_anvisa TEXT,
     data_prog_chegada TEXT,
@@ -196,8 +199,17 @@ CREATE TABLE IF NOT EXISTS invoice_itens (
     codigo TEXT,                          -- código do item
     item TEXT NOT NULL,                   -- descrição do item
     quantidade REAL NOT NULL,
-    valor_unit_original REAL,             -- preço original: apenas histórico, não entra no total
-    valor_unit REAL NOT NULL              -- preço com desconto: compõe o valor total do invoice
+    valor_unit_original REAL,             -- (versões anteriores) preço original separado
+    valor_unit REAL NOT NULL              -- preço original do item: total = quantidade x preço
+);
+-- Parcelas da condição de pagamento (percentuais somam 100%)
+CREATE TABLE IF NOT EXISTS condicao_parcelas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    ordem INTEGER NOT NULL,
+    percentual REAL NOT NULL,
+    tipo TEXT NOT NULL,                   -- ANTECIPADO (assinatura + 5 dias) | PRAZO (HAWB + dias)
+    dias INTEGER
 );
 -- Desconto por má qualidade de um invoice (no máximo um por invoice)
 CREATE TABLE IF NOT EXISTS descontos (
@@ -309,6 +321,12 @@ def init_db():
         # versão 3.1: código do item
         if "codigo" not in {r[1] for r in db.execute("PRAGMA table_info(invoice_itens)")}:
             db.execute("ALTER TABLE invoice_itens ADD COLUMN codigo TEXT")
+        if "data_parametrizacao" not in {r[1] for r in db.execute("PRAGMA table_info(invoices)")}:
+            db.execute("ALTER TABLE invoices ADD COLUMN data_parametrizacao TEXT")
+        # versão 3.2: condição de pagamento em parcelas (invoices antigos viram uma parcela de 100%)
+        db.execute("INSERT INTO condicao_parcelas (invoice_id, ordem, percentual, tipo, dias)"
+                   " SELECT id, 1, 100, condicao_tipo, condicao_dias FROM invoices i"
+                   " WHERE NOT EXISTS (SELECT 1 FROM condicao_parcelas c WHERE c.invoice_id = i.id)")
         for antigo, novo in PERFIS_ANTIGOS.items():
             db.execute("UPDATE usuarios SET perfil = ? WHERE perfil = ?", (novo, antigo))
 
@@ -432,10 +450,18 @@ def somar_dias(data_iso, dias):
     return (datetime.strptime(data_iso, "%Y-%m-%d") + timedelta(days=int(dias or 0))).strftime("%Y-%m-%d")
 
 
-def condicao_texto(inv):
-    if inv["condicao_tipo"] == "ANTECIPADO":
-        return f"Antecipado ({PRAZO_ANTECIPADO_DIAS} dias após a assinatura)"
-    return f"{inv['condicao_dias']} dias após a HAWB"
+def texto_parcela(c, sozinha=False):
+    pct = "" if sozinha else f"{fmt_qtd(c['percentual'])}% "
+    if c["tipo"] == "ANTECIPADO":
+        return f"{pct}antecipado".strip().capitalize() if sozinha else f"{pct}antecipado"
+    return f"{pct}{c['dias']} dias após a HAWB"
+
+
+def condicao_texto(r):
+    parcelas = r.get("condicao") or []
+    if len(parcelas) == 1:
+        return texto_parcela(parcelas[0], sozinha=True)
+    return " + ".join(texto_parcela(c) for c in parcelas)
 
 
 # ---------------------------------------------------------------------------
@@ -447,15 +473,41 @@ FROM invoices i JOIN fornecedores f ON f.id = i.fornecedor_id
 """
 
 
-def vencimento(inv):
-    """Data de vencimento do pagamento do invoice e se ela é confirmada ou estimada."""
-    if inv["condicao_tipo"] == "ANTECIPADO":
-        return somar_dias(inv["data_assinatura"], PRAZO_ANTECIPADO_DIAS), False
-    if inv["data_hawb"]:
-        return somar_dias(inv["data_hawb"], inv["condicao_dias"]), False
-    if inv["data_prog_coleta"]:  # antes da HAWB: previsão pela data programada de coleta
-        return somar_dias(inv["data_prog_coleta"], inv["condicao_dias"]), True
-    return None, True
+def vencimento_parcela(inv, c):
+    """Antecipado: data de assinatura + 5 dias. A prazo: data da HAWB (registrada na Coleta) + dias da condição;
+    antes da HAWB, a parcela a prazo fica sem vencimento (não há estimativa)."""
+    if c["tipo"] == "ANTECIPADO":
+        return somar_dias(inv["data_assinatura"], PRAZO_ANTECIPADO_DIAS)
+    return somar_dias(inv["data_hawb"], c["dias"]) if inv["data_hawb"] else None
+
+
+def calcular_parcelas(r):
+    """Divide o valor a pagar entre as parcelas da condição, desconta o valor segurado das últimas
+    parcelas e distribui os pagamentos já feitos na ordem de vencimento."""
+    V = r["valor_invoice"]
+    parcelas = []
+    for c in r["condicao"]:
+        parcelas.append({"percentual": c["percentual"], "tipo": c["tipo"], "dias": c["dias"],
+                         "texto": texto_parcela(c, sozinha=len(r["condicao"]) == 1),
+                         "valor": round(V * c["percentual"] / 100, 2), "vencimento": vencimento_parcela(r, c)})
+    if parcelas:  # ajuste de centavos na última parcela
+        parcelas[-1]["valor"] = round(V - sum(p["valor"] for p in parcelas[:-1]), 2)
+    ordem = sorted(range(len(parcelas)), key=lambda i: (parcelas[i]["vencimento"] is None,
+                                                        parcelas[i]["vencimento"] or "", i))
+    for p in parcelas:
+        p["devido"] = p["valor"]
+    resto = r["segurado"]
+    for i in reversed(ordem):  # o valor segurado sai das parcelas que vencem por último
+        tira = min(resto, parcelas[i]["devido"])
+        parcelas[i]["devido"] = round(parcelas[i]["devido"] - tira, 2)
+        resto -= tira
+    pago = r["principal_pago"]
+    for i in ordem:
+        aloca = min(pago, parcelas[i]["devido"])
+        parcelas[i]["pago"] = round(aloca, 2)
+        parcelas[i]["pendente"] = round(parcelas[i]["devido"] - aloca, 2)
+        pago -= aloca
+    return [parcelas[i] for i in ordem]
 
 
 def data_prevista_chegada(inv):
@@ -463,7 +515,12 @@ def data_prevista_chegada(inv):
 
 
 def etapa_concluida(inv, etapa):
-    return all(inv[campo] for campo, _r, _t, obrig in CAMPOS_ETAPA[etapa] if obrig)
+    ok = all(inv[campo] for campo, _r, _t, obrig in CAMPOS_ETAPA[etapa] if obrig)
+    if etapa == "EMBARQUE":  # o banco de débito (Financeiro) também é obrigatório
+        ok = ok and bool(inv["banco_debito"])
+    if etapa == "DESEMBARACO":
+        ok = ok and not documentos_faltando(inv)
+    return ok
 
 
 def calcular(inv):
@@ -471,8 +528,10 @@ def calcular(inv):
     db = get_db()
     r = dict(inv)
     iid = inv["id"]
+    r["condicao"] = [dict(c) for c in db.execute(
+        "SELECT * FROM condicao_parcelas WHERE invoice_id = ? ORDER BY ordem", (iid,)).fetchall()]
     r["itens"] = db.execute("SELECT * FROM invoice_itens WHERE invoice_id = ? ORDER BY id", (iid,)).fetchall()
-    # valor total do invoice: quantidade x preço com desconto (o preço original é só histórico)
+    # valor total do invoice: quantidade x preço; o valor final desconta as deduções de descontos
     r["itens_total"] = round(sum(x["quantidade"] * x["valor_unit"] for x in r["itens"]), 2)
     r["itens_original"] = round(sum(x["quantidade"] * (x["valor_unit_original"] or x["valor_unit"])
                                     for x in r["itens"]), 2)
@@ -513,7 +572,11 @@ def calcular(inv):
     r["liberavel"] = round(liberavel, 2)
     r["liberacao_disponivel"] = max(round(liberavel - r["liberado"], 2), 0)
     r["swifts_pendentes"] = sum(1 for p in r["pagamentos"] if not p["swift_url"])
-    r["vencimento"], r["vencimento_estimado"] = vencimento(inv)
+    r["parcelas"] = calcular_parcelas(r)
+    pendentes = [p for p in r["parcelas"] if p["pendente"] > TOLERANCIA]
+    # próximo vencimento em aberto (sem data: parcela a prazo de invoice sem data da HAWB)
+    r["vencimento"] = pendentes[0]["vencimento"] if pendentes else None
+    r["vencimento_estimado"] = False
     r["anexos"] = db.execute("SELECT * FROM anexos WHERE invoice_id = ? ORDER BY id", (iid,)).fetchall()
     r["situacao"] = situacao(r)
     return r
@@ -579,7 +642,7 @@ app.jinja_env.globals.update(
     CAMPOS_ETAPA=CAMPOS_ETAPA, TITULO_ETAPA=TITULO_ETAPA, ORDEM_LOGISTICA=ORDEM_LOGISTICA, CORES_CANAL=CORES_CANAL,
     TIPOS_ANEXO=TIPOS_ANEXO, STATUS_DESCONTO=STATUS_DESCONTO, TIPOS_PAGAMENTO=TIPOS_PAGAMENTO,
     pode=lambda perfil: pode(perfil), MAX_USUARIOS=MAX_USUARIOS, VERSAO=VERSAO, condicao_texto=condicao_texto,
-    etapa_concluida=etapa_concluida, PRAZO_ANTECIPADO_DIAS=PRAZO_ANTECIPADO_DIAS,
+    etapa_concluida=etapa_concluida, PRAZO_ANTECIPADO_DIAS=PRAZO_ANTECIPADO_DIAS, CAMPOS_PARA_SALVAR=CAMPOS_PARA_SALVAR,
 )
 app.jinja_env.filters["moeda"] = fmt_moeda
 app.jinja_env.filters["num"] = fmt_num
@@ -723,11 +786,11 @@ def minha_senha():
 # Painel e pendências
 # ---------------------------------------------------------------------------
 def documentos_faltando(r):
-    """Documentos esperados após o registro no Brasil que ainda não foram anexados."""
+    """Documentos exigidos após o registro no Brasil que ainda não foram anexados."""
     if not r["data_registro_br"]:
         return []
-    tipos = {a["tipo"] for a in r["anexos"]}
-    return [TIPOS_ANEXO[t] for t in ("DUIMP", "BOLETO_ICMS") if t not in tipos]
+    tipos = {a["tipo"] for a in r.get("anexos", [])}
+    return [TIPOS_ANEXO[t] for t in DOCUMENTOS_REGISTRO if t not in tipos]
 
 
 def listar_pendencias(invoices):
@@ -757,11 +820,19 @@ def listar_pendencias(invoices):
             add(r, "Acompanhar a aprovação do desconto pelo fornecedor", "admin", d["data_relatorio"], d["valor_final"])
         if imp and d and d["status"] == "APROVADO" and r["saldo_a_deduzir"] > TOLERANCIA:
             add(r, "Desconto aprovado aguardando dedução em um próximo invoice", "importacao", None, r["saldo_a_deduzir"])
-        if fin and r["principal_pendente"] > TOLERANCIA and r["vencimento"]:
-            vencido = r["vencimento"] < hoje()
-            add(r, ("Pagamento vencido" if vencido else "Pagar invoice")
-                + (" (estimado)" if r["vencimento_estimado"] else ""), "financeiro", r["vencimento"],
-                r["principal_pendente"], alerta=vencido or r["vencimento"] <= lim_7)
+        if fin:
+            multiplas = len(r["parcelas"]) > 1
+            for p in r["parcelas"]:
+                if p["pendente"] <= TOLERANCIA:
+                    continue
+                rotulo = f" · parcela {p['texto']}" if multiplas else ""
+                if not p["vencimento"]:
+                    add(r, "Pagar invoice" + rotulo + " (vencimento depende da data da HAWB)", "financeiro",
+                        None, p["pendente"])
+                    continue
+                vencido = p["vencimento"] < hoje()
+                add(r, ("Pagamento vencido" if vencido else "Pagar invoice") + rotulo, "financeiro", p["vencimento"],
+                    p["pendente"], alerta=vencido or p["vencimento"] <= lim_7)
         if fin and r["liberacao_disponivel"] > TOLERANCIA:
             add(r, "Liberar valor segurado", "financeiro", None, r["liberacao_disponivel"], alerta=True)
         if fin and r["swifts_pendentes"]:
@@ -785,10 +856,10 @@ def painel():
     contagem = {
         "logistica": sum(1 for r in ativos if r["situacao"] in ORDEM_LOGISTICA),
         "inspecao": sum(1 for r in ativos if r["situacao"] == "INSPECAO"),
-        "vencidos": sum(1 for r in ativos if r["principal_pendente"] > TOLERANCIA and r["vencimento"]
-                        and r["vencimento"] < hj),
-        "vencer_30": sum(1 for r in ativos if r["principal_pendente"] > TOLERANCIA and r["vencimento"]
-                         and hj <= r["vencimento"] <= lim_30),
+        "vencidos": sum(1 for r in ativos for p in r["parcelas"] if p["pendente"] > TOLERANCIA
+                        and p["vencimento"] and p["vencimento"] < hj),
+        "vencer_30": sum(1 for r in ativos for p in r["parcelas"] if p["pendente"] > TOLERANCIA
+                         and p["vencimento"] and hj <= p["vencimento"] <= lim_30),
         "liberacoes": sum(1 for r in ativos if r["liberacao_disponivel"] > TOLERANCIA),
         "concluidos": sum(1 for r in ativos if r["situacao"] == "CONCLUIDO"),
     }
@@ -822,14 +893,20 @@ def itens_fluxo(invoices):
         if r["situacao"] in ("CANCELADO", "CONCLUIDO"):
             continue
         base = {"invoice_id": r["id"], "fornecedor": r["fornecedor"], "numero": r["numero"], "moeda": r["moeda"]}
-        if r["principal_pendente"] > TOLERANCIA:
+        for p in r["parcelas"]:
+            if p["pendente"] <= TOLERANCIA:
+                continue
             tipo = "Pagamento do invoice"
-            if r["segurado"] > TOLERANCIA:
-                tipo += f" (com {fmt_moeda(r['segurado'], r['moeda'])} segurado)"
-            elif r["principal_pago"] > TOLERANCIA:
+            if len(r["parcelas"]) > 1:
+                tipo += f" · parcela {p['texto']}"
+            if p["devido"] + TOLERANCIA < p["valor"]:
+                tipo += f" (com {fmt_moeda(p['valor'] - p['devido'], r['moeda'])} segurado)"
+            elif p["pago"] > TOLERANCIA:
                 tipo += " (saldo)"
-            itens.append(dict(base, categoria="PAGAMENTO", tipo=tipo, data=r["vencimento"],
-                              estimado=r["vencimento_estimado"], valor=r["principal_pendente"]))
+            if not p["vencimento"]:
+                tipo += " · aguardando data da HAWB"
+            itens.append(dict(base, categoria="PAGAMENTO", tipo=tipo, data=p["vencimento"], estimado=False,
+                              valor=p["pendente"]))
         if r["liberacao_disponivel"] > TOLERANCIA:
             chegadas = [x["data_chegada"] for x in r["deducoes_do_desconto"] if x["data_chegada"]]
             itens.append(dict(base, categoria="LIBERACAO", tipo="Liberação do valor segurado (disponível)",
@@ -957,8 +1034,6 @@ def ler_form_invoice():
         "numero": f.get("numero", "").strip(),
         "moeda": f.get("moeda", ""),
         "data_assinatura": data_valida(f.get("data_assinatura")),
-        "condicao_tipo": f.get("condicao_tipo", ""),
-        "condicao_dias": int(f["condicao_dias"]) if f.get("condicao_dias", "").strip().isdigit() else None,
         "agente_carga": f.get("agente_carga", "").strip(),
         "despachante": f.get("despachante", "").strip(),
         "grupo_consolidacao": f.get("grupo_consolidacao", "").strip(),
@@ -966,12 +1041,13 @@ def ler_form_invoice():
         "obs": f.get("obs", "").strip(),
     }
     itens = []
-    for cod, desc, qtd, vu_orig, vu in zip(f.getlist("item_codigo"), f.getlist("item_desc"), f.getlist("item_qtd"),
-                                           f.getlist("item_vu_orig"), f.getlist("item_vu")):
-        if not any(x.strip() for x in (cod, desc, qtd, vu_orig, vu)):
+    for cod, desc, qtd, vu in zip(f.getlist("item_codigo"), f.getlist("item_desc"), f.getlist("item_qtd"),
+                                  f.getlist("item_vu")):
+        if not any(x.strip() for x in (cod, desc, qtd, vu)):
             continue
+        preco = parse_num(vu)
         itens.append({"codigo": cod.strip(), "item": desc.strip(), "quantidade": parse_num(qtd),
-                      "valor_unit_original": parse_num(vu_orig), "valor_unit": parse_num(vu)})
+                      "valor_unit_original": preco, "valor_unit": preco})
     erros = []
     if not dados["fornecedor"]:
         erros.append("Informe o fornecedor.")
@@ -981,20 +1057,43 @@ def ler_form_invoice():
         erros.append("Selecione a moeda.")
     if not dados["data_assinatura"]:
         erros.append("Informe a data de assinatura do invoice.")
-    if dados["condicao_tipo"] not in CONDICOES:
-        erros.append("Selecione a condição de pagamento.")
-    elif dados["condicao_tipo"] == "PRAZO" and dados["condicao_dias"] is None:
-        erros.append("Informe o prazo de pagamento (dias após a HAWB).")
-    if dados["condicao_tipo"] == "ANTECIPADO":
-        dados["condicao_dias"] = None
+    condicao = []
+    for pct, tipo, dias in zip(f.getlist("cond_pct"), f.getlist("cond_tipo"), f.getlist("cond_dias")):
+        if not pct.strip() and not dias.strip():
+            continue
+        condicao.append({"percentual": parse_num(pct), "tipo": tipo,
+                         "dias": int(dias) if tipo == "PRAZO" and dias.strip().isdigit() else None})
+    dados["condicao"] = condicao
+    if not condicao:
+        erros.append("Informe a condição de pagamento.")
+    for i, c in enumerate(condicao, 1):
+        if c["percentual"] is None or c["percentual"] <= 0:
+            erros.append(f"Condição de pagamento, parcela {i}: informe o percentual.")
+        if c["tipo"] not in CONDICOES:
+            erros.append(f"Condição de pagamento, parcela {i}: selecione antecipado ou após a HAWB.")
+        elif c["tipo"] == "PRAZO" and c["dias"] is None:
+            erros.append(f"Condição de pagamento, parcela {i}: informe os dias após a HAWB.")
+    if condicao and abs(sum(c["percentual"] or 0 for c in condicao) - 100) > 0.01:
+        erros.append("Os percentuais da condição de pagamento devem somar 100%.")
+    unica = condicao[0] if len(condicao) == 1 else None
+    dados["condicao_tipo"] = unica["tipo"] if unica else "MISTA"
+    dados["condicao_dias"] = unica["dias"] if unica else None
     if not itens:
         erros.append("Informe ao menos um item.")
     for i, it in enumerate(itens, 1):
         if not it["codigo"] or not it["quantidade"] or it["quantidade"] <= 0 or it["valor_unit"] is None \
                 or it["valor_unit"] < 0:
             erros.append(f"Item {i}{' (' + it['codigo'] + ')' if it['codigo'] else ''}: informe código, quantidade e "
-                         "preço com desconto.")
+                         "preço.")
     return dados, itens, erros
+
+
+def salvar_condicao(invoice_id, condicao):
+    db = get_db()
+    db.execute("DELETE FROM condicao_parcelas WHERE invoice_id = ?", (invoice_id,))
+    for ordem, c in enumerate(condicao, 1):
+        db.execute("INSERT INTO condicao_parcelas (invoice_id, ordem, percentual, tipo, dias) VALUES (?, ?, ?, ?, ?)",
+                   (invoice_id, ordem, round(c["percentual"], 4), c["tipo"], c["dias"]))
 
 
 def salvar_itens(invoice_id, itens):
@@ -1012,10 +1111,9 @@ COLUNAS_PLANILHA = {  # cabeçalho normalizado -> campo
     "codigo": "codigo", "cod": "codigo", "codigo do item": "codigo",
     "descricao": "item", "descricao do item": "item", "item": "item",
     "quantidade": "quantidade", "qtd": "quantidade", "qtde": "quantidade",
-    "preco original": "valor_unit_original", "valor original": "valor_unit_original",
-    "preco unitario original": "valor_unit_original", "valor unitario original": "valor_unit_original",
-    "preco descontado": "valor_unit", "preco com desconto": "valor_unit", "valor descontado": "valor_unit",
-    "preco unitario descontado": "valor_unit", "valor unitario com desconto": "valor_unit",
+    "preco original": "valor_unit", "valor original": "valor_unit", "preco": "valor_unit",
+    "preco unitario": "valor_unit", "valor unitario": "valor_unit", "preco unitario original": "valor_unit",
+    "valor unitario original": "valor_unit",
 }
 MAX_LINHAS_PLANILHA = 2000
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # planilhas de até 5 MB
@@ -1048,9 +1146,9 @@ def ler_planilha(arquivo):
         if "codigo" in mapa.values():
             break
     else:
-        return [], ["Cabeçalho não encontrado: a planilha deve ter as colunas Código, Descrição, Quantidade, "
-                    "Preço Original e Preço Descontado."]
-    faltando = [n for c, n in (("quantidade", "Quantidade"), ("valor_unit", "Preço Descontado"))
+        return [], ["Cabeçalho não encontrado: a planilha deve ter as colunas Código, Descrição, Quantidade e "
+                    "Preço Original."]
+    faltando = [n for c, n in (("quantidade", "Quantidade"), ("valor_unit", "Preço Original"))
                 if c not in mapa.values()]
     if faltando:
         return [], ["Coluna(s) não encontrada(s): " + ", ".join(faltando) + "."]
@@ -1064,13 +1162,13 @@ def ler_planilha(arquivo):
         it = {"codigo": str(valores.get("codigo") or "").strip(),
               "item": str(valores.get("item") or "").strip(),
               "quantidade": numero(valores.get("quantidade")),
-              "valor_unit_original": numero(valores.get("valor_unit_original")),
               "valor_unit": numero(valores.get("valor_unit"))}
+        it["valor_unit_original"] = it["valor_unit"]
         if it["codigo"].endswith(".0") and it["codigo"][:-2].isdigit():  # código numérico lido como número
             it["codigo"] = it["codigo"][:-2]
         if not it["codigo"] or not it["quantidade"] or it["quantidade"] <= 0 or it["valor_unit"] is None \
                 or it["valor_unit"] < 0:
-            erros.append(f"Linha {num_linha}: código, quantidade e preço descontado são obrigatórios.")
+            erros.append(f"Linha {num_linha}: código, quantidade e preço são obrigatórios.")
             continue
         itens.append(it)
         if len(itens) > MAX_LINHAS_PLANILHA:
@@ -1091,7 +1189,6 @@ def importar_itens():
     itens, erros = ler_planilha(arquivo)
     for it in itens:
         it["quantidade_fmt"] = fmt_qtd(it["quantidade"])
-        it["valor_unit_original_fmt"] = fmt_num(it["valor_unit_original"])
         it["valor_unit_fmt"] = fmt_num(it["valor_unit"])
     return jsonify({"itens": itens, "erros": erros})
 
@@ -1104,11 +1201,11 @@ def modelo_itens():
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Itens"
-    ws.append(["Código", "Descrição", "Quantidade", "Preço Original", "Preço Descontado"])
+    ws.append(["Código", "Descrição", "Quantidade", "Preço Original"])
     for c in ws[1]:
         c.font = Font(bold=True)
-    ws.append(["ABC-001", "Exemplo: pinça 15 cm (apague esta linha)", 100, 5.5, 5.0])
-    for col, largura in zip("ABCDE", (16, 45, 12, 16, 18)):
+    ws.append(["ABC-001", "Exemplo: pinça 15 cm (apague esta linha)", 100, 5.5])
+    for col, largura in zip("ABCD", (16, 45, 12, 16)):
         ws.column_dimensions[col].width = largura
     saida = io.BytesIO()
     wb.save(saida)
@@ -1172,6 +1269,7 @@ def invoice_novo():
                  dados["grupo_consolidacao"], dados["data_prog_coleta"], dados["obs"], g.usuario["id"], agora()))
             iid = cur.lastrowid
             salvar_itens(iid, itens)
+            salvar_condicao(iid, dados["condicao"])
             registrar_evento(iid, "Invoice criado", f"{len(itens)} item(ns) · {fmt_moeda(total_itens, dados['moeda'])}")
             for did, v in deducoes:
                 db.execute("INSERT INTO deducoes (desconto_id, invoice_id, valor, criado_por, criado_em)"
@@ -1187,7 +1285,8 @@ def invoice_novo():
             flash(e, "erro")
         return render_template("invoice_form.html", d=dados, itens=itens, fornecedores=fornecedores, editando=False,
                                deducoes_escolhidas=dict(deducoes))
-    return render_template("invoice_form.html", d={"moeda": "USD", "condicao_tipo": "PRAZO"}, itens=[],
+    return render_template("invoice_form.html", d={"moeda": "USD", "condicao": [{"percentual": 100, "tipo": "PRAZO"}]},
+                           itens=[],
                            fornecedores=fornecedores, editando=False, deducoes_escolhidas={})
 
 
@@ -1200,17 +1299,14 @@ def invoice_editar(id):
     if r["cancelado_em"]:
         abort(403)
     db = get_db()
-    # com pagamento registrado, itens e valores ficam travados; com desconto/deduções, fornecedor e moeda também
-    itens_travados = bool(r["pagamentos"])
+    # quem lançou pode corrigir tudo; só fornecedor e moeda ficam travados quando há desconto ou deduções
+    # (que dependem deles), e os itens não podem baixar o valor abaixo do que já foi pago
     chave_travada = bool(r["desconto"] or r["deducoes_recebidas"])
     fornecedores = db.execute("SELECT * FROM fornecedores WHERE ativo = 1 ORDER BY nome").fetchall()
     if request.method == "POST":
         dados, itens, erros = ler_form_invoice()
         if chave_travada:
             dados.update(fornecedor=r["fornecedor"], moeda=r["moeda"])
-        if itens_travados:
-            itens = [dict(x) for x in r["itens"]]
-            erros = [e for e in erros if not e.startswith("Item") and "ao menos um item" not in e]
         fid = obter_fornecedor(dados["fornecedor"], criar=False) if dados["fornecedor"] else None
         if fid and db.execute("SELECT 1 FROM invoices WHERE fornecedor_id = ? AND lower(numero) = lower(?) AND id <> ?",
                               (fid, dados["numero"], id)).fetchone():
@@ -1218,7 +1314,17 @@ def invoice_editar(id):
         total_itens = sum((it["quantidade"] or 0) * (it["valor_unit"] or 0) for it in itens)
         if total_itens + TOLERANCIA < r["deducoes_aplicadas"]:
             erros.append("O valor dos itens não pode ficar menor que as deduções aplicadas neste invoice.")
+        elif total_itens - r["deducoes_aplicadas"] - r["segurado"] + TOLERANCIA < r["principal_pago"]:
+            erros.append(f"Com esses itens, o valor a pagar ficaria menor que o já pago "
+                         f"({fmt_moeda(r['principal_pago'], r['moeda'])}). Corrija primeiro o pagamento.")
         if not erros:
+            mudancas = []
+            if round(total_itens, 2) != r["itens_total"]:
+                mudancas.append(f"valor total {fmt_moeda(r['itens_total'], r['moeda'])} → "
+                                f"{fmt_moeda(total_itens, r['moeda'])}")
+            novo_texto = condicao_texto({"condicao": dados["condicao"]})
+            if novo_texto != condicao_texto(r):
+                mudancas.append(f"condição: {condicao_texto(r)} → {novo_texto}")
             db.execute(
                 "UPDATE invoices SET fornecedor_id=?, numero=?, moeda=?, data_assinatura=?, condicao_tipo=?,"
                 " condicao_dias=?, agente_carga=?, despachante=?, grupo_consolidacao=?, data_prog_coleta=?, obs=?"
@@ -1226,19 +1332,20 @@ def invoice_editar(id):
                 (obter_fornecedor(dados["fornecedor"]), dados["numero"], dados["moeda"], dados["data_assinatura"],
                  dados["condicao_tipo"], dados["condicao_dias"], dados["agente_carga"], dados["despachante"],
                  dados["grupo_consolidacao"], dados["data_prog_coleta"], dados["obs"], id))
-            if not itens_travados:
-                salvar_itens(id, itens)
-            registrar_evento(id, "Dados do invoice editados")
+            salvar_itens(id, itens)
+            salvar_condicao(id, dados["condicao"])
+            registrar_evento(id, "Dados do invoice corrigidos", "; ".join(mudancas) or None)
             db.commit()
             flash("Invoice atualizado.", "ok")
             return redirect(url_for("invoice_detalhe", id=id))
         for e in erros:
             flash(e, "erro")
         return render_template("invoice_form.html", d=dados, itens=itens, fornecedores=fornecedores, editando=True,
-                               id=id, itens_travados=itens_travados, chave_travada=chave_travada)
-    return render_template("invoice_form.html", d=dict(r), itens=[dict(x) for x in r["itens"]],
-                           fornecedores=fornecedores, editando=True, id=id, itens_travados=itens_travados,
-                           chave_travada=chave_travada)
+                               id=id, chave_travada=chave_travada, deducoes_aplicadas=r["deducoes_aplicadas"])
+    d = dict(r)
+    return render_template("invoice_form.html", d=d, itens=[dict(x) for x in r["itens"]],
+                           fornecedores=fornecedores, editando=True, id=id, chave_travada=chave_travada,
+                           deducoes_aplicadas=r["deducoes_aplicadas"])
 
 
 @app.route("/invoices/<int:id>")
@@ -1289,20 +1396,38 @@ def invoice_etapa(id, etapa):
         novos[campo] = valor
         if valor != r[campo]:
             mudancas.append(f"{rotulo}: {fmt_data(valor) if tipo == 'data' else (valor or '—')}")
-    if etapa == "CHEGADA" and novos["data_chegada"] and r["data_chegada"] != novos["data_chegada"] and not r["data_desembaraco"]:
-        flash("Registre a data de desembaraço (etapa Canal) antes da chegada na fábrica.", "erro")
-        return redirect(url_for("invoice_detalhe", id=id) + f"#etapa-{etapa}")
+    volta = redirect(url_for("invoice_detalhe", id=id) + f"#etapa-{etapa}")
+    rotulos = {c: rot for c, rot, _t, _o in CAMPOS_ETAPA[etapa]}
+    faltando = [rotulos[c] for c in CAMPOS_PARA_SALVAR.get(etapa, []) if not novos[c]]
+    if faltando:
+        flash("Preencha: " + ", ".join(faltando) + ".", "erro")
+        return volta
+    if etapa == "DESEMBARACO":
+        # após o registro no Brasil, o processo só segue com a DUIMP e o boleto do ICMS anexados
+        posteriores = [c for c, _r, _t, _o in CAMPOS_ETAPA[etapa] if c != "data_registro_br"]
+        if any(novos[c] for c in posteriores):
+            if not novos["data_registro_br"]:
+                flash("Informe primeiro a data de registro no Brasil.", "erro")
+                return volta
+            faltam_docs = documentos_faltando(dict(r, data_registro_br=novos["data_registro_br"]))
+            if faltam_docs:
+                flash("Anexe " + " e ".join(faltam_docs) + " (em Documentos) para seguir com o desembaraço.", "erro")
+                return volta
+    if etapa == "CHEGADA" and novos["data_chegada"] and r["data_chegada"] != novos["data_chegada"] \
+            and not etapa_concluida(r, "DESEMBARACO"):
+        flash("Conclua o desembaraço antes de registrar a chegada na fábrica.", "erro")
+        return volta
     if mudancas:
         db = get_db()
         db.execute(f"UPDATE invoices SET {', '.join(c + ' = ?' for c in novos)} WHERE id = ?", (*novos.values(), id))
-        registrar_evento(id, f"{TITULO_ETAPA[etapa]} atualizada", "; ".join(mudancas))
+        registrar_evento(id, f"Etapa {TITULO_ETAPA[etapa]} atualizada", "; ".join(mudancas))
         if etapa == "CHEGADA" and novos["data_chegada"] and not r["data_chegada"]:
             # chegada de um invoice com deduções libera o valor segurado dos invoices de origem
             for x in r["deducoes_recebidas"]:
                 registrar_evento(x["origem_id"], f"Invoice {r['numero']} (com dedução de "
                                  f"{fmt_moeda(x['valor'], r['moeda'])}) chegou: valor segurado pode ser liberado")
         db.commit()
-        flash(f"{TITULO_ETAPA[etapa]} atualizada.", "ok")
+        flash(f"Etapa {TITULO_ETAPA[etapa]} atualizada.", "ok")
     return redirect(url_for("invoice_detalhe", id=id) + f"#etapa-{etapa}")
 
 
@@ -1342,6 +1467,30 @@ def anexo_novo(id):
         db.commit()
         flash("Documento anexado.", "ok")
     return redirect(url_for("invoice_detalhe", id=id) + "#documentos")
+
+
+@app.route("/anexos/<int:aid>/editar", methods=["POST"])
+@login_obrigatorio
+def anexo_editar(aid):
+    db = get_db()
+    a = db.execute("SELECT * FROM anexos WHERE id = ?", (aid,)).fetchone()
+    if a is None:
+        abort(404)
+    if g.usuario["perfil"] != "admin" and a["criado_por"] != g.usuario["id"]:
+        abort(403)
+    tipo = request.form.get("tipo", "")
+    url = request.form.get("url", "").strip()
+    descricao = request.form.get("descricao", "").strip() or None
+    if tipo not in TIPOS_ANEXO:
+        flash("Selecione o tipo de documento.", "erro")
+    elif not link_valido(url):
+        flash("Cole o link do arquivo no OneDrive (começando com https://).", "erro")
+    else:
+        db.execute("UPDATE anexos SET tipo = ?, url = ?, descricao = ? WHERE id = ?", (tipo, url, descricao, aid))
+        registrar_evento(a["invoice_id"], f"Documento corrigido: {TIPOS_ANEXO[tipo]}", descricao)
+        db.commit()
+        flash("Documento corrigido.", "ok")
+    return redirect(url_for("invoice_detalhe", id=a["invoice_id"]) + "#documentos")
 
 
 @app.route("/anexos/<int:aid>/remover", methods=["POST"])
@@ -1401,6 +1550,43 @@ def deducao_nova(id):
     registrar_evento(origem_id, f"Desconto deduzido no invoice {r['numero']}: {fmt_moeda(valor, r['moeda'])}")
     db.commit()
     flash("Dedução registrada.", "ok")
+    return volta
+
+
+@app.route("/deducoes/<int:xid>/editar", methods=["POST"])
+@login_obrigatorio
+def deducao_editar(xid):
+    """A Importação corrige o valor deduzido enquanto o invoice não chegou nem foi pago."""
+    if not pode("importacao"):
+        abort(403)
+    db = get_db()
+    x = db.execute("SELECT x.*, d.valor_final, d.invoice_id AS origem_id FROM deducoes x"
+                   " JOIN descontos d ON d.id = x.desconto_id WHERE x.id = ?", (xid,)).fetchone()
+    if x is None:
+        abort(404)
+    destino = carregar_invoice(x["invoice_id"])
+    volta = redirect(url_for("invoice_detalhe", id=destino["id"]) + "#deducoes")
+    valor = parse_num(request.form.get("valor"))
+    outras = db.execute("SELECT COALESCE(SUM(valor), 0) FROM deducoes WHERE desconto_id = ? AND id <> ?",
+                        (x["desconto_id"], xid)).fetchone()[0]
+    saldo = round(x["valor_final"] - outras, 2)
+    if destino["data_chegada"] or any(p["tipo"] == "PRINCIPAL" for p in destino["pagamentos"]):
+        flash("O invoice já chegou ou tem pagamento: a dedução não pode mais ser alterada.", "erro")
+    elif valor is None or valor <= 0:
+        flash("Informe o valor deduzido (para retirar a dedução, use Remover).", "erro")
+    elif valor > saldo + TOLERANCIA:
+        flash(f"O valor é maior que o saldo do desconto ({fmt_moeda(saldo, destino['moeda'])}).", "erro")
+    elif valor > destino["itens_total"] - (destino["deducoes_aplicadas"] - x["valor"]) + TOLERANCIA:
+        flash("O valor é maior que o valor restante do invoice.", "erro")
+    else:
+        valor = round(valor, 2)
+        db.execute("UPDATE deducoes SET valor = ? WHERE id = ?", (valor, xid))
+        origem = db.execute("SELECT numero FROM invoices WHERE id = ?", (x["origem_id"],)).fetchone()[0]
+        texto = f"{fmt_moeda(x['valor'], destino['moeda'])} → {fmt_moeda(valor, destino['moeda'])}"
+        registrar_evento(destino["id"], f"Dedução do desconto do invoice {origem} corrigida", texto)
+        registrar_evento(x["origem_id"], f"Dedução no invoice {destino['numero']} corrigida", texto)
+        db.commit()
+        flash("Dedução corrigida.", "ok")
     return volta
 
 
@@ -1646,6 +1832,62 @@ def pagamento_swift(pid):
         db.commit()
         flash("Swift anexado.", "ok")
     return redirect(url_for("invoice_detalhe", id=p["invoice_id"]) + "#pagamentos")
+
+
+@app.route("/pagamentos/<int:pid>/editar", methods=["POST"])
+@login_obrigatorio
+def pagamento_editar(pid):
+    """O Financeiro corrige um pagamento lançado (data, valor, banco, Swift ou observação)."""
+    if not pode("financeiro"):
+        abort(403)
+    db = get_db()
+    p = db.execute("SELECT * FROM pagamentos WHERE id = ?", (pid,)).fetchone()
+    if p is None:
+        abort(404)
+    r = carregar_invoice(p["invoice_id"])
+    volta = redirect(url_for("invoice_detalhe", id=r["id"]) + "#pagamentos")
+    f = request.form
+    valor = parse_num(f.get("valor"))
+    data_pg = data_valida(f.get("data_pagamento"))
+    swift = f.get("swift_url", "").strip() or None
+    banco = f.get("banco", "").strip() or None
+    obs = f.get("obs", "").strip() or None
+    # limite: o que ainda pode ser pago desse tipo, devolvendo o valor atual deste pagamento
+    if p["tipo"] == "PRINCIPAL":
+        limite = r["principal_pendente"] + p["valor"]
+    else:
+        limite = r["liberacao_disponivel"] + p["valor"]
+    erro = None
+    if not data_pg:
+        erro = "Informe a data do pagamento."
+    elif valor is None or valor <= 0:
+        erro = "Informe o valor pago."
+    elif valor > limite + TOLERANCIA:
+        erro = f"O valor é maior que o permitido para este pagamento ({fmt_moeda(limite, r['moeda'])})."
+    elif swift and not link_valido(swift):
+        erro = "O link do Swift deve começar com https://."
+    if erro:
+        flash(erro, "erro")
+        return volta
+    valor = round(valor, 2)
+    mudancas = []
+    if data_pg != p["data_pagamento"]:
+        mudancas.append(f"data {fmt_data(p['data_pagamento'])} → {fmt_data(data_pg)}")
+    if abs(valor - p["valor"]) > TOLERANCIA:
+        mudancas.append(f"valor {fmt_moeda(p['valor'], r['moeda'])} → {fmt_moeda(valor, r['moeda'])}")
+    if banco != p["banco"]:
+        mudancas.append(f"banco {p['banco'] or '—'} → {banco or '—'}")
+    if swift != p["swift_url"]:
+        mudancas.append("Swift " + ("corrigido" if p["swift_url"] and swift else "anexado" if swift else "removido"))
+    if obs != p["obs"]:
+        mudancas.append("observação")
+    if mudancas:
+        db.execute("UPDATE pagamentos SET data_pagamento = ?, valor = ?, banco = ?, swift_url = ?, obs = ? WHERE id = ?",
+                   (data_pg, valor, banco, swift, obs, pid))
+        registrar_evento(r["id"], f"Pagamento corrigido ({TIPOS_PAGAMENTO[p['tipo']]})", "; ".join(mudancas))
+        db.commit()
+        flash("Pagamento corrigido.", "ok")
+    return volta
 
 
 @app.route("/pagamentos/<int:pid>/excluir", methods=["POST"])

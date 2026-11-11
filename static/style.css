@@ -236,3 +236,12 @@ tr.linha-alerta td { background: var(--erro-claro); }
 .carga-planilha select { width: auto; margin: 0; }
 .ok-texto { color: var(--ok); margin: .3rem 0 0; }
 ul.erro-texto { margin: .3rem 0 0; padding-left: 1.2rem; font-size: .85rem; }
+/* v3.2 */
+table.condicao { max-width: 620px; }
+table.condicao input { max-width: 140px; display: inline-block; }
+.valor-final { margin: 1rem 0 0; padding: .7rem 1rem; border-radius: var(--raio); background: var(--pri-claro); font-size: 1rem; }
+.aviso-etapa { background: var(--alerta-claro); color: var(--alerta); padding: .45rem .6rem; border-radius: 6px; font-size: .82rem; margin: 0 0 .6rem; }
+label.travado { opacity: .55; }
+.form-corrigir { display: grid; gap: .35rem; margin: .4rem 0; min-width: 240px; }
+.form-corrigir label { margin: 0; font-size: .78rem; }
+.form-corrigir input, .form-corrigir select { margin: 0; padding: .3rem .45rem; }
