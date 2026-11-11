@@ -149,8 +149,8 @@
         {% for campo, rotulo, tipo, obrig in CAMPOS_ETAPA[e] %}
           <label>{{ rotulo }}{{ ' *' if obrig }}
           {% if tipo == 'data' %}<input type="date" name="{{ campo }}" value="{{ r[campo] or '' }}">
-          {% elif tipo == 'canal' %}<select name="{{ campo }}" class="sel-canal" onchange="var o=this.options[this.selectedIndex];this.style.background=o.style.background;this.style.color=o.style.color" style="{{ 'background:' ~ CORES_CANAL[r[campo]] ~ ';color:' ~ ('#fff' if r[campo] == 'Verde' else '#212529') if r[campo] in CORES_CANAL }}">
-            <option value="" style="background:#fff;color:#212529">—</option>{% for c, cor in CORES_CANAL.items() %}<option value="{{ c }}" {{ 'selected' if r[campo] == c }} style="background:{{ cor }};color:{{ '#fff' if c == 'Verde' else '#212529' }}">{{ c }}</option>{% endfor %}</select>
+          {% elif tipo == 'canal' %}{% set cc = CORES_CANAL.get(r[campo]) %}<select name="{{ campo }}" class="sel-canal" onchange="var o=this.options[this.selectedIndex];this.style.background=o.style.background;this.style.color=o.style.color"{% if cc %} style="background:{{ cc[0] }};color:{{ cc[1] }}"{% endif %}>
+            <option value="" style="background:#fff;color:#212529">—</option>{% for c, cor in CORES_CANAL.items() %}<option value="{{ c }}" {{ 'selected' if r[campo] == c }} style="background:{{ cor[0] }};color:{{ cor[1] }}">{{ c }}</option>{% endfor %}</select>
           {% else %}<textarea name="{{ campo }}" rows="2">{{ r[campo] or '' }}</textarea>{% endif %}
           </label>
         {% endfor %}
@@ -184,7 +184,7 @@
     <thead><tr><th>Documento</th><th>Descrição</th><th>Anexado</th><th></th></tr></thead>
     <tbody>
     {% for a in r.anexos %}
-      <tr><td><a href="{{ a.url }}" target="_blank" rel="noopener">{{ TIPOS_ANEXO[a.tipo] }} ↗</a></td><td>{{ a.descricao or '—' }}</td>
+      <tr><td><a href="{{ a.url }}" target="_blank" rel="noopener">{{ TIPOS_ANEXO.get(a.tipo, a.tipo) }} ↗</a></td><td>{{ a.descricao or '—' }}</td>
         <td><small>{{ nomes.get(a.criado_por, '?') }} · {{ a.criado_em|data }}</small></td>
         <td>{% if admin or a.criado_por == g.usuario.id %}<details class="admin-desfazer"><summary>Corrigir</summary>
           <form method="post" action="{{ url_for('anexo_editar', aid=a.id) }}" class="form-corrigir">

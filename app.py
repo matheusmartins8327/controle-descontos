@@ -32,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.9"
+VERSAO = "3.10"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -51,11 +51,9 @@ MOEDAS = {"USD": "US$", "EUR": "€", "BRL": "R$"}
 CONDICOES = {"ANTECIPADO": "Antecipado", "PRAZO": "Após a HAWB"}
 PRAZO_ANTECIPADO_DIAS = 5          # pagamento antecipado: data de assinatura + 5 dias
 CUSTO_IMPORTACAO_ESTIMADO = 0.40   # visibilidade do Financeiro a partir do embarque
-# canal de parametrização: opção -> cor de preenchimento
-CORES_CANAL = {"Verde": "#22a447", "Amarelo": "#f5c400"}
+# canal de parametrização: opção -> (cor de fundo pastel, cor do texto)
+CORES_CANAL = {"Verde": ("#d4f0dc", "#1d5a31"), "Amarelo": ("#fff3c4", "#6b5200")}
 TIPOS_ANEXO = {
-    "DUIMP": "DUIMP",
-    "BOLETO_ICMS": "Boleto do ICMS",
     "RELATORIO_QUALIDADE": "Relatório de qualidade",
     "OUTRO": "Outro documento",
 }
@@ -341,6 +339,8 @@ def init_db():
                    " AND NOT EXISTS (SELECT 1 FROM condicao_parcelas c WHERE c.invoice_id = i.id)")
         # cadastros salvos sem condição de pagamento não recebem parcela automática
         db.execute("DELETE FROM condicao_parcelas WHERE tipo NOT IN ('ANTECIPADO', 'PRAZO')")
+        # DUIMP e boleto do ICMS circulam por e-mail, fora do sistema: não são guardados
+        db.execute("DELETE FROM anexos WHERE tipo IN ('DUIMP', 'BOLETO_ICMS')")
         for antigo, novo in PERFIS_ANTIGOS.items():
             db.execute("UPDATE usuarios SET perfil = ? WHERE perfil = ?", (novo, antigo))
 
@@ -1657,7 +1657,7 @@ def anexo_remover(aid):
     if g.usuario["perfil"] != "admin" and a["criado_por"] != g.usuario["id"]:
         abort(403)
     db.execute("DELETE FROM anexos WHERE id = ?", (aid,))
-    registrar_evento(a["invoice_id"], f"Documento removido: {TIPOS_ANEXO[a['tipo']]}", a["descricao"])
+    registrar_evento(a["invoice_id"], f"Documento removido: {TIPOS_ANEXO.get(a['tipo'], a['tipo'])}", a["descricao"])
     db.commit()
     flash("Documento removido (o arquivo continua no OneDrive).", "ok")
     return redirect(url_for("invoice_detalhe", id=a["invoice_id"]) + "#documentos")

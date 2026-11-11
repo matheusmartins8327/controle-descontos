@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v3.9)
+# Controle de Invoices e Descontos (v3.10)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -88,7 +88,7 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 | 1 | Criação do invoice | Importação | Fornecedor, nº, moeda, **data de assinatura**, **condição de pagamento** (uma ou mais parcelas), agente de carga, despachante, grupo de consolidação, coleta programada e itens (código, descrição, quantidade e preço original), digitados ou **carregados de uma planilha Excel**. Aparece a **janela de descontos aprovados** do fornecedor (mesma moeda) para deduzir um ou mais, total ou parcialmente; o **valor final** é calculado após as deduções |
 | 2 | Coleta | Importação | Data da HAWB e data real de coleta |
 | 3 | Embarque | Importação / Financeiro | ETD e ETA planejados (obrigatórios para salvar), ETD e ETA reais; **banco de débito** (Financeiro, obrigatório para concluir a etapa) |
-| 4 | Desembaraço | Importação | Data de emissão da DUIMP → data de parametrização, canal (Verde ou Amarelo), exigências da ANVISA e data de desembaraço. DUIMP e boleto do ICMS seguem por e-mail, fora do sistema (anexar o link é opcional) |
+| 4 | Desembaraço | Importação | Data de emissão da DUIMP → data de parametrização, canal (Verde ou Amarelo), exigências da ANVISA e data de desembaraço. DUIMP e boleto do ICMS seguem por e-mail, fora do sistema (não são anexados nem guardados) |
 | 5 | Transporte | Importação | Data programada de chegada (obrigatória) e data real de chegada na fábrica |
 | 6 | Inspeção | Engenharia (administrador) | Fim da inspeção e se há desconto; se sim: valor, data do relatório e aprovação do fornecedor (Enviado → Aprovado) |
 | 7 | Pagamento | Financeiro | Pagamento de cada parcela (integral, ou parcial quando há valor segurado), com Swift |
