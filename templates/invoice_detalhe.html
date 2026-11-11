@@ -133,14 +133,17 @@
 
 {# ---------- logística (Importação) ---------- #}
 <section class="bloco">
-  <h2>Logística <small>· Importação</small></h2>
+  <h2 id="logistica">Logística <small>· Importação</small></h2>
+  {% set cadastro_ok = not falta_cadastro %}
+  {% if not cadastro_ok and ativo %}<div class="flash aviso-box">A logística só pode começar com o cadastro completo. Falta: {{ falta_cadastro|join(', ') }}.
+    {% if imp %}<a href="{{ url_for('invoice_editar', id=r.id) }}">Completar cadastro</a>{% endif %}</div>{% endif %}
   <div class="etapas-grade">
   {% for e in ORDEM_LOGISTICA %}
     <div class="etapa-card {{ 'feita' if etapa_concluida(r, e) }}" id="etapa-{{ e }}">
       <h3>{{ TITULO_ETAPA[e] }} {% if etapa_concluida(r, e) %}<span class="ok">✔</span>{% endif %}</h3>
       {% set falta_etapa = etapa_faltando(r, e) %}
-      {% if falta_etapa and ativo %}<p class="aviso-etapa">Para concluir: {{ falta_etapa|join(', ') }}{% if e == 'DESEMBARACO' and faltando %} (anexe em <a href="#documentos">Documentos</a>){% endif %}.</p>{% endif %}
-      {% if imp %}
+      {% if falta_etapa and ativo and cadastro_ok %}<p class="aviso-etapa">Para concluir: {{ falta_etapa|join(', ') }}{% if e == 'DESEMBARACO' and faltando %} (anexe em <a href="#documentos">Documentos</a>){% endif %}.</p>{% endif %}
+      {% if imp and cadastro_ok %}
       <form method="post" action="{{ url_for('invoice_etapa', id=r.id, etapa=e) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% for campo, rotulo, tipo, obrig in CAMPOS_ETAPA[e] %}

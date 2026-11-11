@@ -32,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.7"
+VERSAO = "3.8"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -1561,6 +1561,11 @@ def invoice_etapa(id, etapa):
     r = carregar_invoice(id)
     if r["cancelado_em"]:
         abort(403)
+    falta_cadastro = criacao_faltando(r)
+    if falta_cadastro:  # a etapa 2 (Coleta) em diante só começa com o cadastro completo
+        flash("Complete o cadastro do invoice antes de seguir para a logística. Falta: "
+              + ", ".join(falta_cadastro) + ".", "erro")
+        return redirect(url_for("invoice_detalhe", id=id) + "#logistica")
     novos, mudancas = {}, []
     for campo, rotulo, tipo, _obrig in CAMPOS_ETAPA[etapa]:
         valor = request.form.get(campo, "").strip()
