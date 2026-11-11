@@ -22,6 +22,15 @@
 </div>
 
 {% if r.cancelado_em %}<div class="flash erro">Cancelado em {{ r.cancelado_em|data }} — {{ r.motivo_cancelamento }}</div>{% endif %}
+{% set falta_cadastro = criacao_faltando(r) %}{% set falta_opcional = opcionais_faltando(r) %}
+{% if ativo and (falta_cadastro or falta_opcional) %}
+<section class="pendencias-invoice">
+  {% if falta_cadastro %}<p><strong>Cadastro incompleto</strong> — o processo só avança com: {{ falta_cadastro|join(', ') }}.
+    {% if imp %}<a href="{{ url_for('invoice_editar', id=r.id) }}">Completar cadastro</a>{% endif %}</p>{% endif %}
+  {% if falta_opcional %}<p><strong>Informações não obrigatórias pendentes:</strong> {{ falta_opcional|join(', ') }}.
+    {% if imp %}<a href="{{ url_for('invoice_editar', id=r.id) }}">Preencher</a>{% endif %}</p>{% endif %}
+</section>
+{% endif %}
 
 <section class="resumo">
   <div class="{{ 'alerta' if r.principal_pendente > 0.005 and r.vencimento and r.vencimento < hoje }}">
@@ -37,10 +46,10 @@
 </section>
 
 {# ---------- trilha do processo ---------- #}
-{% set passos = [('Criação', true)] %}
+{% set passos = [('Criação', etapa_concluida(r, 'CRIACAO'))] %}
 {% for e in ORDEM_LOGISTICA %}{% set _ = passos.append((TITULO_ETAPA[e], etapa_concluida(r, e))) %}{% endfor %}
 {% set _ = passos.append(('Inspeção', r.tem_desconto is not none and r.data_fim_inspecao)) %}
-{% set _ = passos.append(('Pagamento', r.situacao not in ('COLETA','EMBARQUE','DESEMBARACO','CHEGADA','INSPECAO','PAGAMENTO','CANCELADO'))) %}
+{% set _ = passos.append(('Pagamento', r.situacao not in ('CRIACAO','COLETA','EMBARQUE','DESEMBARACO','CHEGADA','INSPECAO','PAGAMENTO','CANCELADO'))) %}
 {% if d %}{% set _ = passos.append(('Dedução e liberação', r.situacao in ('SWIFT', 'CONCLUIDO'))) %}{% endif %}
 {% set _ = passos.append(('Concluído', r.situacao == 'CONCLUIDO')) %}
 <ol class="trilha trilha-longa">
@@ -75,8 +84,8 @@
       {% if com_desc %}<th class="num">Preço com desconto</th><th class="num">Total com desconto</th>{% endif %}</tr></thead>
     <tbody>
     {% for it in r.itens %}
-      <tr><td>{{ it.codigo or '—' }}</td><td>{{ it.item or '—' }}</td><td class="num">{{ it.quantidade|qtd }}</td>
-        <td class="num">{{ it.valor_unit|moeda(m) }}</td><td class="num">{{ (it.quantidade * it.valor_unit)|moeda(m) }}</td>
+      <tr><td>{{ it.codigo or '—' }}</td><td>{{ it.item or '—' }}</td><td class="num">{{ it.quantidade|qtd if it.quantidade is not none else '—' }}</td>
+        <td class="num">{{ it.valor_unit|moeda(m) }}</td><td class="num">{{ ((it.quantidade or 0) * (it.valor_unit or 0))|moeda(m) if it.quantidade is not none and it.valor_unit is not none else '—' }}</td>
         {% if com_desc %}{% set cd = r.itens_com_desconto[loop.index0] %}<td class="num calc">{{ MOEDAS[m] }} {{ cd.preco|num4 }}</td><td class="num calc">{{ cd.total|moeda(m) }}</td>{% endif %}</tr>
     {% endfor %}
     </tbody>
@@ -129,17 +138,16 @@
   {% for e in ORDEM_LOGISTICA %}
     <div class="etapa-card {{ 'feita' if etapa_concluida(r, e) }}" id="etapa-{{ e }}">
       <h3>{{ TITULO_ETAPA[e] }} {% if etapa_concluida(r, e) %}<span class="ok">✔</span>{% endif %}</h3>
-      {% set bloqueio_docs = e == 'DESEMBARACO' and faltando %}
-      {% if bloqueio_docs %}<p class="aviso-etapa">Anexe {{ faltando|join(' e ') }} em <a href="#documentos">Documentos</a> para seguir com o desembaraço.</p>{% endif %}
+      {% set falta_etapa = etapa_faltando(r, e) %}
+      {% if falta_etapa and ativo %}<p class="aviso-etapa">Para concluir: {{ falta_etapa|join(', ') }}{% if e == 'DESEMBARACO' and faltando %} (anexe em <a href="#documentos">Documentos</a>){% endif %}.</p>{% endif %}
       {% if imp %}
       <form method="post" action="{{ url_for('invoice_etapa', id=r.id, etapa=e) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% for campo, rotulo, tipo, obrig in CAMPOS_ETAPA[e] %}
-          {% set travado = bloqueio_docs and campo != 'data_registro_br' %}
-          <label class="{{ 'travado' if travado }}">{{ rotulo }}{{ ' *' if obrig }}
-          {% if tipo == 'data' %}<input type="date" name="{{ campo }}" value="{{ r[campo] or '' }}" {{ 'required' if campo in CAMPOS_PARA_SALVAR.get(e, []) }} {{ 'disabled' if travado }}>
-          {% elif tipo == 'canal' %}<select name="{{ campo }}" {{ 'disabled' if travado }}><option value="">—</option>{% for c in CORES_CANAL %}<option {{ 'selected' if r[campo] == c }}>{{ c }}</option>{% endfor %}</select>
-          {% else %}<textarea name="{{ campo }}" rows="2" {{ 'disabled' if travado }}>{{ r[campo] or '' }}</textarea>{% endif %}
+          <label>{{ rotulo }}{{ ' *' if obrig }}
+          {% if tipo == 'data' %}<input type="date" name="{{ campo }}" value="{{ r[campo] or '' }}">
+          {% elif tipo == 'canal' %}<select name="{{ campo }}"><option value="">—</option>{% for c in CORES_CANAL %}<option {{ 'selected' if r[campo] == c }}>{{ c }}</option>{% endfor %}</select>
+          {% else %}<textarea name="{{ campo }}" rows="2">{{ r[campo] or '' }}</textarea>{% endif %}
           </label>
         {% endfor %}
         <button class="btn pequeno">Salvar</button>

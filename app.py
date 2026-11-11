@@ -32,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.5"
+VERSAO = "3.6"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -77,13 +77,12 @@ CAMPOS_ETAPA = {
     "CHEGADA": [("data_prog_chegada", "Data programada de chegada", "data", True),
                 ("data_chegada", "Data real de chegada na fábrica", "data", True)],
 }
-# campos que precisam estar preenchidos para salvar a etapa (os demais podem ser informados depois)
-CAMPOS_PARA_SALVAR = {"EMBARQUE": ["etd_planejado", "eta_planejado"], "CHEGADA": ["data_prog_chegada"]}
 # após o registro no Brasil, o desembaraço só segue com estes documentos anexados
 DOCUMENTOS_REGISTRO = ("DUIMP", "BOLETO_ICMS")
 TITULO_ETAPA = {"COLETA": "Coleta", "EMBARQUE": "Embarque", "DESEMBARACO": "Desembaraço", "CHEGADA": "Transporte"}
 # Situação atual do invoice (calculada) e quem age nela
 SITUACOES = {
+    "CRIACAO": ("Cadastro incompleto", "importacao"),
     "COLETA": ("Aguardando coleta", "importacao"),
     "EMBARQUE": ("Em embarque", "importacao"),
     "DESEMBARACO": ("Em desembaraço", "importacao"),
@@ -198,9 +197,9 @@ CREATE TABLE IF NOT EXISTS invoice_itens (
     invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
     codigo TEXT,                          -- código do item
     item TEXT NOT NULL,                   -- descrição do item
-    quantidade REAL NOT NULL,
+    quantidade REAL,                      -- pode ficar vazio enquanto o cadastro está incompleto
     valor_unit_original REAL,             -- (versões anteriores) preço original separado
-    valor_unit REAL NOT NULL              -- preço original do item: total = quantidade x preço
+    valor_unit REAL                       -- preço original do item: total = quantidade x preço
 );
 -- Parcelas da condição de pagamento (percentuais somam 100%)
 CREATE TABLE IF NOT EXISTS condicao_parcelas (
@@ -323,10 +322,26 @@ def init_db():
             db.execute("ALTER TABLE invoice_itens ADD COLUMN codigo TEXT")
         if "data_parametrizacao" not in {r[1] for r in db.execute("PRAGMA table_info(invoices)")}:
             db.execute("ALTER TABLE invoices ADD COLUMN data_parametrizacao TEXT")
+        # versão 3.6: itens podem ser salvos sem quantidade/preço (cadastro incompleto)
+        if any(c[1] in ("quantidade", "valor_unit") and c[3] for c in db.execute("PRAGMA table_info(invoice_itens)")):
+            db.executescript("""
+                ALTER TABLE invoice_itens RENAME TO invoice_itens_v35;
+                CREATE TABLE invoice_itens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+                    codigo TEXT, item TEXT NOT NULL, quantidade REAL, valor_unit_original REAL, valor_unit REAL);
+                INSERT INTO invoice_itens (id, invoice_id, codigo, item, quantidade, valor_unit_original, valor_unit)
+                    SELECT id, invoice_id, codigo, item, quantidade, valor_unit_original, valor_unit FROM invoice_itens_v35;
+                DROP TABLE invoice_itens_v35;
+                CREATE INDEX IF NOT EXISTS idx3_itens_invoice ON invoice_itens(invoice_id);
+            """)
         # versão 3.2: condição de pagamento em parcelas (invoices antigos viram uma parcela de 100%)
         db.execute("INSERT INTO condicao_parcelas (invoice_id, ordem, percentual, tipo, dias)"
                    " SELECT id, 1, 100, condicao_tipo, condicao_dias FROM invoices i"
-                   " WHERE NOT EXISTS (SELECT 1 FROM condicao_parcelas c WHERE c.invoice_id = i.id)")
+                   " WHERE condicao_tipo IN ('ANTECIPADO', 'PRAZO')"
+                   " AND NOT EXISTS (SELECT 1 FROM condicao_parcelas c WHERE c.invoice_id = i.id)")
+        # cadastros salvos sem condição de pagamento não recebem parcela automática
+        db.execute("DELETE FROM condicao_parcelas WHERE tipo NOT IN ('ANTECIPADO', 'PRAZO')")
         for antigo, novo in PERFIS_ANTIGOS.items():
             db.execute("UPDATE usuarios SET perfil = ? WHERE perfil = ?", (novo, antigo))
 
@@ -454,7 +469,7 @@ def texto_parcela(c, sozinha=False):
     pct = "" if sozinha else f"{fmt_qtd(c['percentual'])}% "
     if c["tipo"] == "ANTECIPADO":
         return f"{pct}antecipado".strip().capitalize() if sozinha else f"{pct}antecipado"
-    return f"{pct}{c['dias']} dias após a HAWB"
+    return f"{pct}{c['dias'] if c['dias'] is not None else '?'} dias após a HAWB"
 
 
 def condicao_texto(r):
@@ -515,12 +530,9 @@ def data_prevista_chegada(inv):
 
 
 def etapa_concluida(inv, etapa):
-    ok = all(inv[campo] for campo, _r, _t, obrig in CAMPOS_ETAPA[etapa] if obrig)
-    if etapa == "EMBARQUE":  # o banco de débito (Financeiro) também é obrigatório
-        ok = ok and bool(inv["banco_debito"])
-    if etapa == "DESEMBARACO":
-        ok = ok and not documentos_faltando(inv)
-    return ok
+    if etapa == "CRIACAO":
+        return not criacao_faltando(inv)
+    return not etapa_faltando(inv, etapa)
 
 
 def calcular(inv):
@@ -532,9 +544,7 @@ def calcular(inv):
         "SELECT * FROM condicao_parcelas WHERE invoice_id = ? ORDER BY ordem", (iid,)).fetchall()]
     r["itens"] = db.execute("SELECT * FROM invoice_itens WHERE invoice_id = ? ORDER BY id", (iid,)).fetchall()
     # valor total do invoice: quantidade x preço; o valor final desconta as deduções de descontos
-    r["itens_total"] = round(sum(x["quantidade"] * x["valor_unit"] for x in r["itens"]), 2)
-    r["itens_original"] = round(sum(x["quantidade"] * (x["valor_unit_original"] or x["valor_unit"])
-                                    for x in r["itens"]), 2)
+    r["itens_total"] = round(sum((x["quantidade"] or 0) * (x["valor_unit"] or 0) for x in r["itens"]), 2)
     # deduções de descontos de invoices anteriores aplicadas neste invoice
     r["deducoes_recebidas"] = db.execute(
         "SELECT x.*, o.numero AS invoice_origem, o.id AS origem_id FROM deducoes x"
@@ -589,6 +599,8 @@ def situacao(r):
     """Situação atual do invoice: primeira etapa ainda não concluída."""
     if r["cancelado_em"]:
         return "CANCELADO"
+    if criacao_faltando(r):
+        return "CRIACAO"
     for etapa in ORDEM_LOGISTICA:
         if not etapa_concluida(r, etapa):
             return etapa
@@ -645,7 +657,8 @@ app.jinja_env.globals.update(
     CAMPOS_ETAPA=CAMPOS_ETAPA, TITULO_ETAPA=TITULO_ETAPA, ORDEM_LOGISTICA=ORDEM_LOGISTICA, CORES_CANAL=CORES_CANAL,
     TIPOS_ANEXO=TIPOS_ANEXO, STATUS_DESCONTO=STATUS_DESCONTO, TIPOS_PAGAMENTO=TIPOS_PAGAMENTO,
     pode=lambda perfil: pode(perfil), MAX_USUARIOS=MAX_USUARIOS, VERSAO=VERSAO, condicao_texto=condicao_texto,
-    etapa_concluida=etapa_concluida, PRAZO_ANTECIPADO_DIAS=PRAZO_ANTECIPADO_DIAS, CAMPOS_PARA_SALVAR=CAMPOS_PARA_SALVAR,
+    etapa_concluida=etapa_concluida, PRAZO_ANTECIPADO_DIAS=PRAZO_ANTECIPADO_DIAS, etapa_faltando=lambda r, e: etapa_faltando(r, e),
+    criacao_faltando=lambda r: criacao_faltando(r), opcionais_faltando=lambda r: opcionais_faltando(r),
 )
 app.jinja_env.filters["moeda"] = fmt_moeda
 app.jinja_env.filters["num"] = fmt_num
@@ -813,11 +826,20 @@ def listar_pendencias(invoices):
         sit = r["situacao"]
         if sit == "CANCELADO":
             continue
-        if imp and sit in ORDEM_LOGISTICA:
-            add(r, f"Atualizar etapa: {TITULO_ETAPA[sit]}", "importacao")
         faltando = documentos_faltando(r)
+        if imp and sit == "CRIACAO":
+            add(r, "Completar o cadastro: falta " + ", ".join(criacao_faltando(r)), "importacao")
+        if imp and sit in ORDEM_LOGISTICA:
+            # o que a Importação precisa preencher para concluir a etapa (documentos e banco têm pendência própria)
+            falta = [f for f in etapa_faltando(r, sit) if f not in faltando and not f.startswith("Banco de débito")]
+            if falta:
+                add(r, f"{TITULO_ETAPA[sit]}: falta " + ", ".join(falta), "importacao",
+                    r["data_prog_chegada"] if sit == "CHEGADA" else None)
         if imp and faltando:
             add(r, "Anexar " + " e ".join(faltando), "importacao")
+        opcionais = opcionais_faltando(r)
+        if imp and opcionais:
+            add(r, "Informações não obrigatórias a preencher: " + ", ".join(opcionais), "importacao")
         if adm and sit == "INSPECAO":
             add(r, "Registrar a inspeção", "admin", r["data_chegada"])
         d = r["desconto"]
@@ -859,7 +881,7 @@ def painel():
     hj, lim_30 = hoje(), somar_dias(hoje(), 30)
     ativos = [r for r in invoices if r["situacao"] != "CANCELADO"]
     contagem = {
-        "logistica": sum(1 for r in ativos if r["situacao"] in ORDEM_LOGISTICA),
+        "logistica": sum(1 for r in ativos if r["situacao"] in ["CRIACAO"] + ORDEM_LOGISTICA),
         "inspecao": sum(1 for r in ativos if r["situacao"] == "INSPECAO"),
         "vencidos": sum(1 for r in ativos for p in r["parcelas"] if p["pendente"] > TOLERANCIA
                         and p["vencimento"] and p["vencimento"] < hj),
@@ -872,7 +894,7 @@ def painel():
     if filtro_sit == "ABERTOS":
         lista = [r for r in lista if r["situacao"] not in ("CONCLUIDO", "CANCELADO")]
     elif filtro_sit == "LOGISTICA":
-        lista = [r for r in lista if r["situacao"] in ORDEM_LOGISTICA]
+        lista = [r for r in lista if r["situacao"] in ["CRIACAO"] + ORDEM_LOGISTICA]
     elif filtro_sit in SITUACOES:
         lista = [r for r in lista if r["situacao"] == filtro_sit]
     if filtro_forn.isdigit():
@@ -898,6 +920,9 @@ def itens_fluxo(invoices):
         if r["situacao"] in ("CANCELADO", "CONCLUIDO"):
             continue
         base = {"invoice_id": r["id"], "fornecedor": r["fornecedor"], "numero": r["numero"], "moeda": r["moeda"]}
+        if not r["parcelas"] and r["principal_pendente"] > TOLERANCIA:
+            itens.append(dict(base, categoria="PAGAMENTO", tipo="Pagamento do invoice · condição de pagamento não "
+                              "informada", data=None, estimado=False, valor=r["principal_pendente"]))
         for p in r["parcelas"]:
             if p["pendente"] <= TOLERANCIA:
                 continue
@@ -1033,64 +1058,103 @@ def link_valido(url):
 
 
 def ler_form_invoice():
+    """Lê o cadastro do invoice. Salvar sempre é possível: só fornecedor e nº do invoice são exigidos
+    (identificam o processo). O que faltar fica pendente e impede o avanço da etapa, não o salvamento."""
     f = request.form
     dados = {
         "fornecedor": " ".join(f.get("fornecedor", "").split()),
         "numero": f.get("numero", "").strip(),
-        "moeda": f.get("moeda", ""),
-        "data_assinatura": data_valida(f.get("data_assinatura")),
+        "moeda": f.get("moeda", "") if f.get("moeda", "") in MOEDAS else "USD",
+        "data_assinatura": data_valida(f.get("data_assinatura")) or "",
         "agente_carga": f.get("agente_carga", "").strip(),
         "despachante": f.get("despachante", "").strip(),
         "grupo_consolidacao": f.get("grupo_consolidacao", "").strip(),
         "data_prog_coleta": data_valida(f.get("data_prog_coleta")),
         "obs": f.get("obs", "").strip(),
     }
-    itens = []
-    for cod, desc, qtd, vu in zip(f.getlist("item_codigo"), f.getlist("item_desc"), f.getlist("item_qtd"),
-                                  f.getlist("item_vu")):
-        if not any(x.strip() for x in (cod, desc, qtd, vu)):
-            continue
-        preco = parse_num(vu)
-        itens.append({"codigo": cod.strip(), "item": desc.strip(), "quantidade": parse_num(qtd),
-                      "valor_unit_original": preco, "valor_unit": preco})
     erros = []
     if not dados["fornecedor"]:
         erros.append("Informe o fornecedor.")
     if not dados["numero"]:
         erros.append("Informe o número do invoice.")
-    if dados["moeda"] not in MOEDAS:
-        erros.append("Selecione a moeda.")
-    if not dados["data_assinatura"]:
-        erros.append("Informe a data de assinatura do invoice.")
+    itens = []
+    for cod, desc, qtd, vu in zip(f.getlist("item_codigo"), f.getlist("item_desc"), f.getlist("item_qtd"),
+                                  f.getlist("item_vu")):
+        if not any(x.strip() for x in (cod, desc, qtd, vu)):
+            continue
+        preco, quantidade = parse_num(vu), parse_num(qtd)
+        if (quantidade is not None and quantidade < 0) or (preco is not None and preco < 0):
+            erros.append(f"Item {cod.strip() or len(itens) + 1}: quantidade e preço não podem ser negativos.")
+        itens.append({"codigo": cod.strip(), "item": desc.strip(), "quantidade": quantidade,
+                      "valor_unit_original": preco, "valor_unit": preco})
     condicao = []
     for pct, tipo, dias in zip(f.getlist("cond_pct"), f.getlist("cond_tipo"), f.getlist("cond_dias")):
-        if not pct.strip() and not dias.strip():
+        percentual = parse_num(pct)
+        if percentual is None:
             continue
-        condicao.append({"percentual": parse_num(pct), "tipo": tipo,
+        if percentual <= 0 or percentual > 100:
+            erros.append("Condição de pagamento: cada percentual deve estar entre 0 e 100.")
+        condicao.append({"percentual": percentual, "tipo": tipo if tipo in CONDICOES else "PRAZO",
                          "dias": int(dias) if tipo == "PRAZO" and dias.strip().isdigit() else None})
     dados["condicao"] = condicao
-    if not condicao:
-        erros.append("Informe a condição de pagamento.")
-    for i, c in enumerate(condicao, 1):
-        if c["percentual"] is None or c["percentual"] <= 0:
-            erros.append(f"Condição de pagamento, parcela {i}: informe o percentual.")
-        if c["tipo"] not in CONDICOES:
-            erros.append(f"Condição de pagamento, parcela {i}: selecione antecipado ou após a HAWB.")
-        elif c["tipo"] == "PRAZO" and c["dias"] is None:
-            erros.append(f"Condição de pagamento, parcela {i}: informe os dias após a HAWB.")
-    if condicao and abs(sum(c["percentual"] or 0 for c in condicao) - 100) > 0.01:
-        erros.append("Os percentuais da condição de pagamento devem somar 100%.")
     unica = condicao[0] if len(condicao) == 1 else None
-    dados["condicao_tipo"] = unica["tipo"] if unica else "MISTA"
+    dados["condicao_tipo"] = (unica["tipo"] if unica else "MISTA") if condicao else ""
     dados["condicao_dias"] = unica["dias"] if unica else None
-    if not itens:
-        erros.append("Informe ao menos um item.")
-    for i, it in enumerate(itens, 1):
-        if not it["codigo"] or not it["quantidade"] or it["quantidade"] <= 0 or it["valor_unit"] is None \
-                or it["valor_unit"] < 0:
-            erros.append(f"Item {i}{' (' + it['codigo'] + ')' if it['codigo'] else ''}: informe código, quantidade e "
-                         "preço.")
     return dados, itens, erros
+
+
+# Cadastro do invoice: obrigatórios para concluir a etapa de criação e opcionais que ficam pendentes no painel
+OPCIONAIS_CADASTRO = [("agente_carga", "Agente de carga"), ("despachante", "Despachante"),
+                      ("grupo_consolidacao", "Grupo de consolidação"), ("data_prog_coleta", "Data programada de coleta")]
+# campos não obrigatórios que não geram pendência
+SEM_PENDENCIA = {"exigencias_anvisa"}
+
+
+def criacao_faltando(r):
+    """Informações obrigatórias do cadastro que ainda faltam (impedem o avanço do processo)."""
+    falta = []
+    if not r["data_assinatura"]:
+        falta.append("Data de assinatura")
+    condicao = r.get("condicao") or []
+    if not condicao:
+        falta.append("Condição de pagamento")
+    else:
+        if abs(sum(c["percentual"] for c in condicao) - 100) > 0.01:
+            falta.append("Condição de pagamento somando 100%")
+        if any(c["tipo"] == "PRAZO" and c["dias"] is None for c in condicao):
+            falta.append("Dias após a HAWB da condição")
+    itens = r.get("itens") or []
+    if not itens:
+        falta.append("Itens")
+    elif any(not x["codigo"] or not x["quantidade"] or x["valor_unit"] is None for x in itens):
+        falta.append("Código, quantidade e preço de todos os itens")
+    return falta
+
+
+def opcionais_faltando(r):
+    """Informações não obrigatórias ainda vazias (ficam como pendência no painel)."""
+    falta = [rot for campo, rot in OPCIONAIS_CADASTRO if not r[campo]]
+    for etapa in ORDEM_LOGISTICA:
+        falta += [rot for campo, rot, _t, obrig in CAMPOS_ETAPA[etapa]
+                  if not obrig and campo not in SEM_PENDENCIA and not r[campo]]
+    return falta
+
+
+def etapa_faltando(r, etapa):
+    """Informações obrigatórias de uma etapa logística que ainda faltam."""
+    falta = [rot for campo, rot, _t, obrig in CAMPOS_ETAPA[etapa] if obrig and not r[campo]]
+    if etapa == "EMBARQUE" and not r["banco_debito"]:
+        falta.append("Banco de débito (Financeiro)")
+    if etapa == "DESEMBARACO":
+        falta += documentos_faltando(r)
+    return falta
+
+
+def avisar_cadastro_pendente(iid):
+    r = carregar_invoice(iid)
+    falta = criacao_faltando(r)
+    if falta:
+        flash("Cadastro salvo, mas incompleto: o processo só avança com " + ", ".join(falta) + ".", "aviso-box")
 
 
 def salvar_condicao(invoice_id, condicao):
@@ -1200,15 +1264,15 @@ def importar_itens():
 
 def itens_com_desconto(itens, deducoes):
     """Calcula, para exibição/exportação, o preço e o total com desconto de cada item (rateio proporcional)."""
-    total = round(sum(it["quantidade"] * it["valor_unit"] for it in itens), 2)
+    total = round(sum((it["quantidade"] or 0) * (it["valor_unit"] or 0) for it in itens), 2)
     total_desc = round(total - deducoes, 2)
     fator = total_desc / total if total else 1
     linhas, acumulado = [], 0
     for n, it in enumerate(itens, 1):
-        t = round(it["quantidade"] * it["valor_unit"], 2)
+        t = round((it["quantidade"] or 0) * (it["valor_unit"] or 0), 2)
         td = round(t * fator, 2) if n < len(itens) else round(total_desc - acumulado, 2)
         acumulado += td
-        linhas.append(dict(it, total=t, preco_desc=it["valor_unit"] * fator, total_desc=td))
+        linhas.append(dict(it, total=t, preco_desc=(it["valor_unit"] or 0) * fator, total_desc=td))
     return linhas, total, total_desc
 
 
@@ -1394,6 +1458,7 @@ def invoice_novo():
                 registrar_evento(origem_id, f"Desconto deduzido no invoice {dados['numero']}: {fmt_moeda(v, dados['moeda'])}")
             db.commit()
             flash("Invoice criado." + (f" {len(deducoes)} desconto(s) deduzido(s)." if deducoes else ""), "ok")
+            avisar_cadastro_pendente(iid)
             return redirect(url_for("invoice_detalhe", id=iid))
         for e in erros:
             flash(e, "erro")
@@ -1451,6 +1516,7 @@ def invoice_editar(id):
             registrar_evento(id, "Dados do invoice corrigidos", "; ".join(mudancas) or None)
             db.commit()
             flash("Invoice atualizado.", "ok")
+            avisar_cadastro_pendente(id)
             return redirect(url_for("invoice_detalhe", id=id))
         for e in erros:
             flash(e, "erro")
@@ -1510,27 +1576,6 @@ def invoice_etapa(id, etapa):
         novos[campo] = valor
         if valor != r[campo]:
             mudancas.append(f"{rotulo}: {fmt_data(valor) if tipo == 'data' else (valor or '—')}")
-    volta = redirect(url_for("invoice_detalhe", id=id) + f"#etapa-{etapa}")
-    rotulos = {c: rot for c, rot, _t, _o in CAMPOS_ETAPA[etapa]}
-    faltando = [rotulos[c] for c in CAMPOS_PARA_SALVAR.get(etapa, []) if not novos[c]]
-    if faltando:
-        flash("Preencha: " + ", ".join(faltando) + ".", "erro")
-        return volta
-    if etapa == "DESEMBARACO":
-        # após o registro no Brasil, o processo só segue com a DUIMP e o boleto do ICMS anexados
-        posteriores = [c for c, _r, _t, _o in CAMPOS_ETAPA[etapa] if c != "data_registro_br"]
-        if any(novos[c] for c in posteriores):
-            if not novos["data_registro_br"]:
-                flash("Informe primeiro a data de registro no Brasil.", "erro")
-                return volta
-            faltam_docs = documentos_faltando(dict(r, data_registro_br=novos["data_registro_br"]))
-            if faltam_docs:
-                flash("Anexe " + " e ".join(faltam_docs) + " (em Documentos) para seguir com o desembaraço.", "erro")
-                return volta
-    if etapa == "CHEGADA" and novos["data_chegada"] and r["data_chegada"] != novos["data_chegada"] \
-            and not etapa_concluida(r, "DESEMBARACO"):
-        flash("Conclua o desembaraço antes de registrar a chegada na fábrica.", "erro")
-        return volta
     if mudancas:
         db = get_db()
         db.execute(f"UPDATE invoices SET {', '.join(c + ' = ?' for c in novos)} WHERE id = ?", (*novos.values(), id))
@@ -1541,7 +1586,12 @@ def invoice_etapa(id, etapa):
                 registrar_evento(x["origem_id"], f"Invoice {r['numero']} (com dedução de "
                                  f"{fmt_moeda(x['valor'], r['moeda'])}) chegou: valor segurado pode ser liberado")
         db.commit()
-        flash(f"Etapa {TITULO_ETAPA[etapa]} atualizada.", "ok")
+    # salvar sempre funciona; a etapa só é concluída com todas as informações obrigatórias
+    falta = etapa_faltando(dict(r, **novos), etapa)
+    if falta:
+        flash(f"Etapa {TITULO_ETAPA[etapa]} salva. Para concluir a etapa, falta: " + ", ".join(falta) + ".", "aviso-box")
+    else:
+        flash(f"Etapa {TITULO_ETAPA[etapa]} salva e concluída.", "ok")
     return redirect(url_for("invoice_detalhe", id=id) + f"#etapa-{etapa}")
 
 

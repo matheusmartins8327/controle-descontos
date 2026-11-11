@@ -287,3 +287,7 @@ th { color: var(--marinho); opacity: .8; }
 .topo nav { flex-wrap: nowrap; }
 .quem small { display: block; }
 @media (max-width: 1100px) { .topo nav { flex-wrap: wrap; } }
+/* v3.6 - pendências do cadastro */
+.pendencias-invoice { background: var(--alerta-claro); border: 1px solid #f3d3a8; border-radius: var(--raio); padding: .7rem 1rem; margin-bottom: 1rem; color: var(--alerta); font-size: .9rem; }
+.pendencias-invoice p { margin: .2rem 0; }
+.s-criacao { background: var(--alerta-claro); color: var(--alerta); }

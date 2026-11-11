@@ -2,7 +2,7 @@
 {% block titulo %}{{ 'Editar invoice' if editando else 'Novo invoice' }}{% endblock %}
 {% block conteudo %}
 <h1>{{ 'Corrigir invoice' if editando else 'Novo invoice' }}</h1>
-<p class="sub">Criação do invoice · Importação</p>
+<p class="sub">Criação do invoice · Importação. Você pode salvar a qualquer momento (basta fornecedor e nº do invoice); o que faltar fica nas pendências do painel e o processo só avança quando as informações obrigatórias (*) estiverem completas.</p>
 <form method="post" class="bloco" id="form-invoice">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="grade">
@@ -16,7 +16,7 @@
       {% if chave_travada %}<input name="moeda" id="moeda" value="{{ d.moeda }}" readonly>
       {% else %}<select name="moeda" id="moeda">{% for k, s in MOEDAS.items() %}<option value="{{ k }}" {{ 'selected' if d.moeda == k }}>{{ k }} ({{ s }})</option>{% endfor %}</select>{% endif %}
     </label>
-    <label>Data de assinatura do invoice *<input type="date" name="data_assinatura" value="{{ d.data_assinatura or '' }}" required></label>
+    <label>Data de assinatura do invoice *<input type="date" name="data_assinatura" value="{{ d.data_assinatura or '' }}"></label>
     <label>Agente de carga<input name="agente_carga" value="{{ d.agente_carga or '' }}"></label>
     <label>Despachante<input name="despachante" value="{{ d.despachante or '' }}"></label>
     <label>Grupo de consolidação<input name="grupo_consolidacao" value="{{ d.grupo_consolidacao or '' }}"></label>
@@ -116,7 +116,7 @@
     parcelas.querySelectorAll('tr').forEach(tr => {
       soma += num(tr.querySelector('[name=cond_pct]').value) || 0;
       const prazo = tr.querySelector('[name=cond_tipo]').value === 'PRAZO', dias = tr.querySelector('[name=cond_dias]');
-      dias.disabled = !prazo; dias.required = prazo; if (!prazo) dias.value = '';
+      dias.disabled = !prazo; if (!prazo) dias.value = '';
     });
     const el = document.getElementById('soma-pct');
     el.textContent = `Total: ${soma.toLocaleString('pt-BR')}%`;

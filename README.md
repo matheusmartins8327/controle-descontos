@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v3.5)
+# Controle de Invoices e Descontos (v3.6)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -93,6 +93,8 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 | 6 | Inspeção | Engenharia (administrador) | Fim da inspeção e se há desconto; se sim: valor, data do relatório e aprovação do fornecedor (Enviado → Aprovado) |
 | 7 | Pagamento | Financeiro | Pagamento de cada parcela (integral, ou parcial quando há valor segurado), com Swift |
 | 8 | Dedução e liberação | Importação / Financeiro | O desconto é deduzido em próximo(s) invoice(s); quando eles chegam, o Financeiro libera o valor segurado, com Swift |
+
+**Salvar sempre funciona**: no cadastro basta fornecedor e nº do invoice; nas etapas, qualquer informação pode ser salva a qualquer momento. A etapa só é concluída (e o processo só avança) quando todas as informações obrigatórias (*) estão preenchidas. O painel mostra em **Minhas pendências** o que falta em cada etapa e também as informações não obrigatórias ainda vazias (exceto Exigências da ANVISA), até serem preenchidas.
 
 O invoice fica **Concluído** quando está pago, o desconto (se houver) foi deduzido e liberado, e todos os pagamentos têm Swift.
 
