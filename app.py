@@ -32,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.11"
+VERSAO = "3.12"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -50,6 +50,7 @@ MOEDAS = {"USD": "US$", "EUR": "€", "BRL": "R$"}
 # Condição de pagamento: uma ou mais parcelas (ex.: 25% antecipado + 75% 60 dias após a HAWB)
 CONDICOES = {"ANTECIPADO": "Antecipado", "PRAZO": "Após a HAWB"}
 PRAZO_ANTECIPADO_DIAS = 5          # pagamento antecipado: data de assinatura + 5 dias
+PRAZO_LIBERACAO_DIAS = 5           # liberação do segurado: data de aprovação do desconto + 5 dias
 CUSTO_IMPORTACAO_ESTIMADO = 0.40   # visibilidade do Financeiro a partir do embarque
 # canal de parametrização: opção -> (cor de fundo pastel, cor do texto)
 CORES_CANAL = {"Verde": ("#d4f0dc", "#1d5a31"), "Amarelo": ("#fff3c4", "#6b5200")}
@@ -579,6 +580,8 @@ def calcular(inv):
         liberavel = 0
     r["liberavel"] = round(liberavel, 2)
     r["liberacao_disponivel"] = max(round(liberavel - r["liberado"], 2), 0)
+    # prazo de pagamento do valor segurado liberado: data em que o desconto foi aprovado + 5 dias
+    r["vencimento_liberacao"] = somar_dias(d["aprovado_em"][:10], PRAZO_LIBERACAO_DIAS) if d and d["aprovado_em"] else None
     r["swifts_pendentes"] = sum(1 for p in r["pagamentos"] if not p["swift_url"])
     r["parcelas"] = calcular_parcelas(r)
     pendentes = [p for p in r["parcelas"] if p["pendente"] > TOLERANCIA]
@@ -652,7 +655,7 @@ app.jinja_env.globals.update(
     CAMPOS_ETAPA=CAMPOS_ETAPA, TITULO_ETAPA=TITULO_ETAPA, ORDEM_LOGISTICA=ORDEM_LOGISTICA, CORES_CANAL=CORES_CANAL,
     STATUS_DESCONTO=STATUS_DESCONTO, TIPOS_PAGAMENTO=TIPOS_PAGAMENTO,
     pode=lambda perfil: pode(perfil), MAX_USUARIOS=MAX_USUARIOS, VERSAO=VERSAO, condicao_texto=condicao_texto,
-    etapa_concluida=etapa_concluida, PRAZO_ANTECIPADO_DIAS=PRAZO_ANTECIPADO_DIAS, etapa_faltando=lambda r, e: etapa_faltando(r, e),
+    etapa_concluida=etapa_concluida, PRAZO_ANTECIPADO_DIAS=PRAZO_ANTECIPADO_DIAS, PRAZO_LIBERACAO_DIAS=PRAZO_LIBERACAO_DIAS, etapa_faltando=lambda r, e: etapa_faltando(r, e),
     criacao_faltando=lambda r: criacao_faltando(r), opcionais_faltando=lambda r: opcionais_faltando(r),
 )
 app.jinja_env.filters["moeda"] = fmt_moeda
@@ -845,7 +848,14 @@ def listar_pendencias(invoices):
                 add(r, ("Pagamento vencido" if vencido else "Pagar invoice") + rotulo, "financeiro", p["vencimento"],
                     p["pendente"], alerta=vencido or p["vencimento"] <= lim_7)
         if fin and r["liberacao_disponivel"] > TOLERANCIA:
-            add(r, "Liberar valor segurado", "financeiro", None, r["liberacao_disponivel"], alerta=True)
+            venc = r["vencimento_liberacao"]
+            if venc:
+                vencido = venc < hoje()
+                add(r, "Liberação do segurado vencida" if vencido else "Liberar valor segurado", "financeiro", venc,
+                    r["liberacao_disponivel"], alerta=vencido or venc <= lim_7)
+            else:
+                add(r, "Liberar valor segurado (desconto ainda não aprovado)", "financeiro", None,
+                    r["liberacao_disponivel"], alerta=True)
         if fin and r["swifts_pendentes"]:
             add(r, f"Anexar Swift ({r['swifts_pendentes']} pagamento(s))", "financeiro")
         if fin and not r["banco_debito"] and (r["etd_planejado"] or r["etd_real"]):
@@ -921,11 +931,12 @@ def itens_fluxo(invoices):
                 tipo += " · aguardando data da HAWB"
             itens.append(dict(base, categoria="PAGAMENTO", tipo=tipo, data=p["vencimento"], estimado=False,
                               valor=p["pendente"]))
+        venc_lib = r["vencimento_liberacao"]
         if r["liberacao_disponivel"] > TOLERANCIA:
-            chegadas = [x["data_chegada"] for x in r["deducoes_do_desconto"] if x["data_chegada"]]
-            itens.append(dict(base, categoria="LIBERACAO", tipo="Liberação do valor segurado (disponível)",
-                              data=max(chegadas) if chegadas else hj, estimado=False,
-                              valor=r["liberacao_disponivel"]))
+            itens.append(dict(base, categoria="LIBERACAO",
+                              tipo="Liberação do valor segurado (aprovação + %d dias)" % PRAZO_LIBERACAO_DIAS if venc_lib
+                              else "Liberação do valor segurado · aguardando aprovação do desconto",
+                              data=venc_lib, estimado=False, valor=r["liberacao_disponivel"]))
         d = r["desconto"]
         if d and r["segurado"] - r["liberavel"] > TOLERANCIA:
             # liberações futuras: acontecem quando os invoices com a dedução chegarem
@@ -940,7 +951,8 @@ def itens_fluxo(invoices):
                 if novo - anterior > TOLERANCIA:
                     itens.append(dict(base, categoria="LIBERACAO",
                                       tipo=f"Liberação prevista do segurado (chegada do invoice {x['invoice_destino']})",
-                                      data=data_prevista_chegada(x), estimado=True, valor=round(novo - anterior, 2)))
+                                      data=max(filter(None, (data_prevista_chegada(x), venc_lib)), default=None),
+                                      estimado=True, valor=round(novo - anterior, 2)))
                 anterior = novo
             resto = round(r["segurado"] - anterior, 2)
             if resto > TOLERANCIA:
@@ -953,7 +965,7 @@ def itens_fluxo(invoices):
                               valor=round(r["itens_total"] * CUSTO_IMPORTACAO_ESTIMADO, 2)))
     for it in itens:
         if it["data"] and it["data"] < hj and it["categoria"] != "CUSTO":
-            it["situacao"] = "Vencido" if it["categoria"] == "PAGAMENTO" else "Disponível"
+            it["situacao"] = "Vencido" if it["categoria"] == "PAGAMENTO" or not it["estimado"] else "Disponível"
         else:
             it["situacao"] = "Estimado" if it["estimado"] else "Confirmado"
     itens.sort(key=lambda it: (it["data"] is None, it["data"] or ""))
