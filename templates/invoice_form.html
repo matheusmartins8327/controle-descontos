@@ -57,7 +57,8 @@
   </div>
   <div class="rolagem">
   <table class="itens">
-    <thead><tr><th>Código *</th><th>Descrição</th><th class="num">Quantidade *</th><th class="num">Preço original *</th><th class="num">Total</th><th></th></tr></thead>
+    <thead><tr><th>Código *</th><th>Descrição</th><th class="num">Quantidade *</th><th class="num">Preço original *</th><th class="num">Total</th>
+      <th class="num col-desc" hidden>Preço com desconto</th><th class="num col-desc" hidden>Total com desconto</th><th></th></tr></thead>
     <tbody id="itens">
       {% for it in (itens or [{}]) %}
       <tr>
@@ -66,11 +67,13 @@
         <td><input name="item_qtd" class="num" inputmode="decimal" value="{{ it.quantidade|qtd if it.quantidade is not none else '' }}"></td>
         <td><input name="item_vu" class="num" inputmode="decimal" value="{{ it.valor_unit|num }}"></td>
         <td class="num total-item">—</td>
+        <td class="num col-desc calc preco-desc" hidden>—</td><td class="num col-desc calc total-desc" hidden>—</td>
         <td><button type="button" class="btn pequeno link remover" title="Remover">✕</button></td>
       </tr>
       {% endfor %}
     </tbody>
-    <tfoot><tr><th colspan="4">Valor total do invoice (quantidade × preço)</th><th class="num" id="total-itens">—</th><th></th></tr></tfoot>
+    <tfoot><tr><th colspan="4">Valor total do invoice (quantidade × preço)</th><th class="num" id="total-itens">—</th>
+      <th class="col-desc" hidden></th><th class="num col-desc" id="total-desc" hidden>—</th><th></th></tr></tfoot>
   </table>
   </div>
   <button type="button" class="btn pequeno" id="add-item">+ Adicionar item</button>
@@ -162,9 +165,31 @@
 
   // ---- valor final: total − deduções definidas
   const janela = document.getElementById('janela-descontos');
+  const fmt4 = n => n.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 4});
+  function colunasDesconto(deducoes) {
+    // preço com desconto = preço original × (total com desconto ÷ total original); a soma dos totais
+    // com desconto fecha exatamente em total original − descontos aplicados
+    const mostrar = deducoes > 0 && totalItens > 0;
+    document.querySelectorAll('.col-desc').forEach(el => el.hidden = !mostrar);
+    if (!mostrar) return;
+    const totalDesc = Math.round((totalItens - deducoes) * 100) / 100, fator = totalDesc / totalItens;
+    const linhas = [...tbody.rows].filter(tr => num(tr.querySelector('[name=item_qtd]').value) !== null && num(tr.querySelector('[name=item_vu]').value) !== null);
+    let acumulado = 0;
+    tbody.querySelectorAll('tr').forEach(tr => { tr.querySelector('.preco-desc').textContent = '—'; tr.querySelector('.total-desc').textContent = '—'; });
+    linhas.forEach((tr, i) => {
+      const q = num(tr.querySelector('[name=item_qtd]').value), v = num(tr.querySelector('[name=item_vu]').value);
+      const total = Math.round(q * v * 100) / 100;
+      const t = i < linhas.length - 1 ? Math.round(total * fator * 100) / 100 : Math.round((totalDesc - acumulado) * 100) / 100;
+      acumulado += t;
+      tr.querySelector('.preco-desc').textContent = fmt4(v * fator);
+      tr.querySelector('.total-desc').textContent = fmt(t);
+    });
+    document.getElementById('total-desc').textContent = fmt(totalDesc);
+  }
   function valorFinal() {
     let deducoes = deducoesAplicadas;
     if (janela) janela.querySelectorAll('input[name^=ded_]').forEach(i => deducoes += num(i.value) || 0);
+    colunasDesconto(deducoes);
     const el = document.getElementById('valor-final');
     el.hidden = !deducoes;
     if (deducoes) {

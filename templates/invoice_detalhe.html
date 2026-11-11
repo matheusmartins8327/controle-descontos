@@ -69,17 +69,21 @@
   </dl>
   <div class="rolagem">
   <table>
-    <thead><tr><th>Código</th><th>Descrição</th><th class="num">Quantidade</th><th class="num">Preço original</th><th class="num">Total</th></tr></thead>
+    {% set com_desc = r.deducoes_aplicadas > 0.005 %}
+    <thead><tr><th>Código</th><th>Descrição</th><th class="num">Quantidade</th><th class="num">Preço original</th><th class="num">Total</th>
+      {% if com_desc %}<th class="num">Preço com desconto</th><th class="num">Total com desconto</th>{% endif %}</tr></thead>
     <tbody>
     {% for it in r.itens %}
       <tr><td>{{ it.codigo or '—' }}</td><td>{{ it.item or '—' }}</td><td class="num">{{ it.quantidade|qtd }}</td>
-        <td class="num">{{ it.valor_unit|moeda(m) }}</td><td class="num">{{ (it.quantidade * it.valor_unit)|moeda(m) }}</td></tr>
+        <td class="num">{{ it.valor_unit|moeda(m) }}</td><td class="num">{{ (it.quantidade * it.valor_unit)|moeda(m) }}</td>
+        {% if com_desc %}{% set cd = r.itens_com_desconto[loop.index0] %}<td class="num calc">{{ MOEDAS[m] }} {{ cd.preco|num4 }}</td><td class="num calc">{{ cd.total|moeda(m) }}</td>{% endif %}</tr>
     {% endfor %}
     </tbody>
     <tfoot>
-      <tr><th colspan="4">Valor total do invoice</th><th class="num">{{ r.itens_total|moeda(m) }}</th></tr>
-      {% if r.deducoes_aplicadas %}<tr><th colspan="4">(−) Deduções de descontos</th><th class="num">{{ r.deducoes_aplicadas|moeda(m) }}</th></tr>
-      <tr><th colspan="4">Valor final</th><th class="num">{{ r.valor_invoice|moeda(m) }}</th></tr>{% endif %}
+      <tr><th colspan="4">Valor total do invoice</th><th class="num">{{ r.itens_total|moeda(m) }}</th>
+        {% if com_desc %}<th></th><th class="num">{{ r.valor_invoice|moeda(m) }}</th>{% endif %}</tr>
+      {% if com_desc %}<tr><th colspan="4">(−) Descontos aplicados</th><th class="num">{{ r.deducoes_aplicadas|moeda(m) }}</th><th colspan="2"></th></tr>
+      <tr><th colspan="4">Valor final</th><th class="num">{{ r.valor_invoice|moeda(m) }}</th><th colspan="2"></th></tr>{% endif %}
     </tfoot>
   </table>
   </div>

@@ -245,3 +245,8 @@ label.travado { opacity: .55; }
 .form-corrigir { display: grid; gap: .35rem; margin: .4rem 0; min-width: 240px; }
 .form-corrigir label { margin: 0; font-size: .78rem; }
 .form-corrigir input, .form-corrigir select { margin: 0; padding: .3rem .45rem; }
+/* v3.3 - colunas calculadas com desconto */
+td.calc { color: var(--pri); font-weight: 600; background: var(--pri-claro); }
+th.col-desc { color: var(--pri); }
+.itens input[name=item_desc] { min-width: 220px; }
+.itens input[name=item_codigo] { min-width: 120px; }

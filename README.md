@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v3.2)
+# Controle de Invoices e Descontos (v3.3)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -98,6 +98,7 @@ O invoice fica **Concluído** quando está pago, o desconto (se houver) foi dedu
 
 ### Itens e carga por planilha
 - **Valor total do invoice** = soma de quantidade × preço original de cada item. **Valor final** = valor total − deduções de descontos aplicadas no invoice.
+- Com desconto deduzido no invoice, aparecem duas colunas calculadas (somente exibição): **Preço com desconto** = preço original × (total com desconto ÷ total original) e **Total com desconto** por item, cuja soma é exatamente o total original − descontos aplicados.
 - Para invoices extensos, use **Carregar itens de uma planilha Excel** na criação (ou correção) do invoice: colunas **Código, Descrição, Quantidade, Preço Original** (o botão **Baixar modelo** traz a planilha pronta). Aceita .xlsx e .csv, até 2.000 itens; linhas inválidas são apontadas pelo número.
 - Código, quantidade e preço são obrigatórios em cada item.
 

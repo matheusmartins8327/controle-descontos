@@ -32,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.2"
+VERSAO = "3.3"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -542,6 +542,16 @@ def calcular(inv):
         " WHERE x.invoice_id = ? ORDER BY x.id", (iid,)).fetchall()
     r["deducoes_aplicadas"] = round(sum(x["valor"] for x in r["deducoes_recebidas"]), 2)
     r["valor_invoice"] = round(r["itens_total"] - r["deducoes_aplicadas"], 2)
+    # com deduções, cada item recebe o desconto proporcional ao seu valor (apenas exibição):
+    # preço com desconto = preço original x (total com desconto / total original)
+    fator = r["valor_invoice"] / r["itens_total"] if r["itens_total"] else 1
+    r["itens_com_desconto"] = []
+    acumulado = 0
+    for n, x in enumerate(r["itens"], 1):
+        total = round(x["quantidade"] * x["valor_unit"], 2)
+        total_desc = round(total * fator, 2) if n < len(r["itens"]) else round(r["valor_invoice"] - acumulado, 2)
+        acumulado += total_desc
+        r["itens_com_desconto"].append({"preco": x["valor_unit"] * fator, "total": total_desc})
 
     # desconto deste invoice (por má qualidade)
     d = db.execute("SELECT * FROM descontos WHERE invoice_id = ?", (iid,)).fetchone()
@@ -646,6 +656,8 @@ app.jinja_env.globals.update(
 )
 app.jinja_env.filters["moeda"] = fmt_moeda
 app.jinja_env.filters["num"] = fmt_num
+app.jinja_env.filters["num4"] = lambda v: (f"{v:,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                                           if isinstance(v, (int, float)) else "")
 app.jinja_env.filters["qtd"] = fmt_qtd
 app.jinja_env.filters["data"] = fmt_data
 
