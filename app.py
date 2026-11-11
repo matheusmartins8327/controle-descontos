@@ -32,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.12"
+VERSAO = "3.13"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -50,7 +50,7 @@ MOEDAS = {"USD": "US$", "EUR": "€", "BRL": "R$"}
 # Condição de pagamento: uma ou mais parcelas (ex.: 25% antecipado + 75% 60 dias após a HAWB)
 CONDICOES = {"ANTECIPADO": "Antecipado", "PRAZO": "Após a HAWB"}
 PRAZO_ANTECIPADO_DIAS = 5          # pagamento antecipado: data de assinatura + 5 dias
-PRAZO_LIBERACAO_DIAS = 5           # liberação do segurado: data de aprovação do desconto + 5 dias
+PRAZO_LIBERACAO_DIAS_UTEIS = 5     # liberação do segurado: chegada real do invoice deduzido + 5 dias úteis
 CUSTO_IMPORTACAO_ESTIMADO = 0.40   # visibilidade do Financeiro a partir do embarque
 # canal de parametrização: opção -> (cor de fundo pastel, cor do texto)
 CORES_CANAL = {"Verde": ("#d4f0dc", "#1d5a31"), "Amarelo": ("#fff3c4", "#6b5200")}
@@ -531,6 +531,65 @@ def etapa_concluida(inv, etapa):
     return not etapa_faltando(inv, etapa)
 
 
+def somar_dias_uteis(data_iso, dias):
+    """Soma dias úteis (segunda a sexta; feriados não são considerados)."""
+    if not data_iso:
+        return None
+    data = datetime.strptime(data_iso[:10], "%Y-%m-%d")
+    while dias > 0:
+        data += timedelta(days=1)
+        if data.weekday() < 5:
+            dias -= 1
+    return data.strftime("%Y-%m-%d")
+
+
+def parcelas_liberacao(r, d):
+    """Divide o valor segurado em parcelas de liberação.
+
+    Cada parcela é liberada quando o invoice que recebeu a dedução chega à fábrica (data real de chegada)
+    e vence nessa data + 5 dias úteis. Antes da chegada não há vencimento. Se o desconto foi revalidado
+    para baixo do segurado, a diferença fica disponível a partir da revalidação.
+    """
+    S = r["segurado"]
+    if not d or S <= TOLERANCIA:
+        return []
+    parcelas = []
+    dif = round(max(0, S - d["valor_final"]), 2)
+    if dif > TOLERANCIA:
+        rev = get_db().execute("SELECT MAX(criado_em) FROM revisoes_desconto WHERE desconto_id = ?",
+                               (d["id"],)).fetchone()[0]
+        base = (rev or d["criado_em"])[:10]
+        parcelas.append({"valor": dif, "invoice": None, "invoice_id": None, "chegada": base, "status": "DISPONIVEL",
+                         "vencimento": somar_dias_uteis(base, PRAZO_LIBERACAO_DIAS_UTEIS),
+                         "texto": "Diferença da revalidação do desconto"})
+    deducoes = [x for x in r["deducoes_do_desconto"] if not x["cancelado_em"] or x["data_chegada"]]
+    deducoes.sort(key=lambda x: (x["data_chegada"] is None, x["data_chegada"] or "", x["id"]))
+    acumulado = 0
+    for x in deducoes:
+        antes = min(S - dif, acumulado)
+        acumulado += x["valor"]
+        valor = round(min(S - dif, acumulado) - antes, 2)
+        if valor <= TOLERANCIA:
+            continue
+        chegou = bool(x["data_chegada"])
+        parcelas.append({"valor": valor, "invoice": x["invoice_destino"], "invoice_id": x["invoice_id"],
+                         "chegada": x["data_chegada"], "status": "DISPONIVEL" if chegou else "AGUARDANDO_CHEGADA",
+                         "vencimento": somar_dias_uteis(x["data_chegada"], PRAZO_LIBERACAO_DIAS_UTEIS) if chegou else None,
+                         "texto": f"Dedução no invoice {x['invoice_destino']}"})
+    resto = round(S - dif - min(S - dif, acumulado), 2)
+    if resto > TOLERANCIA:
+        parcelas.append({"valor": resto, "invoice": None, "invoice_id": None, "chegada": None,
+                         "status": "AGUARDANDO_DEDUCAO", "vencimento": None,
+                         "texto": "Aguardando dedução em próximo invoice"})
+    # o que já foi liberado abate as parcelas na ordem
+    pago = r["liberado"]
+    for p in parcelas:
+        p["pago"] = round(min(p["valor"], pago), 2)
+        pago = round(pago - p["pago"], 2)
+        p["pendente"] = round(p["valor"] - p["pago"], 2)
+    return parcelas
+
+
 def calcular(inv):
     """Monta um dicionário com o invoice e todos os valores derivados (pagamentos, desconto, situação)."""
     db = get_db()
@@ -580,8 +639,7 @@ def calcular(inv):
         liberavel = 0
     r["liberavel"] = round(liberavel, 2)
     r["liberacao_disponivel"] = max(round(liberavel - r["liberado"], 2), 0)
-    # prazo de pagamento do valor segurado liberado: data em que o desconto foi aprovado + 5 dias
-    r["vencimento_liberacao"] = somar_dias(d["aprovado_em"][:10], PRAZO_LIBERACAO_DIAS) if d and d["aprovado_em"] else None
+    r["parcelas_liberacao"] = parcelas_liberacao(r, d)
     r["swifts_pendentes"] = sum(1 for p in r["pagamentos"] if not p["swift_url"])
     r["parcelas"] = calcular_parcelas(r)
     pendentes = [p for p in r["parcelas"] if p["pendente"] > TOLERANCIA]
@@ -655,7 +713,7 @@ app.jinja_env.globals.update(
     CAMPOS_ETAPA=CAMPOS_ETAPA, TITULO_ETAPA=TITULO_ETAPA, ORDEM_LOGISTICA=ORDEM_LOGISTICA, CORES_CANAL=CORES_CANAL,
     STATUS_DESCONTO=STATUS_DESCONTO, TIPOS_PAGAMENTO=TIPOS_PAGAMENTO,
     pode=lambda perfil: pode(perfil), MAX_USUARIOS=MAX_USUARIOS, VERSAO=VERSAO, condicao_texto=condicao_texto,
-    etapa_concluida=etapa_concluida, PRAZO_ANTECIPADO_DIAS=PRAZO_ANTECIPADO_DIAS, PRAZO_LIBERACAO_DIAS=PRAZO_LIBERACAO_DIAS, etapa_faltando=lambda r, e: etapa_faltando(r, e),
+    etapa_concluida=etapa_concluida, PRAZO_ANTECIPADO_DIAS=PRAZO_ANTECIPADO_DIAS, PRAZO_LIBERACAO_DIAS_UTEIS=PRAZO_LIBERACAO_DIAS_UTEIS, etapa_faltando=lambda r, e: etapa_faltando(r, e),
     criacao_faltando=lambda r: criacao_faltando(r), opcionais_faltando=lambda r: opcionais_faltando(r),
 )
 app.jinja_env.filters["moeda"] = fmt_moeda
@@ -847,15 +905,14 @@ def listar_pendencias(invoices):
                 vencido = p["vencimento"] < hoje()
                 add(r, ("Pagamento vencido" if vencido else "Pagar invoice") + rotulo, "financeiro", p["vencimento"],
                     p["pendente"], alerta=vencido or p["vencimento"] <= lim_7)
-        if fin and r["liberacao_disponivel"] > TOLERANCIA:
-            venc = r["vencimento_liberacao"]
-            if venc:
-                vencido = venc < hoje()
-                add(r, "Liberação do segurado vencida" if vencido else "Liberar valor segurado", "financeiro", venc,
-                    r["liberacao_disponivel"], alerta=vencido or venc <= lim_7)
-            else:
-                add(r, "Liberar valor segurado (desconto ainda não aprovado)", "financeiro", None,
-                    r["liberacao_disponivel"], alerta=True)
+        if fin:
+            for p in r["parcelas_liberacao"]:
+                if p["status"] != "DISPONIVEL" or p["pendente"] <= TOLERANCIA:
+                    continue
+                vencido = p["vencimento"] < hoje()
+                add(r, ("Liberação do segurado vencida" if vencido else "Liberar valor segurado")
+                    + (f" (invoice {p['invoice']} chegou)" if p["invoice"] else " (revalidação)"), "financeiro",
+                    p["vencimento"], p["pendente"], alerta=vencido or p["vencimento"] <= lim_7)
         if fin and r["swifts_pendentes"]:
             add(r, f"Anexar Swift ({r['swifts_pendentes']} pagamento(s))", "financeiro")
         if fin and not r["banco_debito"] and (r["etd_planejado"] or r["etd_real"]):
@@ -931,34 +988,18 @@ def itens_fluxo(invoices):
                 tipo += " · aguardando data da HAWB"
             itens.append(dict(base, categoria="PAGAMENTO", tipo=tipo, data=p["vencimento"], estimado=False,
                               valor=p["pendente"]))
-        venc_lib = r["vencimento_liberacao"]
-        if r["liberacao_disponivel"] > TOLERANCIA:
-            itens.append(dict(base, categoria="LIBERACAO",
-                              tipo="Liberação do valor segurado (aprovação + %d dias)" % PRAZO_LIBERACAO_DIAS if venc_lib
-                              else "Liberação do valor segurado · aguardando aprovação do desconto",
-                              data=venc_lib, estimado=False, valor=r["liberacao_disponivel"]))
-        d = r["desconto"]
-        if d and r["segurado"] - r["liberavel"] > TOLERANCIA:
-            # liberações futuras: acontecem quando os invoices com a dedução chegarem
-            dif = max(0, r["segurado"] - d["valor_final"])
-            acumulado = r["deduzido_chegado"]
-            anterior = min(r["segurado"], acumulado) + dif
-            futuras = sorted((x for x in r["deducoes_do_desconto"] if not x["data_chegada"] and not x["cancelado_em"]),
-                             key=lambda x: (data_prevista_chegada(x) is None, data_prevista_chegada(x) or ""))
-            for x in futuras:
-                acumulado += x["valor"]
-                novo = min(r["segurado"], acumulado) + dif
-                if novo - anterior > TOLERANCIA:
-                    itens.append(dict(base, categoria="LIBERACAO",
-                                      tipo=f"Liberação prevista do segurado (chegada do invoice {x['invoice_destino']})",
-                                      data=max(filter(None, (data_prevista_chegada(x), venc_lib)), default=None),
-                                      estimado=True, valor=round(novo - anterior, 2)))
-                anterior = novo
-            resto = round(r["segurado"] - anterior, 2)
-            if resto > TOLERANCIA:
-                itens.append(dict(base, categoria="LIBERACAO",
-                                  tipo="Liberação prevista do segurado (aguardando dedução em próximo invoice)",
-                                  data=None, estimado=True, valor=resto))
+        for p in r["parcelas_liberacao"]:
+            if p["pendente"] <= TOLERANCIA:
+                continue
+            if p["status"] == "DISPONIVEL":
+                tipo = ("Liberação do segurado · " + (f"invoice {p['invoice']} chegou em {fmt_data(p['chegada'])}"
+                        if p["invoice"] else "diferença da revalidação") + f" (+{PRAZO_LIBERACAO_DIAS_UTEIS} dias úteis)")
+            elif p["status"] == "AGUARDANDO_CHEGADA":
+                tipo = f"Liberação do segurado · aguardando a chegada do invoice {p['invoice']} na Quinelato"
+            else:
+                tipo = "Liberação do segurado · aguardando dedução em próximo invoice"
+            itens.append(dict(base, categoria="LIBERACAO", tipo=tipo, data=p["vencimento"],
+                              estimado=p["status"] != "DISPONIVEL", valor=p["pendente"]))
         if (r["etd_planejado"] or r["etd_real"]) and not r["data_desembaraco"]:
             itens.append(dict(base, categoria="CUSTO", tipo="Custo estimado de importação (40% do invoice)",
                               data=r["eta_real"] or r["eta_planejado"] or r["data_prog_chegada"], estimado=True,
@@ -966,6 +1007,8 @@ def itens_fluxo(invoices):
     for it in itens:
         if it["data"] and it["data"] < hj and it["categoria"] != "CUSTO":
             it["situacao"] = "Vencido" if it["categoria"] == "PAGAMENTO" or not it["estimado"] else "Disponível"
+        elif it["categoria"] == "LIBERACAO" and not it["data"]:
+            it["situacao"] = "Aguardando chegada" if "chegada" in it["tipo"] else "Aguardando dedução"
         else:
             it["situacao"] = "Estimado" if it["estimado"] else "Confirmado"
     itens.sort(key=lambda it: (it["data"] is None, it["data"] or ""))

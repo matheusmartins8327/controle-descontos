@@ -268,8 +268,25 @@
     {% if r.segurado %}<dt>(−) Valor segurado</dt><dd>{{ r.segurado|moeda(m) }}</dd>{% endif %}
     <dt>A pagar do invoice</dt><dd>{{ r.principal_devido|moeda(m) }} · pago {{ r.principal_pago|moeda(m) }} · <strong>pendente {{ r.principal_pendente|moeda(m) }}</strong></dd>
     <dt>Condição</dt><dd>{{ condicao_texto(r) }}</dd>
-    {% if r.segurado %}<dt>Liberação do segurado</dt><dd>liberado {{ r.liberado|moeda(m) }} de {{ r.segurado|moeda(m) }} · <strong>disponível agora {{ r.liberacao_disponivel|moeda(m) }}</strong>{% if r.vencimento_liberacao %} · prazo de pagamento {{ r.vencimento_liberacao|data }} (aprovação do desconto + {{ PRAZO_LIBERACAO_DIAS }} dias){% else %} · prazo: aprovação do desconto + {{ PRAZO_LIBERACAO_DIAS }} dias{% endif %}</dd>{% endif %}
+    {% if r.segurado %}<dt>Liberação do segurado</dt><dd>liberado {{ r.liberado|moeda(m) }} de {{ r.segurado|moeda(m) }} · <strong>disponível agora {{ r.liberacao_disponivel|moeda(m) }}</strong></dd>{% endif %}
   </dl>
+  {% if r.parcelas_liberacao %}
+  <h3>Liberação do valor segurado</h3>
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>Origem</th><th class="num">Valor</th><th class="num">Liberado</th><th>Vencimento</th></tr></thead>
+    <tbody>
+    {% for p in r.parcelas_liberacao %}
+      <tr><td>{{ p.texto }}</td><td class="num">{{ p.valor|moeda(m) }}</td><td class="num">{{ p.pago|moeda(m) }}</td>
+        <td>{% if p.pendente <= 0.005 %}Liberado
+          {% elif p.status == 'DISPONIVEL' %}<strong>{{ p.vencimento|data }}</strong> <small>({{ 'chegada' if p.invoice else 'revalidação' }} {{ p.chegada|data }} + {{ PRAZO_LIBERACAO_DIAS_UTEIS }} dias úteis)</small>
+          {% elif p.status == 'AGUARDANDO_CHEGADA' %}Aguardando a chegada do invoice {{ p.invoice }} na Quinelato
+          {% else %}Aguardando dedução em próximo invoice{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
   <h3>Parcelas da condição de pagamento</h3>
   <div class="rolagem">
   <table>

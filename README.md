@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v3.12)
+# Controle de Invoices e Descontos (v3.13)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -110,7 +110,7 @@ O invoice fica **Concluído** quando está pago, o desconto (se houver) foi dedu
 - **Vencimento de cada parcela**: antecipada = data de assinatura + 5 dias; a prazo = data da HAWB (registrada na Coleta) + dias. **Antes da HAWB, a parcela a prazo fica sem vencimento** (não há estimativa).
 - Pagamentos são distribuídos nas parcelas por ordem de vencimento; o valor segurado sai das parcelas que vencem por último.
 - **Valor segurado**: com desconto, o invoice é pago menos o valor do desconto. Só é possível segurar o que ainda não foi pago: se o invoice já foi pago (ex.: antecipado), o desconto é apenas deduzido no próximo invoice.
-- **Liberação do segurado**: conforme os invoices com a dedução chegam à fábrica. Se o desconto for revalidado para baixo (ou zerado), a diferença fica disponível na hora. O prazo de pagamento do valor segurado liberado é a **data de aprovação do desconto + 5 dias** (nunca antes de ficar disponível).
+- **Liberação do segurado**: conforme os invoices com a dedução chegam à fábrica. Se o desconto for revalidado para baixo (ou zerado), a diferença fica disponível na hora. Cada parcela liberada vence na **data real de chegada na fábrica do invoice deduzido + 5 dias úteis**; enquanto esse invoice não chega, não há vencimento ("aguardando a chegada na Quinelato"). A diferença de uma revalidação para baixo vence na data da revalidação + 5 dias úteis.
 - **Swift**: pode ser anexado depois (fica pendente), mas o processo só termina com todos os Swifts.
 
 ### Fluxo de pagamentos (Financeiro)
