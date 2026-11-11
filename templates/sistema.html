@@ -21,8 +21,8 @@
 
 <section class="bloco" id="onedrive">
   <h2>Pasta de documentos no OneDrive</h2>
-  <p class="sub">Os documentos (Swifts, relatórios de qualidade e outros) ficam no OneDrive; o sistema guarda apenas os links.
-    Este link aparece como botão "Abrir pasta no OneDrive" em cada invoice. Ele fica salvo somente no servidor (não vai para o GitHub).</p>
+  <p class="sub">Os documentos ficam no OneDrive, fora do sistema (o sistema guarda apenas o link do Swift de cada pagamento).
+    Este link aparece como botão "Abrir pasta no OneDrive" na seção Pagamentos de cada invoice. Ele fica salvo somente no servidor (não vai para o GitHub).</p>
   <form method="post" action="{{ url_for('sistema_onedrive') }}" class="linha-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label class="cresce">Link da pasta<input name="onedrive_pasta" value="{{ pasta_onedrive }}" placeholder="https://...sharepoint.com/..."></label>

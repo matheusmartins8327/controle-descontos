@@ -9,7 +9,7 @@ Controla o ciclo completo de cada invoice, da criação até o pagamento complet
   Financeiro         -> registra pagamentos (antecipado, integral ou parcial com valor segurado),
                         liberações do valor segurado e Swifts; acompanha o fluxo de pagamentos
 
-Documentos ficam no OneDrive: o sistema guarda apenas os links.
+Documentos circulam por e-mail/OneDrive, fora do sistema (só o link do Swift é guardado).
 """
 import csv
 import glob
@@ -32,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.10"
+VERSAO = "3.11"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -53,10 +53,6 @@ PRAZO_ANTECIPADO_DIAS = 5          # pagamento antecipado: data de assinatura + 
 CUSTO_IMPORTACAO_ESTIMADO = 0.40   # visibilidade do Financeiro a partir do embarque
 # canal de parametrização: opção -> (cor de fundo pastel, cor do texto)
 CORES_CANAL = {"Verde": ("#d4f0dc", "#1d5a31"), "Amarelo": ("#fff3c4", "#6b5200")}
-TIPOS_ANEXO = {
-    "RELATORIO_QUALIDADE": "Relatório de qualidade",
-    "OUTRO": "Outro documento",
-}
 STATUS_DESCONTO = {"ENVIADO": "Enviado ao fornecedor", "APROVADO": "Aprovado pelo fornecedor"}
 TIPOS_PAGAMENTO = {"PRINCIPAL": "Pagamento do invoice", "LIBERACAO": "Liberação do valor segurado"}
 
@@ -654,7 +650,7 @@ def descontos_disponiveis(fornecedor_id, moeda, excluir_invoice_id=None):
 app.jinja_env.globals.update(
     csrf_token=lambda: csrf_token(), PERFIS=PERFIS, MOEDAS=MOEDAS, CONDICOES=CONDICOES, SITUACOES=SITUACOES,
     CAMPOS_ETAPA=CAMPOS_ETAPA, TITULO_ETAPA=TITULO_ETAPA, ORDEM_LOGISTICA=ORDEM_LOGISTICA, CORES_CANAL=CORES_CANAL,
-    TIPOS_ANEXO=TIPOS_ANEXO, STATUS_DESCONTO=STATUS_DESCONTO, TIPOS_PAGAMENTO=TIPOS_PAGAMENTO,
+    STATUS_DESCONTO=STATUS_DESCONTO, TIPOS_PAGAMENTO=TIPOS_PAGAMENTO,
     pode=lambda perfil: pode(perfil), MAX_USUARIOS=MAX_USUARIOS, VERSAO=VERSAO, condicao_texto=condicao_texto,
     etapa_concluida=etapa_concluida, PRAZO_ANTECIPADO_DIAS=PRAZO_ANTECIPADO_DIAS, etapa_faltando=lambda r, e: etapa_faltando(r, e),
     criacao_faltando=lambda r: criacao_faltando(r), opcionais_faltando=lambda r: opcionais_faltando(r),
@@ -1528,13 +1524,12 @@ def invoice_detalhe(id):
     disponiveis = descontos_disponiveis(r["fornecedor_id"], r["moeda"], excluir_invoice_id=id)
     nomes = {u["id"]: u["nome"] for u in db.execute("SELECT id, nome FROM usuarios")}
     pasta = config("onedrive_pasta", "")
-    sugestao_pasta = f"{r['data_assinatura'][:4]}/{r['fornecedor']} - {r['numero']}"
     return render_template("invoice_detalhe.html", r=r, eventos=eventos, revisoes=revisoes, disponiveis=disponiveis,
-                           nomes=nomes, pasta_onedrive=pasta, sugestao_pasta=sugestao_pasta, hoje=hoje())
+                           nomes=nomes, pasta_onedrive=pasta, hoje=hoje())
 
 
 # ---------------------------------------------------------------------------
-# Etapas logísticas, banco de débito e documentos
+# Etapas logísticas e banco de débito
 # ---------------------------------------------------------------------------
 @app.route("/invoices/<int:id>/etapa/<etapa>", methods=["POST"])
 @login_obrigatorio
@@ -1598,69 +1593,6 @@ def invoice_banco(id):
     db.commit()
     flash("Banco de débito salvo.", "ok")
     return redirect(url_for("invoice_detalhe", id=id) + "#etapa-EMBARQUE")
-
-
-@app.route("/invoices/<int:id>/anexos", methods=["POST"])
-@login_obrigatorio
-def anexo_novo(id):
-    if g.usuario["perfil"] == "consulta":
-        abort(403)
-    carregar_invoice(id)
-    tipo = request.form.get("tipo", "")
-    url = request.form.get("url", "").strip()
-    descricao = request.form.get("descricao", "").strip() or None
-    if tipo not in TIPOS_ANEXO:
-        flash("Selecione o tipo de documento.", "erro")
-    elif not link_valido(url):
-        flash("Cole o link do arquivo no OneDrive (começando com https://).", "erro")
-    else:
-        db = get_db()
-        db.execute("INSERT INTO anexos (invoice_id, tipo, descricao, url, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?)",
-                   (id, tipo, descricao, url, g.usuario["id"], agora()))
-        registrar_evento(id, f"Documento anexado: {TIPOS_ANEXO[tipo]}", descricao)
-        db.commit()
-        flash("Documento anexado.", "ok")
-    return redirect(url_for("invoice_detalhe", id=id) + "#documentos")
-
-
-@app.route("/anexos/<int:aid>/editar", methods=["POST"])
-@login_obrigatorio
-def anexo_editar(aid):
-    db = get_db()
-    a = db.execute("SELECT * FROM anexos WHERE id = ?", (aid,)).fetchone()
-    if a is None:
-        abort(404)
-    if g.usuario["perfil"] != "admin" and a["criado_por"] != g.usuario["id"]:
-        abort(403)
-    tipo = request.form.get("tipo", "")
-    url = request.form.get("url", "").strip()
-    descricao = request.form.get("descricao", "").strip() or None
-    if tipo not in TIPOS_ANEXO:
-        flash("Selecione o tipo de documento.", "erro")
-    elif not link_valido(url):
-        flash("Cole o link do arquivo no OneDrive (começando com https://).", "erro")
-    else:
-        db.execute("UPDATE anexos SET tipo = ?, url = ?, descricao = ? WHERE id = ?", (tipo, url, descricao, aid))
-        registrar_evento(a["invoice_id"], f"Documento corrigido: {TIPOS_ANEXO[tipo]}", descricao)
-        db.commit()
-        flash("Documento corrigido.", "ok")
-    return redirect(url_for("invoice_detalhe", id=a["invoice_id"]) + "#documentos")
-
-
-@app.route("/anexos/<int:aid>/remover", methods=["POST"])
-@login_obrigatorio
-def anexo_remover(aid):
-    db = get_db()
-    a = db.execute("SELECT * FROM anexos WHERE id = ?", (aid,)).fetchone()
-    if a is None:
-        abort(404)
-    if g.usuario["perfil"] != "admin" and a["criado_por"] != g.usuario["id"]:
-        abort(403)
-    db.execute("DELETE FROM anexos WHERE id = ?", (aid,))
-    registrar_evento(a["invoice_id"], f"Documento removido: {TIPOS_ANEXO.get(a['tipo'], a['tipo'])}", a["descricao"])
-    db.commit()
-    flash("Documento removido (o arquivo continua no OneDrive).", "ok")
-    return redirect(url_for("invoice_detalhe", id=a["invoice_id"]) + "#documentos")
 
 
 # ---------------------------------------------------------------------------

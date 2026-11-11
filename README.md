@@ -1,8 +1,8 @@
-# Controle de Invoices e Descontos (v3.10)
+# Controle de Invoices e Descontos (v3.11)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
-Valores em **dólar, euro ou real**. Visual na identidade da **Quinelato** (azul #327FEF, fonte Plus Jakarta Sans e logo, conforme quinelato.com.br). Documentos ficam no **OneDrive** (o sistema guarda os links).
+Valores em **dólar, euro ou real**. Visual na identidade da **Quinelato** (azul #327FEF, fonte Plus Jakarta Sans e logo, conforme quinelato.com.br). Documentos circulam por e-mail e OneDrive, **fora do sistema** (só o link do Swift de cada pagamento é registrado).
 
 ## Hospedagem na nuvem: PythonAnywhere (recomendado)
 
@@ -121,18 +121,18 @@ Menu **Fluxo de pagamentos**: previsão por mês e por moeda de
 
 Filtros por período, moeda e fornecedor e **exportação para Excel (CSV)**.
 
-### Documentos no OneDrive
-Cada documento é um link: salve o arquivo na pasta do OneDrive (o sistema sugere `ano/Fornecedor - Invoice`), copie o link e cole no invoice.
-O link da pasta principal é configurado em **Sistema** e fica somente no servidor (não vai para o GitHub).
-A tabela de documentos já prevê uma futura integração automática com o OneDrive (Microsoft Graph, que depende de liberação da TI).
+### Documentos
+O sistema não recebe anexos: DUIMP, boleto do ICMS, relatórios e demais arquivos seguem por e-mail/OneDrive, fora do fluxo.
+Apenas o link do Swift é informado em cada pagamento. O link da pasta principal do OneDrive é configurado em **Sistema**
+(aparece como botão na seção Pagamentos) e fica somente no servidor (não vai para o GitHub).
 
 ### Correções
-Quem lança cada informação pode corrigi-la: a Importação corrige dados, itens, condição, etapas, deduções e documentos; o Financeiro corrige pagamentos, Swifts e banco de débito; o Administrador corrige a inspeção (o valor do desconto, pela revalidação). Toda correção fica no histórico com o valor anterior e o novo.
+Quem lança cada informação pode corrigi-la: a Importação corrige dados, itens, condição, etapas e deduções; o Financeiro corrige pagamentos, Swifts e banco de débito; o Administrador corrige a inspeção (o valor do desconto, pela revalidação). Toda correção fica no histórico com o valor anterior e o novo.
 
 ## Usuários e perfis
 - Até **10 usuários ativos**.
 - **Administrador** (Engenharia de Processos): inspeção, descontos, revalidação, cancelamentos, usuários e sistema; pode executar qualquer etapa.
-- **Importação**: criação do invoice, etapas logísticas, deduções e documentos.
+- **Importação**: criação do invoice, etapas logísticas e deduções.
 - **Financeiro**: banco de débito, pagamentos, liberações e Swifts.
 - **Consulta**: somente leitura.
 
@@ -143,7 +143,6 @@ Os dados ficam em `instance\descontos.db`. **Copie a pasta `instance` periodicam
 ## Próximas versões (planejado)
 - Relatórios e indicadores (tempo por etapa, pontualidade ETD/ETA, ranking de qualidade, custo real × estimado).
 - Notificações de pendências.
-- Integração automática dos documentos com o OneDrive.
 
 ## Histórico
 A versão 3.0 recomeçou os registros do zero. Usuários e fornecedores foram mantidos; os dados da versão 2 (controle só de descontos) ficam preservados no banco com o prefixo `legacy_v2_`.

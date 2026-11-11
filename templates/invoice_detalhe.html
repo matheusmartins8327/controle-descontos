@@ -175,42 +175,6 @@
   </div>
 </section>
 
-{# ---------- documentos (links do OneDrive) ---------- #}
-<section class="bloco" id="documentos">
-  <h2>Documentos <small>· arquivos guardados no OneDrive</small>
-    {% if pasta_onedrive %}<a class="btn pequeno" href="{{ pasta_onedrive }}" target="_blank" rel="noopener">Abrir pasta no OneDrive</a>{% endif %}</h2>
-  {% if r.anexos %}
-  <table>
-    <thead><tr><th>Documento</th><th>Descrição</th><th>Anexado</th><th></th></tr></thead>
-    <tbody>
-    {% for a in r.anexos %}
-      <tr><td><a href="{{ a.url }}" target="_blank" rel="noopener">{{ TIPOS_ANEXO.get(a.tipo, a.tipo) }} ↗</a></td><td>{{ a.descricao or '—' }}</td>
-        <td><small>{{ nomes.get(a.criado_por, '?') }} · {{ a.criado_em|data }}</small></td>
-        <td>{% if admin or a.criado_por == g.usuario.id %}<details class="admin-desfazer"><summary>Corrigir</summary>
-          <form method="post" action="{{ url_for('anexo_editar', aid=a.id) }}" class="form-corrigir">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <select name="tipo">{% for k, v in TIPOS_ANEXO.items() %}<option value="{{ k }}" {{ 'selected' if a.tipo == k }}>{{ v }}</option>{% endfor %}</select>
-            <input name="url" value="{{ a.url }}" required><input name="descricao" value="{{ a.descricao or '' }}" placeholder="Descrição">
-            <button class="btn pequeno">Salvar</button></form>
-          <form method="post" action="{{ url_for('anexo_remover', aid=a.id) }}" onsubmit="return confirm('Remover o link deste documento?')">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn pequeno link">Remover documento</button></form>
-          </details>{% endif %}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<p class="vazio">Nenhum documento anexado.</p>{% endif %}
-  {% if ativo and g.usuario.perfil != 'consulta' %}
-  <form method="post" action="{{ url_for('anexo_novo', id=r.id) }}" class="linha-form">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>Tipo<select name="tipo">{% for k, v in TIPOS_ANEXO.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
-    <label class="cresce">Link do arquivo no OneDrive<input name="url" placeholder="https://..." required></label>
-    <label>Descrição<input name="descricao" placeholder="Opcional"></label>
-    <button class="btn">Anexar</button>
-  </form>
-  <p class="sub dica">Salve o arquivo na pasta <strong>{{ sugestao_pasta }}</strong> do OneDrive, copie o link (Compartilhar → Copiar link) e cole acima.</p>
-  {% endif %}
-</section>
-
 {# ---------- inspeção e desconto (Engenharia de Processos) ---------- #}
 <section class="bloco" id="inspecao">
   <h2>Inspeção e desconto <small>· Engenharia de Processos</small></h2>
@@ -296,7 +260,8 @@
 
 {# ---------- pagamentos (Financeiro) ---------- #}
 <section class="bloco" id="pagamentos">
-  <h2>Pagamentos <small>· Financeiro</small></h2>
+  <h2>Pagamentos <small>· Financeiro</small>
+    {% if pasta_onedrive %}<a class="btn pequeno" href="{{ pasta_onedrive }}" target="_blank" rel="noopener">Abrir pasta no OneDrive</a>{% endif %}</h2>
   <dl class="dl-colunas">
     <dt>Valor total do invoice</dt><dd>{{ r.itens_total|moeda(m) }}</dd>
     {% if r.deducoes_aplicadas %}<dt>(−) Deduções de descontos</dt><dd>{{ r.deducoes_aplicadas|moeda(m) }}</dd>{% endif %}
