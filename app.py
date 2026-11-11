@@ -14,6 +14,7 @@ Documentos ficam no OneDrive: o sistema guarda apenas os links.
 import csv
 import glob
 import io
+import unicodedata
 import os
 import re
 import secrets
@@ -31,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.0"
+VERSAO = "3.1"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -192,10 +193,11 @@ CREATE TABLE IF NOT EXISTS invoices (
 CREATE TABLE IF NOT EXISTS invoice_itens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
-    item TEXT NOT NULL,
+    codigo TEXT,                          -- código do item
+    item TEXT NOT NULL,                   -- descrição do item
     quantidade REAL NOT NULL,
-    valor_unit_original REAL,
-    valor_unit REAL NOT NULL              -- valor unitário com desconto comercial (o que é cobrado)
+    valor_unit_original REAL,             -- preço original: apenas histórico, não entra no total
+    valor_unit REAL NOT NULL              -- preço com desconto: compõe o valor total do invoice
 );
 -- Desconto por má qualidade de um invoice (no máximo um por invoice)
 CREATE TABLE IF NOT EXISTS descontos (
@@ -304,6 +306,9 @@ def init_db():
                 if t in existentes and f"legacy_v2_{t}" not in existentes:
                     db.execute(f"ALTER TABLE {t} RENAME TO legacy_v2_{t}")
         db.executescript(SCHEMA)
+        # versão 3.1: código do item
+        if "codigo" not in {r[1] for r in db.execute("PRAGMA table_info(invoice_itens)")}:
+            db.execute("ALTER TABLE invoice_itens ADD COLUMN codigo TEXT")
         for antigo, novo in PERFIS_ANTIGOS.items():
             db.execute("UPDATE usuarios SET perfil = ? WHERE perfil = ?", (novo, antigo))
 
@@ -467,6 +472,7 @@ def calcular(inv):
     r = dict(inv)
     iid = inv["id"]
     r["itens"] = db.execute("SELECT * FROM invoice_itens WHERE invoice_id = ? ORDER BY id", (iid,)).fetchall()
+    # valor total do invoice: quantidade x preço com desconto (o preço original é só histórico)
     r["itens_total"] = round(sum(x["quantidade"] * x["valor_unit"] for x in r["itens"]), 2)
     r["itens_original"] = round(sum(x["quantidade"] * (x["valor_unit_original"] or x["valor_unit"])
                                     for x in r["itens"]), 2)
@@ -853,7 +859,7 @@ def itens_fluxo(invoices):
         if (r["etd_planejado"] or r["etd_real"]) and not r["data_desembaraco"]:
             itens.append(dict(base, categoria="CUSTO", tipo="Custo estimado de importação (40% do invoice)",
                               data=r["eta_real"] or r["eta_planejado"] or r["data_prog_chegada"], estimado=True,
-                              valor=round(r["valor_invoice"] * CUSTO_IMPORTACAO_ESTIMADO, 2)))
+                              valor=round(r["itens_total"] * CUSTO_IMPORTACAO_ESTIMADO, 2)))
     for it in itens:
         if it["data"] and it["data"] < hj and it["categoria"] != "CUSTO":
             it["situacao"] = "Vencido" if it["categoria"] == "PAGAMENTO" else "Disponível"
@@ -960,12 +966,12 @@ def ler_form_invoice():
         "obs": f.get("obs", "").strip(),
     }
     itens = []
-    for desc, qtd, vu_orig, vu in zip(f.getlist("item_desc"), f.getlist("item_qtd"),
-                                      f.getlist("item_vu_orig"), f.getlist("item_vu")):
-        if not any(x.strip() for x in (desc, qtd, vu_orig, vu)):
+    for cod, desc, qtd, vu_orig, vu in zip(f.getlist("item_codigo"), f.getlist("item_desc"), f.getlist("item_qtd"),
+                                           f.getlist("item_vu_orig"), f.getlist("item_vu")):
+        if not any(x.strip() for x in (cod, desc, qtd, vu_orig, vu)):
             continue
-        itens.append({"item": desc.strip(), "quantidade": parse_num(qtd), "valor_unit_original": parse_num(vu_orig),
-                      "valor_unit": parse_num(vu)})
+        itens.append({"codigo": cod.strip(), "item": desc.strip(), "quantidade": parse_num(qtd),
+                      "valor_unit_original": parse_num(vu_orig), "valor_unit": parse_num(vu)})
     erros = []
     if not dados["fornecedor"]:
         erros.append("Informe o fornecedor.")
@@ -984,9 +990,10 @@ def ler_form_invoice():
     if not itens:
         erros.append("Informe ao menos um item.")
     for i, it in enumerate(itens, 1):
-        if not it["item"] or not it["quantidade"] or it["quantidade"] <= 0 or it["valor_unit"] is None \
+        if not it["codigo"] or not it["quantidade"] or it["quantidade"] <= 0 or it["valor_unit"] is None \
                 or it["valor_unit"] < 0:
-            erros.append(f"Item {i}: informe descrição, quantidade e valor unitário com desconto.")
+            erros.append(f"Item {i}{' (' + it['codigo'] + ')' if it['codigo'] else ''}: informe código, quantidade e "
+                         "preço com desconto.")
     return dados, itens, erros
 
 
@@ -994,9 +1001,119 @@ def salvar_itens(invoice_id, itens):
     db = get_db()
     db.execute("DELETE FROM invoice_itens WHERE invoice_id = ?", (invoice_id,))
     for it in itens:
-        db.execute("INSERT INTO invoice_itens (invoice_id, item, quantidade, valor_unit_original, valor_unit)"
-                   " VALUES (?, ?, ?, ?, ?)",
-                   (invoice_id, it["item"], it["quantidade"], it["valor_unit_original"], it["valor_unit"]))
+        db.execute("INSERT INTO invoice_itens (invoice_id, codigo, item, quantidade, valor_unit_original, valor_unit)"
+                   " VALUES (?, ?, ?, ?, ?, ?)",
+                   (invoice_id, it.get("codigo"), it["item"] or "", it["quantidade"], it["valor_unit_original"],
+                    it["valor_unit"]))
+
+
+# --- Carga de itens por planilha (Excel .xlsx ou CSV) ------------------------------------------
+COLUNAS_PLANILHA = {  # cabeçalho normalizado -> campo
+    "codigo": "codigo", "cod": "codigo", "codigo do item": "codigo",
+    "descricao": "item", "descricao do item": "item", "item": "item",
+    "quantidade": "quantidade", "qtd": "quantidade", "qtde": "quantidade",
+    "preco original": "valor_unit_original", "valor original": "valor_unit_original",
+    "preco unitario original": "valor_unit_original", "valor unitario original": "valor_unit_original",
+    "preco descontado": "valor_unit", "preco com desconto": "valor_unit", "valor descontado": "valor_unit",
+    "preco unitario descontado": "valor_unit", "valor unitario com desconto": "valor_unit",
+}
+MAX_LINHAS_PLANILHA = 2000
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # planilhas de até 5 MB
+
+
+def normalizar(texto):
+    texto = unicodedata.normalize("NFKD", str(texto or "")).encode("ascii", "ignore").decode()
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", texto.lower()).split())
+
+
+def ler_planilha(arquivo):
+    """Lê uma planilha de itens e devolve (itens, erros). Aceita .xlsx e .csv."""
+    nome = (arquivo.filename or "").lower()
+    if nome.endswith(".xlsx") or nome.endswith(".xlsm"):
+        import openpyxl
+        try:
+            wb = openpyxl.load_workbook(arquivo, read_only=True, data_only=True)
+        except Exception:
+            return [], ["Não foi possível abrir a planilha. Salve-a como Excel (.xlsx) e tente novamente."]
+        linhas = [list(r) for r in wb.worksheets[0].iter_rows(values_only=True)]
+    elif nome.endswith(".csv"):
+        texto = arquivo.read().decode("utf-8-sig", errors="replace")
+        separador = ";" if texto.count(";") >= texto.count(",") else ","
+        linhas = list(csv.reader(io.StringIO(texto), delimiter=separador))
+    else:
+        return [], ["Envie uma planilha Excel (.xlsx) ou CSV. Arquivos .xls antigos: salve como .xlsx."]
+    # localiza a linha de cabeçalho (a primeira que tenha a coluna Código)
+    for pos, linha in enumerate(linhas[:20]):
+        mapa = {i: COLUNAS_PLANILHA[normalizar(c)] for i, c in enumerate(linha) if normalizar(c) in COLUNAS_PLANILHA}
+        if "codigo" in mapa.values():
+            break
+    else:
+        return [], ["Cabeçalho não encontrado: a planilha deve ter as colunas Código, Descrição, Quantidade, "
+                    "Preço Original e Preço Descontado."]
+    faltando = [n for c, n in (("quantidade", "Quantidade"), ("valor_unit", "Preço Descontado"))
+                if c not in mapa.values()]
+    if faltando:
+        return [], ["Coluna(s) não encontrada(s): " + ", ".join(faltando) + "."]
+    itens, erros = [], []
+    for num_linha, linha in enumerate(linhas[pos + 1:], start=pos + 2):
+        valores = {campo: (linha[i] if i < len(linha) else None) for i, campo in mapa.items()}
+        if all(v is None or str(v).strip() == "" for v in valores.values()):
+            continue
+        def numero(v):
+            return float(v) if isinstance(v, (int, float)) else parse_num(v)
+        it = {"codigo": str(valores.get("codigo") or "").strip(),
+              "item": str(valores.get("item") or "").strip(),
+              "quantidade": numero(valores.get("quantidade")),
+              "valor_unit_original": numero(valores.get("valor_unit_original")),
+              "valor_unit": numero(valores.get("valor_unit"))}
+        if it["codigo"].endswith(".0") and it["codigo"][:-2].isdigit():  # código numérico lido como número
+            it["codigo"] = it["codigo"][:-2]
+        if not it["codigo"] or not it["quantidade"] or it["quantidade"] <= 0 or it["valor_unit"] is None \
+                or it["valor_unit"] < 0:
+            erros.append(f"Linha {num_linha}: código, quantidade e preço descontado são obrigatórios.")
+            continue
+        itens.append(it)
+        if len(itens) > MAX_LINHAS_PLANILHA:
+            return [], [f"A planilha tem mais de {MAX_LINHAS_PLANILHA} itens."]
+    if not itens and not erros:
+        erros.append("Nenhum item encontrado na planilha.")
+    return itens, erros
+
+
+@app.route("/invoices/importar-itens", methods=["POST"])
+@login_obrigatorio
+def importar_itens():
+    if not pode("importacao"):
+        abort(403)
+    arquivo = request.files.get("arquivo")
+    if not arquivo or not arquivo.filename:
+        return jsonify({"itens": [], "erros": ["Selecione a planilha."]})
+    itens, erros = ler_planilha(arquivo)
+    for it in itens:
+        it["quantidade_fmt"] = fmt_qtd(it["quantidade"])
+        it["valor_unit_original_fmt"] = fmt_num(it["valor_unit_original"])
+        it["valor_unit_fmt"] = fmt_num(it["valor_unit"])
+    return jsonify({"itens": itens, "erros": erros})
+
+
+@app.route("/invoices/modelo-itens.xlsx")
+@login_obrigatorio
+def modelo_itens():
+    import openpyxl
+    from openpyxl.styles import Font
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Itens"
+    ws.append(["Código", "Descrição", "Quantidade", "Preço Original", "Preço Descontado"])
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    ws.append(["ABC-001", "Exemplo: pinça 15 cm (apague esta linha)", 100, 5.5, 5.0])
+    for col, largura in zip("ABCDE", (16, 45, 12, 16, 18)):
+        ws.column_dimensions[col].width = largura
+    saida = io.BytesIO()
+    wb.save(saida)
+    return Response(saida.getvalue(), headers={"Content-Disposition": "attachment; filename=modelo-itens-invoice.xlsx"},
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.route("/api/descontos-disponiveis")

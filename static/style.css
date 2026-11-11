@@ -230,3 +230,9 @@ tr.linha-alerta td { background: var(--erro-claro); }
 .topo-inner { gap: 1rem; }
 .topo nav { gap: 0; }
 .topo nav a { padding: .35rem .55rem; font-size: .92rem; white-space: nowrap; }
+.carga-planilha { border: 1px dashed var(--pri); border-radius: var(--raio); padding: .8rem 1rem; margin-bottom: 1rem; background: var(--pri-claro); display: flex; flex-direction: column; gap: .4rem; }
+.carga-planilha .linha-mini { flex-wrap: wrap; align-items: center; }
+.carga-planilha input[type=file] { background: #fff; }
+.carga-planilha select { width: auto; margin: 0; }
+.ok-texto { color: var(--ok); margin: .3rem 0 0; }
+ul.erro-texto { margin: .3rem 0 0; padding-left: 1.2rem; font-size: .85rem; }

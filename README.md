@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v3.0)
+# Controle de Invoices e Descontos (v3.1)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -85,7 +85,7 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 
 | # | Etapa | Quem informa | Informações |
 |---|-------|--------------|-------------|
-| 1 | Criação do invoice | Importação | Fornecedor, nº, moeda, **data de assinatura**, condição de pagamento, agente de carga, despachante, grupo de consolidação, coleta programada e itens (quantidade, valor unitário original e com desconto). Ao criar, aparece a **janela de descontos aprovados** do fornecedor (mesma moeda) para deduzir um ou mais, total ou parcialmente |
+| 1 | Criação do invoice | Importação | Fornecedor, nº, moeda, **data de assinatura**, condição de pagamento, agente de carga, despachante, grupo de consolidação, coleta programada e itens (código, descrição, quantidade, preço original e preço com desconto), digitados ou **carregados de uma planilha Excel**. Ao criar, aparece a **janela de descontos aprovados** do fornecedor (mesma moeda) para deduzir um ou mais, total ou parcialmente |
 | 2 | Coleta | Importação | Data da HAWB e data real de coleta |
 | 3 | Embarque | Importação / Financeiro | ETD e ETA planejados e reais; banco de débito (Financeiro) |
 | 4 | Desembaraço | Importação | Data de registro no Brasil; DUIMP e boleto do ICMS (links do OneDrive) |
@@ -97,9 +97,14 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 
 O invoice fica **Concluído** quando está pago, o desconto (se houver) foi deduzido e liberado, e todos os pagamentos têm Swift.
 
+### Itens e carga por planilha
+- **Valor total do invoice** = soma de quantidade × preço com desconto de cada item. O **preço original** é apenas histórico (não entra no total).
+- Para invoices extensos, use **Carregar itens de uma planilha Excel** na criação (ou edição) do invoice: colunas **Código, Descrição, Quantidade, Preço Original, Preço Descontado** (o botão **Baixar modelo** traz a planilha pronta). Aceita .xlsx e .csv, até 2.000 itens; linhas inválidas são apontadas pelo número.
+- Código, quantidade e preço com desconto são obrigatórios em cada item.
+
 ### Regras de pagamento
 - **Vencimento**: antecipado = data de assinatura + 5 dias; a prazo = data da HAWB + prazo da condição. Antes da HAWB, a previsão usa a coleta programada (marcada como **estimada**).
-- **Valor do invoice** = itens − deduções de descontos anteriores aplicadas nele.
+- **A pagar** = valor total do invoice − deduções de descontos anteriores aplicadas nele.
 - **Valor segurado**: com desconto, o invoice é pago menos o valor do desconto. Só é possível segurar o que ainda não foi pago: se o invoice já foi pago (ex.: antecipado), o desconto é apenas deduzido no próximo invoice.
 - **Liberação do segurado**: conforme os invoices com a dedução chegam à fábrica. Se o desconto for revalidado para baixo (ou zerado), a diferença fica disponível na hora.
 - **Swift**: pode ser anexado depois (fica pendente), mas o processo só termina com todos os Swifts.

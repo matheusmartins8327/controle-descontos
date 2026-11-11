@@ -31,14 +31,28 @@
     <label class="largo">Observações<textarea name="obs" rows="2">{{ d.obs or '' }}</textarea></label>
   </div>
 
-  <h2>Itens</h2>
-  {% if itens_travados %}<p class="sub">Já existe pagamento registrado: os itens não podem mais ser alterados.</p>{% endif %}
+  <h2>Itens <small id="contador-itens"></small></h2>
+  {% if itens_travados %}<p class="sub">Já existe pagamento registrado: os itens não podem mais ser alterados.</p>
+  {% else %}
+  <div class="carga-planilha">
+    <strong>Carregar itens de uma planilha Excel</strong>
+    <span class="sub">Colunas: Código, Descrição, Quantidade, Preço Original, Preço Descontado.
+      <a href="{{ url_for('modelo_itens') }}">Baixar modelo</a></span>
+    <div class="linha-mini">
+      <input type="file" id="arquivo-itens" accept=".xlsx,.xlsm,.csv">
+      <select id="modo-carga"><option value="substituir">Substituir os itens da tela</option><option value="adicionar">Adicionar aos itens da tela</option></select>
+      <button type="button" class="btn pequeno primario" id="carregar-itens">Carregar planilha</button>
+    </div>
+    <div id="resultado-carga"></div>
+  </div>
+  {% endif %}
   <div class="rolagem">
   <table class="itens">
-    <thead><tr><th>Item</th><th class="num">Quantidade</th><th class="num">Valor unit. original</th><th class="num">Valor unit. com desconto</th><th class="num">Total</th><th></th></tr></thead>
+    <thead><tr><th>Código *</th><th>Descrição</th><th class="num">Quantidade *</th><th class="num">Preço original <small>(histórico)</small></th><th class="num">Preço com desconto *</th><th class="num">Total</th><th></th></tr></thead>
     <tbody id="itens">
       {% for it in (itens or [{}]) %}
       <tr>
+        <td><input name="item_codigo" value="{{ it.codigo or '' }}" {{ 'readonly' if itens_travados }}></td>
         <td><input name="item_desc" value="{{ it.item or '' }}" {{ 'readonly' if itens_travados }}></td>
         <td><input name="item_qtd" class="num" inputmode="decimal" value="{{ it.quantidade|qtd if it.quantidade is not none else '' }}" {{ 'readonly' if itens_travados }}></td>
         <td><input name="item_vu_orig" class="num" inputmode="decimal" value="{{ it.valor_unit_original|num }}" {{ 'readonly' if itens_travados }}></td>
@@ -48,7 +62,7 @@
       </tr>
       {% endfor %}
     </tbody>
-    <tfoot><tr><th colspan="4">Total dos itens</th><th class="num" id="total-itens">—</th><th></th></tr></tfoot>
+    <tfoot><tr><th colspan="5">Valor total do invoice (quantidade × preço com desconto)</th><th class="num" id="total-itens">—</th><th></th></tr></tfoot>
   </table>
   </div>
   {% if not itens_travados %}<button type="button" class="btn pequeno" id="add-item">+ Adicionar item</button>{% endif %}
@@ -90,6 +104,8 @@
       if (q !== null && v !== null) { const t = Math.round(q * v * 100) / 100; totalItens += t; c.textContent = fmt(t); } else c.textContent = '—';
     });
     document.getElementById('total-itens').textContent = fmt(totalItens);
+    const n = [...tbody.rows].filter(tr => tr.querySelector('[name=item_codigo]').value.trim()).length;
+    document.getElementById('contador-itens').textContent = n ? `· ${n} item(ns)` : '';
     resumoDeducoes();
   }
   tbody.addEventListener('input', recalcular);
@@ -104,6 +120,43 @@
     const tr = tbody.rows[0].cloneNode(true);
     tr.querySelectorAll('input').forEach(i => i.value = '');
     tbody.appendChild(tr); recalcular();
+  });
+
+  // carga de itens por planilha
+  const botaoCarga = document.getElementById('carregar-itens');
+  if (botaoCarga) botaoCarga.addEventListener('click', async () => {
+    const arq = document.getElementById('arquivo-itens').files[0], saida = document.getElementById('resultado-carga');
+    if (!arq) { saida.innerHTML = '<p class="erro-texto">Selecione a planilha.</p>'; return; }
+    const dados = new FormData();
+    dados.append('arquivo', arq);
+    dados.append('csrf_token', document.querySelector('[name=csrf_token]').value);
+    botaoCarga.disabled = true; botaoCarga.textContent = 'Carregando…';
+    try {
+      const resp = await fetch('{{ url_for('importar_itens') }}', {method: 'POST', body: dados});
+      if (!resp.ok) throw new Error(resp.status === 413 ? 'Arquivo grande demais (máximo 5 MB).' : 'Falha ao ler a planilha.');
+      const r = await resp.json();
+      if (r.itens.length) {
+        const modelo = tbody.rows[0];
+        if (document.getElementById('modo-carga').value === 'substituir') [...tbody.rows].slice(1).forEach(tr => tr.remove());
+        else if (![...modelo.querySelectorAll('input')].some(i => i.value.trim())) modelo.dataset.vazio = '1';
+        r.itens.forEach((it, i) => {
+          let tr;
+          if (i === 0 && (document.getElementById('modo-carga').value === 'substituir' || modelo.dataset.vazio)) { tr = modelo; delete modelo.dataset.vazio; }
+          else { tr = modelo.cloneNode(true); tbody.appendChild(tr); }
+          tr.querySelector('[name=item_codigo]').value = it.codigo;
+          tr.querySelector('[name=item_desc]').value = it.item;
+          tr.querySelector('[name=item_qtd]').value = it.quantidade_fmt;
+          tr.querySelector('[name=item_vu_orig]').value = it.valor_unit_original_fmt;
+          tr.querySelector('[name=item_vu]').value = it.valor_unit_fmt;
+        });
+        recalcular();
+      }
+      const msgs = [];
+      if (r.itens.length) msgs.push(`<p class="ok-texto">${r.itens.length} item(ns) carregado(s). Confira e clique em ${'{{ "Salvar alterações" if editando else "Criar invoice" }}'}.</p>`);
+      if (r.erros.length) msgs.push('<ul class="erro-texto">' + r.erros.slice(0, 15).map(e => `<li>${e.replace(/</g, '&lt;')}</li>`).join('') + (r.erros.length > 15 ? `<li>… e mais ${r.erros.length - 15}</li>` : '') + '</ul>');
+      saida.innerHTML = msgs.join('');
+    } catch (e) { saida.innerHTML = `<p class="erro-texto">${e.message}</p>`; }
+    botaoCarga.disabled = false; botaoCarga.textContent = 'Carregar planilha';
   });
 
   // condição de pagamento

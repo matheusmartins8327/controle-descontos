@@ -75,7 +75,7 @@
       <tr class="clicavel" onclick="location='{{ url_for('invoice_detalhe', id=r.id) }}'">
         <td>{{ r.fornecedor }}</td>
         <td><a href="{{ url_for('invoice_detalhe', id=r.id) }}">{{ r.numero }}</a></td>
-        <td class="num">{{ r.valor_invoice|moeda(r.moeda) }}</td>
+        <td class="num">{{ r.itens_total|moeda(r.moeda) }}</td>
         <td><small>{{ condicao_texto(r) }}</small></td>
         <td>{% if r.vencimento %}{{ r.vencimento|data }}{% if r.vencimento_estimado %} <small>(est.)</small>{% endif %}{% else %}—{% endif %}</td>
         <td>{{ (r.data_chegada or r.data_prog_chegada or r.eta_real or r.eta_planejado)|data }}</td>

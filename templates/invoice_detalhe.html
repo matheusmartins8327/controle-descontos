@@ -15,9 +15,9 @@
     <small class="sub">{{ m }} · {{ condicao_texto(r) }} · assinado em {{ r.data_assinatura|data }}</small>
   </div>
   <div class="valor-destaque">
-    <small>Valor do invoice</small>
-    <strong>{{ r.valor_invoice|moeda(m) }}</strong>
-    {% if r.deducoes_aplicadas %}<small>Itens {{ r.itens_total|moeda(m) }} − deduções {{ r.deducoes_aplicadas|moeda(m) }}</small>{% endif %}
+    <small>Valor total do invoice · {{ r.itens|length }} item(ns)</small>
+    <strong>{{ r.itens_total|moeda(m) }}</strong>
+    {% if r.deducoes_aplicadas %}<small>− deduções de descontos {{ r.deducoes_aplicadas|moeda(m) }} = a pagar {{ r.valor_invoice|moeda(m) }}</small>{% endif %}
   </div>
 </div>
 
@@ -69,17 +69,17 @@
   </dl>
   <div class="rolagem">
   <table>
-    <thead><tr><th>Item</th><th class="num">Quantidade</th><th class="num">Valor unit. original</th><th class="num">Valor unit. com desconto</th><th class="num">Total</th></tr></thead>
+    <thead><tr><th>Código</th><th>Descrição</th><th class="num">Quantidade</th><th class="num">Preço original</th><th class="num">Preço com desconto</th><th class="num">Total</th></tr></thead>
     <tbody>
     {% for it in r.itens %}
-      <tr><td>{{ it.item }}</td><td class="num">{{ it.quantidade|qtd }}</td><td class="num">{{ it.valor_unit_original|moeda(m) if it.valor_unit_original is not none else '—' }}</td>
+      <tr><td>{{ it.codigo or '—' }}</td><td>{{ it.item or '—' }}</td><td class="num">{{ it.quantidade|qtd }}</td><td class="num">{{ it.valor_unit_original|moeda(m) if it.valor_unit_original is not none else '—' }}</td>
         <td class="num">{{ it.valor_unit|moeda(m) }}</td><td class="num">{{ (it.quantidade * it.valor_unit)|moeda(m) }}</td></tr>
     {% endfor %}
     </tbody>
     <tfoot>
-      <tr><th colspan="4">Total dos itens{% if r.itens_original > r.itens_total + 0.005 %} <small>(valor original {{ r.itens_original|moeda(m) }})</small>{% endif %}</th><th class="num">{{ r.itens_total|moeda(m) }}</th></tr>
-      {% if r.deducoes_aplicadas %}<tr><th colspan="4">(−) Deduções de descontos</th><th class="num">{{ r.deducoes_aplicadas|moeda(m) }}</th></tr>
-      <tr><th colspan="4">Valor do invoice</th><th class="num">{{ r.valor_invoice|moeda(m) }}</th></tr>{% endif %}
+      <tr><th colspan="5">Valor total do invoice{% if r.itens_original > r.itens_total + 0.005 %} <small>(pelo preço original seria {{ r.itens_original|moeda(m) }})</small>{% endif %}</th><th class="num">{{ r.itens_total|moeda(m) }}</th></tr>
+      {% if r.deducoes_aplicadas %}<tr><th colspan="5">(−) Deduções de descontos</th><th class="num">{{ r.deducoes_aplicadas|moeda(m) }}</th></tr>
+      <tr><th colspan="5">A pagar após deduções</th><th class="num">{{ r.valor_invoice|moeda(m) }}</th></tr>{% endif %}
     </tfoot>
   </table>
   </div>
@@ -267,7 +267,8 @@
 <section class="bloco" id="pagamentos">
   <h2>Pagamentos <small>· Financeiro</small></h2>
   <dl class="dl-colunas">
-    <dt>Valor do invoice</dt><dd>{{ r.valor_invoice|moeda(m) }}</dd>
+    <dt>Valor total do invoice</dt><dd>{{ r.itens_total|moeda(m) }}</dd>
+    {% if r.deducoes_aplicadas %}<dt>(−) Deduções de descontos</dt><dd>{{ r.deducoes_aplicadas|moeda(m) }}</dd>{% endif %}
     {% if r.segurado %}<dt>(−) Valor segurado</dt><dd>{{ r.segurado|moeda(m) }}</dd>{% endif %}
     <dt>A pagar do invoice</dt><dd>{{ r.principal_devido|moeda(m) }} · pago {{ r.principal_pago|moeda(m) }} · <strong>pendente {{ r.principal_pendente|moeda(m) }}</strong></dd>
     <dt>Vencimento</dt><dd>{{ r.vencimento|data if r.vencimento else 'definido após a HAWB' }}{{ ' (estimado pela coleta programada)' if r.vencimento_estimado and r.vencimento }}</dd>
