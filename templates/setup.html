@@ -2,6 +2,7 @@
 {% block titulo %}Configuração inicial{% endblock %}
 {% block conteudo %}
 <div class="cartao">
+  <img class="logo-entrada" src="{{ url_for('static', filename='img/logo-quinelato.png') }}" alt="Quinelato">
   <h1>Configuração inicial</h1>
   <p class="sub">Crie a conta do administrador. Ele terá acesso total, incluindo o cadastro de até {{ MAX_USUARIOS }} usuários.</p>
   <form method="post">

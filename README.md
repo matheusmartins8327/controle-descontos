@@ -1,8 +1,8 @@
-# Controle de Invoices e Descontos (v3.4)
+# Controle de Invoices e Descontos (v3.5)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
-Valores em **dólar, euro ou real**. Documentos ficam no **OneDrive** (o sistema guarda os links).
+Valores em **dólar, euro ou real**. Visual na identidade da **Quinelato** (azul #327FEF, fonte Plus Jakarta Sans e logo, conforme quinelato.com.br). Documentos ficam no **OneDrive** (o sistema guarda os links).
 
 ## Hospedagem na nuvem: PythonAnywhere (recomendado)
 

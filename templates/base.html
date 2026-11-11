@@ -3,14 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block titulo %}Controle de Invoices{% endblock %} · Invoices e Descontos</title>
+  <title>{% block titulo %}Controle de Invoices{% endblock %} · Quinelato</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 {% if g.usuario %}
 <header class="topo">
   <div class="topo-inner">
-    <a class="marca" href="{{ url_for('painel') }}">Controle de Invoices <span>Importação · Descontos · Pagamentos</span></a>
+    <a class="marca" href="{{ url_for('painel') }}"><img src="{{ url_for('static', filename='img/logo-quinelato.png') }}" alt="Quinelato">
+      <span><strong>Controle de Invoices</strong><span class="sub-marca">Importação · Descontos · Pagamentos</span></span></a>
     <nav>
       <a href="{{ url_for('painel') }}" class="{{ 'ativo' if request.endpoint == 'painel' }}">Painel</a>
       {% if pode('importacao') %}<a href="{{ url_for('invoice_novo') }}" class="{{ 'ativo' if request.endpoint == 'invoice_novo' }}">Novo invoice</a>{% endif %}
@@ -18,12 +23,12 @@
       <a href="{{ url_for('descontos') }}" class="{{ 'ativo' if request.endpoint == 'descontos' }}">Descontos</a>
       <a href="{{ url_for('fornecedores') }}" class="{{ 'ativo' if request.endpoint == 'fornecedores' }}">Fornecedores</a>
       <a href="{{ url_for('relatorios') }}" class="{{ 'ativo' if request.endpoint == 'relatorios' }}">Relatórios</a>
-      {% if g.usuario.perfil == 'admin' %}<a href="{{ url_for('usuarios') }}" class="{{ 'ativo' if request.endpoint in ('usuarios', 'usuario_form') }}">Usuários</a>
-      <a href="{{ url_for('sistema') }}" class="{{ 'ativo' if request.endpoint == 'sistema' }}">Sistema</a>{% endif %}
     </nav>
     <div class="quem">
       <strong>{{ g.usuario.nome }}</strong>
       <small>{{ PERFIS[g.usuario.perfil] }}</small>
+      {% if g.usuario.perfil == 'admin' %}<a href="{{ url_for('usuarios') }}" class="{{ 'ativo' if request.endpoint in ('usuarios', 'usuario_form') }}">Usuários</a> ·
+      <a href="{{ url_for('sistema') }}" class="{{ 'ativo' if request.endpoint == 'sistema' }}">Sistema</a> · {% endif %}
       <a href="{{ url_for('minha_senha') }}">Senha</a> · <a href="{{ url_for('logout') }}">Sair</a>
     </div>
   </div>
@@ -35,7 +40,7 @@
   {% endwith %}
   {% block conteudo %}{% endblock %}
 </main>
-<footer class="rodape">Controle de Invoices e Descontos · versão {{ VERSAO }}</footer>
+<footer class="rodape">Quinelato · Controle de Invoices e Descontos · versão {{ VERSAO }}</footer>
 {% block scripts %}{% endblock %}
 </body>
 </html>

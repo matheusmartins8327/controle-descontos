@@ -2,8 +2,9 @@
 {% block titulo %}Entrar{% endblock %}
 {% block conteudo %}
 <div class="cartao">
-  <h1>Controle de Descontos</h1>
-  <p class="sub">Fornecedores do Paquistão</p>
+  <img class="logo-entrada" src="{{ url_for('static', filename='img/logo-quinelato.png') }}" alt="Quinelato">
+  <h1>Controle de Invoices</h1>
+  <p class="sub">Importação · Descontos · Pagamentos</p>
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>E-mail<input name="email" type="email" required autofocus></label>
