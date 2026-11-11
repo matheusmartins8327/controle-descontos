@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block titulo %}Fluxo de pagamentos{% endblock %}
+{% block conteudo %}
+<div class="cabecalho">
+  <div>
+    <h1>Fluxo de pagamentos</h1>
+    <p class="sub">Previsão de pagamentos a fornecedores: invoices a pagar, liberações do valor segurado e custo estimado de importação.
+      Itens <strong>estimados</strong> usam datas planejadas e podem mudar.</p>
+  </div>
+  <a class="btn" href="{{ url_for('fluxo_pagamentos_csv', **args) }}">Exportar para Excel (CSV)</a>
+</div>
+<form class="filtros" method="get">
+  <select name="periodo">
+    {% for k, v in [('30', 'Próximos 30 dias'), ('60', 'Próximos 60 dias'), ('90', 'Próximos 90 dias'), ('180', 'Próximos 180 dias'), ('todos', 'Todo o período')] %}
+    <option value="{{ k }}" {{ 'selected' if args.get('periodo', '90') == k }}>{{ v }}</option>{% endfor %}
+  </select>
+  <select name="moeda"><option value="">Todas as moedas</option>{% for k in MOEDAS %}<option {{ 'selected' if args.get('moeda') == k }}>{{ k }}</option>{% endfor %}</select>
+  <select name="fornecedor"><option value="">Todos os fornecedores</option>{% for f in fornecedores %}<option value="{{ f.id }}" {{ 'selected' if args.get('fornecedor') == f.id|string }}>{{ f.nome }}</option>{% endfor %}</select>
+  <select name="custos"><option value="1">Com custo estimado de importação</option><option value="0" {{ 'selected' if args.get('custos') == '0' }}>Sem custo estimado de importação</option></select>
+  <select name="estimados"><option value="1">Com valores estimados</option><option value="0" {{ 'selected' if args.get('estimados') == '0' }}>Somente datas confirmadas</option></select>
+  <button class="btn">Filtrar</button>
+</form>
+
+{% if totais %}
+<section class="resumo">
+  {% for moeda, total in totais.items() %}<div><small>Total no período ({{ moeda }})</small><strong>{{ total|moeda(moeda) }}</strong></div>{% endfor %}
+</section>
+{% endif %}
+
+{% for chave, grupo in grupos.items() %}
+<section class="bloco">
+  <h2>{{ titulos[chave] }} <small>· {% for moeda, t in grupo.totais.items() %}{{ t|moeda(moeda) }}{{ ' · ' if not loop.last }}{% endfor %}</small></h2>
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>Data</th><th>Situação</th><th>Tipo</th><th>Fornecedor</th><th>Invoice</th><th class="num">Valor</th></tr></thead>
+    <tbody>
+    {% for it in grupo.itens %}
+      <tr class="clicavel {{ 'linha-alerta' if it.situacao == 'Vencido' }}" onclick="location='{{ url_for('invoice_detalhe', id=it.invoice_id) }}#pagamentos'">
+        <td>{{ it.data|data if it.data else '—' }}</td>
+        <td><span class="sit-fluxo f-{{ it.situacao|lower }}">{{ it.situacao }}</span></td>
+        <td>{{ it.tipo }}</td><td>{{ it.fornecedor }}</td>
+        <td><a href="{{ url_for('invoice_detalhe', id=it.invoice_id) }}#pagamentos">{{ it.numero }}</a></td>
+        <td class="num">{{ it.valor|moeda(it.moeda) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% else %}
+<section class="bloco"><p class="vazio">Nenhum pagamento previsto no período.</p></section>
+{% endfor %}
+{% endblock %}

@@ -2,24 +2,22 @@
 {% block titulo %}Painel{% endblock %}
 {% block conteudo %}
 <h1>Painel</h1>
-{% if alerta_email %}
-  {% if alerta_email.falhas %}<div class="flash erro">{{ alerta_email.falhas }} e-mail(s) ao Financeiro não foram enviados. <a href="{{ url_for('notificacoes', f='falhas') }}#registro">Ver e reenviar</a></div>{% endif %}
-  {% if alerta_email.sem_principal %}<div class="flash aviso-box">Nenhum destinatário principal cadastrado para os e-mails do Financeiro. <a href="{{ url_for('notificacoes') }}#destinatarios">Cadastrar</a></div>
-  {% elif alerta_email.modo_teste %}<div class="flash aviso-box">Os e-mails ao Financeiro estão em <strong>modo de teste</strong> (não são enviados). <a href="{{ url_for('notificacoes') }}">Configurar envio</a></div>{% endif %}
-{% endif %}
 
-{% set cards = [
-  ('AGUARDANDO_DEDUCAO', 'Saldo a deduzir', ETAPAS.deduzir.perfil, 'descontos'),
-  ('AGUARDANDO_CHEGADA', 'Aguardando chegada', ETAPAS.receber.perfil, 'invoices'),
-  ('AGUARDANDO_CIENCIA', 'Aguardando ciência', None, 'e-mails'),
-  ('CONCLUIDO', 'Concluídos', None, 'descontos'),
-] %}
-<section class="fluxo">
-  {% for s, rotulo, perfil, unidade in cards %}
-  <a class="fluxo-etapa {{ 'sel' if filtro_status == s }}" href="{{ url_for('painel', status=s) }}">
-    <span class="n">{{ contagem[s] }} <small>{{ unidade }}</small></span>
+<section class="fluxo cards6">
+  {% set cards = [
+    ('LOGISTICA', contagem.logistica, 'invoices', 'Em logística', 'Importação'),
+    ('INSPECAO', contagem.inspecao, 'invoices', 'Aguardando inspeção', 'Engenharia de Processos'),
+    ('', contagem.vencidos, 'pagamentos', 'Vencidos', 'Financeiro'),
+    ('', contagem.vencer_30, 'pagamentos', 'Vencem em 30 dias', 'Financeiro'),
+    ('LIBERACAO', contagem.liberacoes, 'invoices', 'Liberações disponíveis', 'Financeiro'),
+    ('CONCLUIDO', contagem.concluidos, 'invoices', 'Concluídos', 'Ciclo completo'),
+  ] %}
+  {% for chave, n, unidade, rotulo, quem in cards %}
+  <a class="fluxo-etapa {{ 'sel' if chave and filtro_sit == chave }} {{ 'alerta-card' if rotulo == 'Vencidos' and n }}"
+     href="{{ url_for('painel', situacao=chave) if chave else url_for('fluxo_pagamentos', periodo='30') }}">
+    <span class="n">{{ n }} <small>{{ unidade }}</small></span>
     <span class="rot">{{ rotulo }}</span>
-    <small>{{ PERFIS[perfil] if perfil else ('Financeiro, por e-mail' if s == 'AGUARDANDO_CIENCIA' else 'Processo encerrado') }}</small>
+    <small>{{ quem }}</small>
   </a>
   {% endfor %}
 </section>
@@ -29,17 +27,16 @@
   <h2>Minhas pendências <span class="cont">{{ pendencias|length }}</span></h2>
   <div class="rolagem">
   <table>
-    <thead><tr><th>Código</th><th>Fornecedor</th><th>Invoice origem</th><th>Invoice dedução</th><th class="num">Valor</th><th>Próxima ação</th><th></th></tr></thead>
+    <thead><tr><th>Fornecedor</th><th>Invoice</th><th>O que fazer</th><th>Data</th><th class="num">Valor</th><th></th></tr></thead>
     <tbody>
     {% for p in pendencias %}
-      <tr>
-        <td>{{ codigo_desconto(p.d) }}</td>
-        <td>{{ p.d.fornecedor }}</td>
-        <td>{{ p.d.invoice_origem }}</td>
-        <td>{{ p.invoice or '—' }}</td>
-        <td class="num">{{ p.valor|moeda }}</td>
-        <td>{{ p.acao }}</td>
-        <td><a class="btn pequeno primario" href="{{ url_for('desconto_detalhe', id=p.d.id) }}">Abrir</a></td>
+      <tr class="{{ 'linha-alerta' if p.alerta }}">
+        <td>{{ p.r.fornecedor }}</td>
+        <td>{{ p.r.numero }}</td>
+        <td>{{ p.acao }}{% if g.usuario.perfil == 'admin' and p.quem != 'admin' %} <small>· {{ PERFIS[p.quem] }}</small>{% endif %}</td>
+        <td>{{ p.data|data if p.data else '—' }}</td>
+        <td class="num">{{ p.valor|moeda(p.r.moeda) if p.valor is not none else '—' }}</td>
+        <td><a class="btn pequeno primario" href="{{ url_for('invoice_detalhe', id=p.r.id) }}">Abrir</a></td>
       </tr>
     {% endfor %}
     </tbody>
@@ -49,43 +46,46 @@
 {% endif %}
 
 <section class="bloco">
-  <h2>Descontos</h2>
+  <h2>Invoices</h2>
   <form class="filtros" method="get">
-    <select name="status">
-      <option value="">Todos os status</option>
-      <option value="ABERTOS" {{ 'selected' if filtro_status == 'ABERTOS' }}>Em aberto</option>
-      {% for k, v in STATUS.items() %}<option value="{{ k }}" {{ 'selected' if filtro_status == k }}>{{ v }}</option>{% endfor %}
+    <select name="situacao">
+      <option value="">Todas as situações</option>
+      <option value="ABERTOS" {{ 'selected' if filtro_sit == 'ABERTOS' }}>Em aberto</option>
+      <option value="LOGISTICA" {{ 'selected' if filtro_sit == 'LOGISTICA' }}>Em logística</option>
+      {% for k, v in SITUACOES.items() %}<option value="{{ k }}" {{ 'selected' if filtro_sit == k }}>{{ v[0] }}</option>{% endfor %}
     </select>
     <select name="fornecedor">
       <option value="">Todos os fornecedores</option>
-      {% for f in fornecedores %}<option value="{{ f.id }}" {{ 'selected' if filtro_fornecedor == f.id|string }}>{{ f.nome }}</option>{% endfor %}
+      {% for f in fornecedores %}<option value="{{ f.id }}" {{ 'selected' if filtro_forn == f.id|string }}>{{ f.nome }}</option>{% endfor %}
+    </select>
+    <select name="moeda">
+      <option value="">Todas as moedas</option>
+      {% for k in MOEDAS %}<option {{ 'selected' if filtro_moeda == k }}>{{ k }}</option>{% endfor %}
     </select>
     <input name="q" value="{{ busca }}" placeholder="Buscar invoice ou fornecedor">
     <button class="btn">Filtrar</button>
-    {% if filtro_status or filtro_fornecedor or busca %}<a class="btn link" href="{{ url_for('painel') }}">Limpar</a>{% endif %}
+    {% if filtro_sit or filtro_forn or filtro_moeda or busca %}<a class="btn link" href="{{ url_for('painel') }}">Limpar</a>{% endif %}
   </form>
-  {% if descontos %}
+  {% if invoices %}
   <div class="rolagem">
   <table>
-    <thead><tr><th>Código</th><th>Fornecedor</th><th>Invoice origem</th><th class="num">Desconto (final)</th><th class="num">Deduzido</th><th>Invoices dedução</th><th>Status</th><th>Registrado</th></tr></thead>
+    <thead><tr><th>Fornecedor</th><th>Invoice</th><th class="num">Valor</th><th>Condição</th><th>Vencimento</th><th>Previsão de chegada</th><th>Desconto</th><th>Situação</th></tr></thead>
     <tbody>
-    {% for d in descontos %}
-      <tr class="clicavel" onclick="location='{{ url_for('desconto_detalhe', id=d.id) }}'">
-        <td><a href="{{ url_for('desconto_detalhe', id=d.id) }}">{{ codigo_desconto(d) }}</a></td>
-        <td>{{ d.fornecedor }}</td>
-        <td>{{ d.invoice_origem }}</td>
-        <td class="num">{{ d.valor_desconto|moeda }}</td>
-        <td class="num">{{ d.total_deduzido|moeda }}</td>
-        <td>{{ d.invoices_deducao or '—' }}</td>
-        <td>{% with status=d.status %}{% include "_status.html" %}{% endwith %}</td>
-        <td>{{ d.registrado_em|data }}</td>
+    {% for r in invoices %}
+      <tr class="clicavel" onclick="location='{{ url_for('invoice_detalhe', id=r.id) }}'">
+        <td>{{ r.fornecedor }}</td>
+        <td><a href="{{ url_for('invoice_detalhe', id=r.id) }}">{{ r.numero }}</a></td>
+        <td class="num">{{ r.valor_invoice|moeda(r.moeda) }}</td>
+        <td><small>{{ condicao_texto(r) }}</small></td>
+        <td>{% if r.vencimento %}{{ r.vencimento|data }}{% if r.vencimento_estimado %} <small>(est.)</small>{% endif %}{% else %}—{% endif %}</td>
+        <td>{{ (r.data_chegada or r.data_prog_chegada or r.eta_real or r.eta_planejado)|data }}</td>
+        <td>{% if r.desconto %}{{ r.desconto.valor_final|moeda(r.moeda) }}<small class="bloco-linha">{{ STATUS_DESCONTO[r.desconto.status] }}</small>{% elif r.tem_desconto == 0 %}<small>Sem desconto</small>{% else %}—{% endif %}</td>
+        <td>{% with sit=r.situacao %}{% include "_situacao.html" %}{% endwith %}</td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
-  {% else %}
-  <p class="vazio">Nenhum desconto encontrado.</p>
-  {% endif %}
+  {% else %}<p class="vazio">Nenhum invoice encontrado.</p>{% endif %}
 </section>
 {% endblock %}

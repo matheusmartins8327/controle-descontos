@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block titulo %}{{ 'Editar invoice' if editando else 'Novo invoice' }}{% endblock %}
+{% block conteudo %}
+<h1>{{ 'Editar invoice' if editando else 'Novo invoice' }}</h1>
+<p class="sub">Criação do invoice · Importação</p>
+<form method="post" class="bloco" id="form-invoice">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="grade">
+    <label>Fornecedor *
+      <input name="fornecedor" id="fornecedor" list="lista-fornecedores" value="{{ d.fornecedor or '' }}" required autocomplete="off" {{ 'readonly' if chave_travada }}>
+      <datalist id="lista-fornecedores">{% for f in fornecedores %}<option value="{{ f.nome }}">{% endfor %}</datalist>
+      <small>Escolha da lista ou digite um nome novo.</small>
+    </label>
+    <label>Nº do invoice *<input name="numero" value="{{ d.numero or '' }}" required></label>
+    <label>Moeda *
+      {% if chave_travada %}<input name="moeda" value="{{ d.moeda }}" readonly>
+      {% else %}<select name="moeda" id="moeda">{% for k, s in MOEDAS.items() %}<option value="{{ k }}" {{ 'selected' if d.moeda == k }}>{{ k }} ({{ s }})</option>{% endfor %}</select>{% endif %}
+    </label>
+    <label>Data de assinatura do invoice *<input type="date" name="data_assinatura" value="{{ d.data_assinatura or '' }}" required></label>
+    <label>Condição de pagamento *
+      <select name="condicao_tipo" id="condicao_tipo">
+        {% for k, v in CONDICOES.items() %}<option value="{{ k }}" {{ 'selected' if d.condicao_tipo == k }}>{{ v }}</option>{% endfor %}
+      </select>
+      <small id="dica-condicao"></small>
+    </label>
+    <label id="campo-dias">Prazo (dias após a HAWB) *<input name="condicao_dias" inputmode="numeric" value="{{ d.condicao_dias if d.condicao_dias is not none else '' }}"></label>
+    <label>Agente de carga<input name="agente_carga" value="{{ d.agente_carga or '' }}"></label>
+    <label>Despachante<input name="despachante" value="{{ d.despachante or '' }}"></label>
+    <label>Grupo de consolidação<input name="grupo_consolidacao" value="{{ d.grupo_consolidacao or '' }}"></label>
+    <label>Data programada de coleta<input type="date" name="data_prog_coleta" value="{{ d.data_prog_coleta or '' }}"></label>
+    <label class="largo">Observações<textarea name="obs" rows="2">{{ d.obs or '' }}</textarea></label>
+  </div>
+
+  <h2>Itens</h2>
+  {% if itens_travados %}<p class="sub">Já existe pagamento registrado: os itens não podem mais ser alterados.</p>{% endif %}
+  <div class="rolagem">
+  <table class="itens">
+    <thead><tr><th>Item</th><th class="num">Quantidade</th><th class="num">Valor unit. original</th><th class="num">Valor unit. com desconto</th><th class="num">Total</th><th></th></tr></thead>
+    <tbody id="itens">
+      {% for it in (itens or [{}]) %}
+      <tr>
+        <td><input name="item_desc" value="{{ it.item or '' }}" {{ 'readonly' if itens_travados }}></td>
+        <td><input name="item_qtd" class="num" inputmode="decimal" value="{{ it.quantidade|qtd if it.quantidade is not none else '' }}" {{ 'readonly' if itens_travados }}></td>
+        <td><input name="item_vu_orig" class="num" inputmode="decimal" value="{{ it.valor_unit_original|num }}" {{ 'readonly' if itens_travados }}></td>
+        <td><input name="item_vu" class="num" inputmode="decimal" value="{{ it.valor_unit|num }}" {{ 'readonly' if itens_travados }}></td>
+        <td class="num total-item">—</td>
+        <td>{% if not itens_travados %}<button type="button" class="btn pequeno link remover" title="Remover">✕</button>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot><tr><th colspan="4">Total dos itens</th><th class="num" id="total-itens">—</th><th></th></tr></tfoot>
+  </table>
+  </div>
+  {% if not itens_travados %}<button type="button" class="btn pequeno" id="add-item">+ Adicionar item</button>{% endif %}
+
+  {% if not editando %}
+  <section id="janela-descontos" class="janela-descontos" hidden>
+    <h2>Descontos aprovados deste fornecedor</h2>
+    <p class="sub">Escolha quanto deduzir de cada desconto neste invoice. Pode deduzir um ou mais descontos, total ou parcialmente.</p>
+    <table>
+      <thead><tr><th>Invoice de origem</th><th>Relatório</th><th class="num">Saldo a deduzir</th><th class="num">Deduzir neste invoice</th><th></th></tr></thead>
+      <tbody id="lista-descontos"></tbody>
+    </table>
+    <p class="sub" id="resumo-deducoes"></p>
+  </section>
+  {% endif %}
+
+  <div class="acoes">
+    <button class="btn primario">{{ 'Salvar alterações' if editando else 'Criar invoice' }}</button>
+    <a class="btn link" href="{{ url_for('invoice_detalhe', id=id) if editando else url_for('painel') }}">Cancelar</a>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const num = s => { s = (s || '').trim().replace(/\s|US\$|R\$|€|\$/g, ''); if (!s) return null;
+    if (s.includes(',') && s.includes('.')) s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+    else if (s.includes(',')) s = (s.match(/,/g).length === 1) ? s.replace(',', '.') : s.replace(/,/g, '');
+    else if ((s.match(/\./g) || []).length > 1 || /^\d{1,3}\.\d{3}$/.test(s)) s = s.replace(/\./g, '');
+    const n = parseFloat(s); return isNaN(n) ? null : n; };
+  const fmt = n => n.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  const tbody = document.getElementById('itens');
+  let totalItens = 0;
+  function recalcular() {
+    totalItens = 0;
+    tbody.querySelectorAll('tr').forEach(tr => {
+      const q = num(tr.querySelector('[name=item_qtd]').value), v = num(tr.querySelector('[name=item_vu]').value);
+      const c = tr.querySelector('.total-item');
+      if (q !== null && v !== null) { const t = Math.round(q * v * 100) / 100; totalItens += t; c.textContent = fmt(t); } else c.textContent = '—';
+    });
+    document.getElementById('total-itens').textContent = fmt(totalItens);
+    resumoDeducoes();
+  }
+  tbody.addEventListener('input', recalcular);
+  tbody.addEventListener('click', e => {
+    if (!e.target.classList.contains('remover')) return;
+    const tr = e.target.closest('tr');
+    if (tbody.rows.length > 1) tr.remove(); else tr.querySelectorAll('input').forEach(i => i.value = '');
+    recalcular();
+  });
+  const add = document.getElementById('add-item');
+  if (add) add.addEventListener('click', () => {
+    const tr = tbody.rows[0].cloneNode(true);
+    tr.querySelectorAll('input').forEach(i => i.value = '');
+    tbody.appendChild(tr); recalcular();
+  });
+
+  // condição de pagamento
+  const cond = document.getElementById('condicao_tipo'), campoDias = document.getElementById('campo-dias');
+  const dica = document.getElementById('dica-condicao');
+  function ajustarCondicao() {
+    const antecipado = cond.value === 'ANTECIPADO';
+    campoDias.hidden = antecipado;
+    campoDias.querySelector('input').required = !antecipado;
+    dica.textContent = antecipado ? 'Vencimento: data de assinatura + {{ PRAZO_ANTECIPADO_DIAS }} dias.' : 'Vencimento: data da HAWB + prazo.';
+  }
+  cond.addEventListener('change', ajustarCondicao); ajustarCondicao();
+
+  // janela de descontos aprovados (somente na criação)
+  const janela = document.getElementById('janela-descontos');
+  const escolhidos = {{ (deducoes_escolhidas or {})|tojson }};
+  function resumoDeducoes() {
+    if (!janela) return;
+    let soma = 0;
+    janela.querySelectorAll('input[name^=ded_]').forEach(i => soma += num(i.value) || 0);
+    const r = document.getElementById('resumo-deducoes');
+    r.textContent = soma ? `Total deduzido: ${fmt(soma)} · Valor do invoice após deduções: ${fmt(totalItens - soma)}` : '';
+    r.classList.toggle('erro-texto', soma > totalItens + 0.005);
+  }
+  async function carregarDescontos() {
+    if (!janela) return;
+    const forn = document.getElementById('fornecedor').value.trim(), moeda = document.getElementById('moeda').value;
+    if (!forn) { janela.hidden = true; return; }
+    const resp = await fetch(`{{ url_for('api_descontos_disponiveis') }}?fornecedor=${encodeURIComponent(forn)}&moeda=${moeda}`);
+    const lista = await resp.json();
+    const corpo = document.getElementById('lista-descontos');
+    corpo.innerHTML = '';
+    lista.forEach(d => {
+      const tr = document.createElement('tr');
+      const valor = escolhidos[d.id] !== undefined ? fmt(escolhidos[d.id]) : '';
+      tr.innerHTML = `<td></td><td>${d.data_relatorio_fmt}</td><td class="num">${d.saldo_fmt}</td>
+        <td class="num"><input name="ded_${d.id}" class="num" inputmode="decimal" placeholder="0,00" value="${valor}"></td>
+        <td><button type="button" class="btn pequeno usar">Usar saldo</button></td>`;
+      tr.cells[0].textContent = d.invoice;
+      tr.querySelector('.usar').addEventListener('click', () => { tr.querySelector('input').value = d.saldo_num; resumoDeducoes(); });
+      corpo.appendChild(tr);
+    });
+    janela.hidden = lista.length === 0;
+    resumoDeducoes();
+  }
+  if (janela) {
+    document.getElementById('fornecedor').addEventListener('change', carregarDescontos);
+    document.getElementById('moeda').addEventListener('change', carregarDescontos);
+    janela.addEventListener('input', resumoDeducoes);
+    carregarDescontos();
+  }
+  recalcular();
+})();
+</script>
+{% endblock %}

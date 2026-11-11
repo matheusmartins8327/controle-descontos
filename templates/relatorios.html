@@ -2,23 +2,25 @@
 {% block titulo %}Relatórios{% endblock %}
 {% block conteudo %}
 <h1>Relatórios e indicadores</h1>
-<p class="sub">Módulo planejado para a próxima versão. Os dados necessários já estão sendo registrados (datas e responsáveis de cada etapa, valores e histórico).</p>
+<p class="sub">Já disponível: <a href="{{ url_for('fluxo_pagamentos') }}">Fluxo de pagamentos</a> (previsão de pagamentos, liberações e custos estimados, com exportação para Excel).
+  Os demais relatórios estão planejados; os dados necessários já são registrados.</p>
 <div class="planejado">
-  <section class="bloco"><h2>Relatórios</h2>
+  <section class="bloco"><h2>Relatórios planejados</h2>
     <ul>
-      <li>Valores retidos em aberto por fornecedor</li>
-      <li>Descontos por período (registro, dedução, pagamento)</li>
-      <li>Invoices aguardando dedução / chegada / pagamento</li>
-      <li>Exportação para Excel / PDF</li>
+      <li>Valores segurados em aberto por fornecedor e moeda</li>
+      <li>Invoices por etapa e tempo parado em cada etapa</li>
+      <li>Descontos por período e por fornecedor</li>
+      <li>Pagamentos realizados por período, banco e moeda</li>
+      <li>Swifts e documentos pendentes</li>
     </ul>
   </section>
-  <section class="bloco"><h2>Indicadores</h2>
+  <section class="bloco"><h2>Indicadores planejados</h2>
     <ul>
-      <li>Total retido em aberto (US$)</li>
-      <li>Tempo médio entre etapas (cadastro → dedução → chegada → pagamento)</li>
-      <li>% de desconto sobre o valor dos invoices por fornecedor</li>
-      <li>Prazo entre o envio do relatório e a primeira dedução</li>
-      <li>Ranking de qualidade dos fornecedores</li>
+      <li>Tempo médio de cada etapa (coleta → embarque → desembaraço → chegada → inspeção → pagamento)</li>
+      <li>Pontualidade: ETD/ETA planejado × real</li>
+      <li>% de desconto sobre o valor dos invoices por fornecedor (ranking de qualidade)</li>
+      <li>Prazo entre a aprovação do desconto e a dedução</li>
+      <li>Custo real de importação × estimativa de 40%</li>
     </ul>
   </section>
 </div>

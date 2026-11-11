@@ -1,4 +1,0 @@
-{% if n.anulada_em %}<span class="ciencia c-anulada">Anulado</span><small class="bloco-linha">{{ n.anulada_motivo }}</small>
-{% elif not n.exige_ciencia %}<span class="ciencia c-nao">Não exige</span>
-{% elif n.ciencia_em %}<span class="ciencia c-ok">✔ Ciente</span><small class="bloco-linha">{{ n.ciencia_por }} · {{ n.ciencia_em|data }}</small>
-{% else %}<span class="ciencia c-pendente">Pendente</span>{% endif %}

@@ -26,11 +26,12 @@
   <table>
     <thead><tr><th>Etapa</th><th>Perfil responsável</th></tr></thead>
     <tbody>
-      {% for k, e in ETAPAS.items() %}<tr><td>{{ e.titulo }}</td><td>{{ PERFIS[e.perfil] }}</td></tr>{% endfor %}
-      <tr><td>Ciência dos eventos (segurar e liberar valores)</td><td>Financeiro — por e-mail, sem login (destinatários em Notificações)</td></tr>
-      <tr><td>Revalidar valor, editar cadastro, cancelar e desfazer etapas</td><td>{{ PERFIS['admin'] }}</td></tr>
+      <tr><td>Criação do invoice (itens, condição de pagamento, deduções de descontos aprovados)</td><td>{{ PERFIS['importacao'] }}</td></tr>
+      <tr><td>Coleta, embarque, desembaraço, canal e chegada; documentos (DUIMP, boleto do ICMS)</td><td>{{ PERFIS['importacao'] }}</td></tr>
+      <tr><td>Inspeção, desconto, aprovação do fornecedor e revalidação</td><td>{{ PERFIS['admin'] }} (Engenharia de Processos)</td></tr>
+      <tr><td>Banco de débito, pagamentos, liberação do valor segurado e Swifts</td><td>{{ PERFIS['financeiro'] }}</td></tr>
     </tbody>
   </table>
-  <p class="sub">O Administrador pode executar qualquer etapa. O perfil Consulta apenas visualiza.</p>
+  <p class="sub">O Administrador pode executar qualquer etapa, cancelar invoices e gerenciar usuários. O perfil Consulta apenas visualiza.</p>
 </section>
 {% endblock %}

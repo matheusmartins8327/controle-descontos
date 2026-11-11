@@ -19,6 +19,17 @@
   {% endif %}
 </section>
 
+<section class="bloco" id="onedrive">
+  <h2>Pasta de documentos no OneDrive</h2>
+  <p class="sub">Os documentos (DUIMP, boleto do ICMS, Swifts, relatórios) ficam no OneDrive; o sistema guarda apenas os links.
+    Este link aparece como botão "Abrir pasta no OneDrive" em cada invoice. Ele fica salvo somente no servidor (não vai para o GitHub).</p>
+  <form method="post" action="{{ url_for('sistema_onedrive') }}" class="linha-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="cresce">Link da pasta<input name="onedrive_pasta" value="{{ pasta_onedrive }}" placeholder="https://...sharepoint.com/..."></label>
+    <button class="btn primario">Salvar</button>
+  </form>
+</section>
+
 <section class="bloco">
   <h2>Backups do banco de dados <small>· pasta instance/backups</small></h2>
   {% if backups %}

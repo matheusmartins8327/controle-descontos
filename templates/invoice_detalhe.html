@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+{% block titulo %}{{ r.numero }} · {{ r.fornecedor }}{% endblock %}
+{% block conteudo %}
+{% set m = r.moeda %}
+{% set ativo = not r.cancelado_em %}
+{% set admin = g.usuario.perfil == 'admin' %}
+{% set imp = pode('importacao') and ativo %}
+{% set fin = pode('financeiro') and ativo %}
+{% set d = r.desconto %}
+<div class="cabecalho">
+  <div>
+    <a class="voltar" href="{{ url_for('painel') }}">← Painel</a>
+    <h1>{{ r.fornecedor }} · Invoice {{ r.numero }}</h1>
+    {% with sit=r.situacao %}{% include "_situacao.html" %}{% endwith %}
+    <small class="sub">{{ m }} · {{ condicao_texto(r) }} · assinado em {{ r.data_assinatura|data }}</small>
+  </div>
+  <div class="valor-destaque">
+    <small>Valor do invoice</small>
+    <strong>{{ r.valor_invoice|moeda(m) }}</strong>
+    {% if r.deducoes_aplicadas %}<small>Itens {{ r.itens_total|moeda(m) }} − deduções {{ r.deducoes_aplicadas|moeda(m) }}</small>{% endif %}
+  </div>
+</div>
+
+{% if r.cancelado_em %}<div class="flash erro">Cancelado em {{ r.cancelado_em|data }} — {{ r.motivo_cancelamento }}</div>{% endif %}
+
+<section class="resumo">
+  <div class="{{ 'alerta' if r.principal_pendente > 0.005 and r.vencimento and r.vencimento < hoje }}">
+    <small>Vencimento{{ ' (estimado)' if r.vencimento_estimado and r.vencimento }}</small>
+    <strong>{{ r.vencimento|data if r.vencimento else 'Aguardando HAWB' }}</strong></div>
+  <div><small>A pagar do invoice</small><strong>{{ r.principal_pendente|moeda(m) }}</strong></div>
+  <div><small>Pago</small><strong>{{ (r.principal_pago + r.liberado)|moeda(m) }}</strong></div>
+  {% if d %}
+  <div class="destaque-valor"><small>Desconto (valor final)</small><strong>{{ d.valor_final|moeda(m) }}</strong></div>
+  <div><small>Valor segurado</small><strong>{{ r.segurado|moeda(m) }}</strong></div>
+  <div class="{{ 'alerta' if r.liberacao_disponivel > 0.005 }}"><small>Liberação disponível</small><strong>{{ r.liberacao_disponivel|moeda(m) }}</strong></div>
+  {% endif %}
+</section>
+
+{# ---------- trilha do processo ---------- #}
+{% set passos = [('Criação', true)] %}
+{% for e in ORDEM_LOGISTICA %}{% set _ = passos.append((TITULO_ETAPA[e], etapa_concluida(r, e))) %}{% endfor %}
+{% set _ = passos.append(('Inspeção', r.tem_desconto is not none and r.data_fim_inspecao)) %}
+{% set _ = passos.append(('Pagamento', r.situacao not in ('COLETA','EMBARQUE','DESEMBARACO','CANAL','CHEGADA','INSPECAO','PAGAMENTO','CANCELADO'))) %}
+{% if d %}{% set _ = passos.append(('Dedução e liberação', r.situacao in ('SWIFT', 'CONCLUIDO'))) %}{% endif %}
+{% set _ = passos.append(('Concluído', r.situacao == 'CONCLUIDO')) %}
+<ol class="trilha trilha-longa">
+  {% set ns = namespace(atual=false) %}
+  {% for nome, feito in passos %}
+  <li class="{{ 'feito' if feito else ('atual' if not ns.atual and ativo) }}">{% if not feito %}{% set ns.atual = true %}{% endif %}
+    <span class="bola">{{ loop.index }}</span><strong>{{ nome }}</strong>
+  </li>
+  {% endfor %}
+</ol>
+
+{# ---------- dados e itens ---------- #}
+<section class="bloco">
+  <h2>Dados do invoice {% if imp %}<a class="btn pequeno" href="{{ url_for('invoice_editar', id=r.id) }}">Editar</a>{% endif %}</h2>
+  <dl class="dl-colunas">
+    <dt>Fornecedor</dt><dd>{{ r.fornecedor }}</dd>
+    <dt>Nº do invoice</dt><dd>{{ r.numero }}</dd>
+    <dt>Moeda</dt><dd>{{ m }}</dd>
+    <dt>Data de assinatura</dt><dd>{{ r.data_assinatura|data }}</dd>
+    <dt>Condição de pagamento</dt><dd>{{ condicao_texto(r) }}</dd>
+    <dt>Agente de carga</dt><dd>{{ r.agente_carga or '—' }}</dd>
+    <dt>Despachante</dt><dd>{{ r.despachante or '—' }}</dd>
+    <dt>Grupo de consolidação</dt><dd>{{ r.grupo_consolidacao or '—' }}</dd>
+    <dt>Coleta programada</dt><dd>{{ r.data_prog_coleta|data }}</dd>
+    {% if r.obs %}<dt>Observações</dt><dd class="pre">{{ r.obs }}</dd>{% endif %}
+  </dl>
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>Item</th><th class="num">Quantidade</th><th class="num">Valor unit. original</th><th class="num">Valor unit. com desconto</th><th class="num">Total</th></tr></thead>
+    <tbody>
+    {% for it in r.itens %}
+      <tr><td>{{ it.item }}</td><td class="num">{{ it.quantidade|qtd }}</td><td class="num">{{ it.valor_unit_original|moeda(m) if it.valor_unit_original is not none else '—' }}</td>
+        <td class="num">{{ it.valor_unit|moeda(m) }}</td><td class="num">{{ (it.quantidade * it.valor_unit)|moeda(m) }}</td></tr>
+    {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><th colspan="4">Total dos itens{% if r.itens_original > r.itens_total + 0.005 %} <small>(valor original {{ r.itens_original|moeda(m) }})</small>{% endif %}</th><th class="num">{{ r.itens_total|moeda(m) }}</th></tr>
+      {% if r.deducoes_aplicadas %}<tr><th colspan="4">(−) Deduções de descontos</th><th class="num">{{ r.deducoes_aplicadas|moeda(m) }}</th></tr>
+      <tr><th colspan="4">Valor do invoice</th><th class="num">{{ r.valor_invoice|moeda(m) }}</th></tr>{% endif %}
+    </tfoot>
+  </table>
+  </div>
+</section>
+
+{# ---------- deduções recebidas ---------- #}
+<section class="bloco" id="deducoes">
+  <h2>Descontos deduzidos neste invoice</h2>
+  {% if r.deducoes_recebidas %}
+  <table>
+    <thead><tr><th>Desconto do invoice</th><th class="num">Valor deduzido</th><th></th></tr></thead>
+    <tbody>
+    {% for x in r.deducoes_recebidas %}
+      <tr><td><a href="{{ url_for('invoice_detalhe', id=x.origem_id) }}">{{ x.invoice_origem }}</a></td><td class="num">{{ x.valor|moeda(m) }}</td>
+        <td>{% if imp and not r.data_chegada and not r.principal_pago %}
+          <form method="post" action="{{ url_for('deducao_remover', xid=x.id) }}" onsubmit="return confirm('Remover esta dedução?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn pequeno link">Remover</button></form>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="vazio">Nenhum desconto deduzido neste invoice.</p>{% endif %}
+  {% if imp and disponiveis and not r.principal_pago %}
+  <form method="post" action="{{ url_for('deducao_nova', id=r.id) }}" class="linha-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Desconto aprovado disponível
+      <select name="desconto_id">{% for x in disponiveis %}<option value="{{ x.id }}">Invoice {{ x.invoice }} · saldo {{ x.saldo|moeda(m) }}</option>{% endfor %}</select></label>
+    <label>Valor a deduzir<input name="valor" inputmode="decimal" placeholder="0,00" required></label>
+    <button class="btn">Deduzir</button>
+  </form>
+  {% endif %}
+</section>
+
+{# ---------- logística (Importação) ---------- #}
+<section class="bloco">
+  <h2>Logística <small>· Importação</small></h2>
+  <div class="etapas-grade">
+  {% for e in ORDEM_LOGISTICA %}
+    <div class="etapa-card {{ 'feita' if etapa_concluida(r, e) }}" id="etapa-{{ e }}">
+      <h3>{{ TITULO_ETAPA[e] }} {% if etapa_concluida(r, e) %}<span class="ok">✔</span>{% endif %}</h3>
+      {% if imp %}
+      <form method="post" action="{{ url_for('invoice_etapa', id=r.id, etapa=e) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% for campo, rotulo, tipo, obrig in CAMPOS_ETAPA[e] %}
+          <label>{{ rotulo }}{{ ' *' if obrig }}
+          {% if tipo == 'data' %}<input type="date" name="{{ campo }}" value="{{ r[campo] or '' }}">
+          {% elif tipo == 'canal' %}<select name="{{ campo }}"><option value="">—</option>{% for c in CORES_CANAL %}<option {{ 'selected' if r[campo] == c }}>{{ c }}</option>{% endfor %}</select>
+          {% else %}<textarea name="{{ campo }}" rows="2">{{ r[campo] or '' }}</textarea>{% endif %}
+          </label>
+        {% endfor %}
+        <button class="btn pequeno">Salvar</button>
+      </form>
+      {% else %}
+      <dl>{% for campo, rotulo, tipo, obrig in CAMPOS_ETAPA[e] %}<dt>{{ rotulo }}</dt><dd>{{ r[campo]|data if tipo == 'data' else (r[campo] or '—') }}</dd>{% endfor %}</dl>
+      {% endif %}
+      {% if e == 'EMBARQUE' %}
+        <div class="banco">
+        {% if fin %}
+        <form method="post" action="{{ url_for('invoice_banco', id=r.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label>Banco de débito <small>(Financeiro)</small><input name="banco_debito" value="{{ r.banco_debito or '' }}"></label>
+          <button class="btn pequeno">Salvar banco</button>
+        </form>
+        {% else %}<dl><dt>Banco de débito</dt><dd>{{ r.banco_debito or '—' }}</dd></dl>{% endif %}
+        </div>
+      {% endif %}
+    </div>
+  {% endfor %}
+  </div>
+</section>
+
+{# ---------- documentos (links do OneDrive) ---------- #}
+<section class="bloco" id="documentos">
+  <h2>Documentos <small>· arquivos guardados no OneDrive</small>
+    {% if pasta_onedrive %}<a class="btn pequeno" href="{{ pasta_onedrive }}" target="_blank" rel="noopener">Abrir pasta no OneDrive</a>{% endif %}</h2>
+  {% if faltando %}<div class="flash aviso-box">Pendente: {{ faltando|join(' e ') }}.</div>{% endif %}
+  {% if r.anexos %}
+  <table>
+    <thead><tr><th>Documento</th><th>Descrição</th><th>Anexado</th><th></th></tr></thead>
+    <tbody>
+    {% for a in r.anexos %}
+      <tr><td><a href="{{ a.url }}" target="_blank" rel="noopener">{{ TIPOS_ANEXO[a.tipo] }} ↗</a></td><td>{{ a.descricao or '—' }}</td>
+        <td><small>{{ nomes.get(a.criado_por, '?') }} · {{ a.criado_em|data }}</small></td>
+        <td>{% if admin or a.criado_por == g.usuario.id %}<form method="post" action="{{ url_for('anexo_remover', aid=a.id) }}" onsubmit="return confirm('Remover o link deste documento?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn pequeno link">Remover</button></form>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="vazio">Nenhum documento anexado.</p>{% endif %}
+  {% if ativo and g.usuario.perfil != 'consulta' %}
+  <form method="post" action="{{ url_for('anexo_novo', id=r.id) }}" class="linha-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Tipo<select name="tipo">{% for k, v in TIPOS_ANEXO.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+    <label class="cresce">Link do arquivo no OneDrive<input name="url" placeholder="https://..." required></label>
+    <label>Descrição<input name="descricao" placeholder="Opcional"></label>
+    <button class="btn">Anexar</button>
+  </form>
+  <p class="sub dica">Salve o arquivo na pasta <strong>{{ sugestao_pasta }}</strong> do OneDrive, copie o link (Compartilhar → Copiar link) e cole acima.</p>
+  {% endif %}
+</section>
+
+{# ---------- inspeção e desconto (Engenharia de Processos) ---------- #}
+<section class="bloco" id="inspecao">
+  <h2>Inspeção e desconto <small>· Engenharia de Processos</small></h2>
+  {% if not r.data_chegada %}
+    <p class="vazio">A inspeção é registrada após a chegada do invoice na fábrica.</p>
+  {% else %}
+  <dl class="dl-colunas">
+    <dt>Fim da inspeção</dt><dd>{{ r.data_fim_inspecao|data }}</dd>
+    <dt>Tem desconto?</dt><dd>{{ {None: 'Não informado', 0: 'Não — pagamento integral', 1: 'Sim'}[r.tem_desconto] }}</dd>
+    {% if d %}
+    <dt>Data do relatório</dt><dd>{{ d.data_relatorio|data }}</dd>
+    <dt>Aprovação</dt><dd>{{ STATUS_DESCONTO[d.status] }}{% if d.aprovado_em %} <small>em {{ d.aprovado_em|data }}</small>{% endif %}</dd>
+    <dt>Valor inicial</dt><dd>{{ d.valor_inicial|moeda(m) }}</dd>
+    <dt>Valor final</dt><dd><strong>{{ d.valor_final|moeda(m) }}</strong></dd>
+    <dt>Valor segurado</dt><dd>{{ r.segurado|moeda(m) }}{% if r.segurado + 0.005 < d.valor_final %} <small>(o restante só é deduzido: o invoice já estava pago)</small>{% endif %}</dd>
+    <dt>Deduzido em próximos invoices</dt><dd>{{ r.deduzido|moeda(m) }} <small>· saldo a deduzir {{ r.saldo_a_deduzir|moeda(m) }}</small></dd>
+    {% if d.obs %}<dt>Observações</dt><dd class="pre">{{ d.obs }}</dd>{% endif %}
+    {% endif %}
+  </dl>
+  {% if d and r.deducoes_do_desconto %}
+  <table>
+    <thead><tr><th>Deduzido no invoice</th><th class="num">Valor</th><th>Chegada</th></tr></thead>
+    <tbody>{% for x in r.deducoes_do_desconto %}
+      <tr><td><a href="{{ url_for('invoice_detalhe', id=x.invoice_id) }}">{{ x.invoice_destino }}</a></td><td class="num">{{ x.valor|moeda(m) }}</td>
+        <td>{% if x.data_chegada %}✔ {{ x.data_chegada|data }}{% else %}Prevista: {{ (x.data_prog_chegada or x.eta_real or x.eta_planejado)|data }}{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+  {% endif %}
+
+  {% if admin and ativo %}
+  <details class="revalidar" {{ 'open' if r.tem_desconto is none }}>
+    <summary>{{ 'Registrar inspeção' if r.tem_desconto is none else 'Editar inspeção' }}</summary>
+    <form method="post" action="{{ url_for('invoice_inspecao', id=r.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="grade">
+        <label>Data real do fim da inspeção *<input type="date" name="data_fim_inspecao" value="{{ r.data_fim_inspecao or hoje }}" required></label>
+        <label>Tem desconto? *
+          <select name="tem_desconto" id="tem_desconto">
+            <option value="0" {{ 'selected' if r.tem_desconto == 0 }}>Não</option>
+            <option value="1" {{ 'selected' if r.tem_desconto == 1 }}>Sim</option>
+          </select></label>
+        <label class="so-desconto">Valor do desconto ({{ m }}) *<input name="valor" inputmode="decimal" value="{{ d.valor_final|num if d else '' }}" {{ 'readonly' if d }}>
+          {% if d %}<small>Para alterar o valor, use a revalidação abaixo.</small>{% endif %}</label>
+        <label class="so-desconto">Data do relatório *<input type="date" name="data_relatorio" value="{{ d.data_relatorio if d else hoje }}"></label>
+        <label class="so-desconto">Aprovação do fornecedor
+          <select name="status">{% for k, v in STATUS_DESCONTO.items() %}<option value="{{ k }}" {{ 'selected' if d and d.status == k }}>{{ v }}</option>{% endfor %}</select></label>
+        <label class="largo so-desconto">Observações<textarea name="obs" rows="2">{{ d.obs if d and d.obs else '' }}</textarea></label>
+      </div>
+      <button class="btn primario">Salvar inspeção</button>
+    </form>
+  </details>
+  {% if d %}
+    {% if d.status == 'ENVIADO' %}
+    <form method="post" action="{{ url_for('desconto_status', did=d.id) }}" class="linha-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="status" value="APROVADO">
+      <button class="btn primario">Marcar desconto como aprovado pelo fornecedor</button>
+      <small>Enquanto não for aprovado, o desconto não aparece para dedução nos próximos invoices.</small>
+    </form>
+    {% endif %}
+    <details class="revalidar">
+      <summary>Revalidar o valor do desconto</summary>
+      <form method="post" action="{{ url_for('desconto_revalidar', did=d.id) }}" onsubmit="return confirm('Confirmar o novo valor final?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="grade">
+          <label>Valor final ({{ m }}) *<input name="valor_final" inputmode="decimal" value="{{ d.valor_final|num }}" required>
+            <small>Mínimo: {{ r.deduzido|moeda(m) }} (já deduzido). Use 0 para zerar.</small></label>
+          <label class="largo">Motivo *<textarea name="motivo" rows="2" required></textarea></label>
+        </div>
+        <button class="btn">Salvar valor final</button>
+      </form>
+    </details>
+  {% endif %}
+  {% endif %}
+  {% if revisoes %}
+  <h3>Revalidações</h3>
+  <table>
+    <thead><tr><th>Data</th><th class="num">De</th><th class="num">Para</th><th>Motivo</th><th>Por</th></tr></thead>
+    <tbody>{% for v in revisoes %}<tr><td>{{ v.criado_em|data }}</td><td class="num">{{ v.valor_anterior|moeda(m) }}</td><td class="num">{{ v.valor_novo|moeda(m) }}</td><td>{{ v.motivo }}</td><td>{{ v.usuario }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+  {% endif %}
+</section>
+
+{# ---------- pagamentos (Financeiro) ---------- #}
+<section class="bloco" id="pagamentos">
+  <h2>Pagamentos <small>· Financeiro</small></h2>
+  <dl class="dl-colunas">
+    <dt>Valor do invoice</dt><dd>{{ r.valor_invoice|moeda(m) }}</dd>
+    {% if r.segurado %}<dt>(−) Valor segurado</dt><dd>{{ r.segurado|moeda(m) }}</dd>{% endif %}
+    <dt>A pagar do invoice</dt><dd>{{ r.principal_devido|moeda(m) }} · pago {{ r.principal_pago|moeda(m) }} · <strong>pendente {{ r.principal_pendente|moeda(m) }}</strong></dd>
+    <dt>Vencimento</dt><dd>{{ r.vencimento|data if r.vencimento else 'definido após a HAWB' }}{{ ' (estimado pela coleta programada)' if r.vencimento_estimado and r.vencimento }}</dd>
+    {% if r.segurado %}<dt>Liberação do segurado</dt><dd>liberado {{ r.liberado|moeda(m) }} de {{ r.segurado|moeda(m) }} · <strong>disponível agora {{ r.liberacao_disponivel|moeda(m) }}</strong></dd>{% endif %}
+  </dl>
+  {% if r.pagamentos %}
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>Data</th><th>Tipo</th><th class="num">Valor</th><th>Banco</th><th>Swift</th><th></th></tr></thead>
+    <tbody>
+    {% for p in r.pagamentos %}
+      <tr><td>{{ p.data_pagamento|data }}</td><td>{{ TIPOS_PAGAMENTO[p.tipo] }}{% if p.obs %}<small class="bloco-linha">{{ p.obs }}</small>{% endif %}</td>
+        <td class="num">{{ p.valor|moeda(m) }}</td><td>{{ p.banco or '—' }}</td>
+        <td>{% if p.swift_url %}<a href="{{ p.swift_url }}" target="_blank" rel="noopener">Swift ↗</a>
+          {% elif fin %}<form method="post" action="{{ url_for('pagamento_swift', pid=p.id) }}" class="linha-mini">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="swift_url" placeholder="Link do Swift (https://...)" required>
+            <button class="btn pequeno">Anexar</button></form>
+          {% else %}<span class="ciencia c-pendente">Pendente</span>{% endif %}</td>
+        <td>{% if fin %}<details class="admin-desfazer"><summary>Excluir</summary>
+          <form method="post" action="{{ url_for('pagamento_excluir', pid=p.id) }}" onsubmit="return confirm('Excluir este pagamento?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="motivo" placeholder="Motivo *" required>
+            <button class="btn pequeno perigo">Confirmar</button></form></details>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+  {% if fin and (r.principal_pendente > 0.005 or r.liberacao_disponivel > 0.005) %}
+  <form method="post" action="{{ url_for('pagamento_novo', id=r.id) }}" class="form-pagamento-novo">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <h3>Registrar pagamento</h3>
+    <div class="grade">
+      <label>Tipo *
+        <select name="tipo" id="tipo-pagamento">
+          {% if r.principal_pendente > 0.005 %}<option value="PRINCIPAL" data-valor="{{ r.principal_pendente|num }}">Pagamento do invoice (pendente {{ r.principal_pendente|moeda(m) }})</option>{% endif %}
+          {% if r.liberacao_disponivel > 0.005 %}<option value="LIBERACAO" data-valor="{{ r.liberacao_disponivel|num }}">Liberação do segurado (disponível {{ r.liberacao_disponivel|moeda(m) }})</option>{% endif %}
+        </select></label>
+      <label>Data do pagamento *<input type="date" name="data_pagamento" value="{{ hoje }}" required></label>
+      <label>Valor pago ({{ m }}) *<input name="valor" id="valor-pagamento" inputmode="decimal" required>
+        <small>Pode ser parcial.</small></label>
+      <label>Banco<input name="banco" value="{{ r.banco_debito or '' }}"></label>
+      <label class="largo">Link do Swift no OneDrive<input name="swift_url" placeholder="https://... (pode anexar depois)">
+        <small>O processo só é concluído com o Swift de todos os pagamentos.</small></label>
+      <label class="largo">Observação<input name="obs" placeholder="Opcional"></label>
+    </div>
+    <button class="btn primario">Registrar pagamento</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="bloco">
+  <h2>Histórico</h2>
+  <ul class="historico">
+    {% for e in eventos %}
+    <li><time>{{ e.criado_em|data }}</time> <strong>{{ e.acao }}</strong> · {{ e.usuario or '—' }}
+      {% if e.observacao %}<div class="obs">{{ e.observacao }}</div>{% endif %}</li>
+    {% endfor %}
+  </ul>
+</section>
+
+{% if admin and ativo and not r.pagamentos and not r.deducoes_recebidas and not d %}
+<section class="bloco admin">
+  <h2>Ações do administrador</h2>
+  <form method="post" action="{{ url_for('invoice_cancelar', id=r.id) }}" onsubmit="return confirm('Cancelar este invoice?')" class="linha-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="cresce">Cancelar invoice — motivo<input name="motivo" required></label>
+    <button class="btn perigo">Cancelar invoice</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const tem = document.getElementById('tem_desconto');
+  if (tem) {
+    const ajustar = () => document.querySelectorAll('.so-desconto').forEach(el => el.hidden = tem.value !== '1');
+    tem.addEventListener('change', ajustar); ajustar();
+  }
+  const tipo = document.getElementById('tipo-pagamento'), valor = document.getElementById('valor-pagamento');
+  if (tipo && valor) {
+    const sugerir = () => { valor.value = tipo.selectedOptions[0].dataset.valor; };
+    tipo.addEventListener('change', sugerir); sugerir();
+  }
+})();
+</script>
+{% endblock %}

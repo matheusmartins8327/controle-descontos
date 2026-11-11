@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block titulo %}Descontos{% endblock %}
+{% block conteudo %}
+<h1>Descontos</h1>
+<p class="sub">Descontos por má qualidade registrados na inspeção dos invoices.</p>
+<div class="filtros">
+  {% for k, v in [('abertos', 'Em aberto'), ('ENVIADO', 'Aguardando aprovação do fornecedor'), ('APROVADO', 'Aprovados'), ('todos', 'Todos')] %}
+  <a class="btn {{ 'primario' if filtro == k }}" href="{{ url_for('descontos', f=k) }}">{{ v }}</a>
+  {% endfor %}
+</div>
+<section class="bloco">
+  {% if lista %}
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>Fornecedor</th><th>Invoice</th><th>Relatório</th><th>Aprovação</th><th class="num">Valor final</th><th class="num">Segurado</th><th class="num">Deduzido</th><th class="num">Saldo a deduzir</th><th class="num">Liberado</th><th>Situação</th></tr></thead>
+    <tbody>
+    {% for r in lista %}{% set d = r.desconto %}{% set m = r.moeda %}
+      <tr class="clicavel" onclick="location='{{ url_for('invoice_detalhe', id=r.id) }}#inspecao'">
+        <td>{{ r.fornecedor }}</td><td><a href="{{ url_for('invoice_detalhe', id=r.id) }}#inspecao">{{ r.numero }}</a></td>
+        <td>{{ d.data_relatorio|data }}</td><td>{{ STATUS_DESCONTO[d.status] }}</td>
+        <td class="num">{{ d.valor_final|moeda(m) }}{% if d.valor_final != d.valor_inicial %}<small class="bloco-linha">inicial {{ d.valor_inicial|moeda(m) }}</small>{% endif %}</td>
+        <td class="num">{{ r.segurado|moeda(m) }}</td><td class="num">{{ r.deduzido|moeda(m) }}</td>
+        <td class="num">{{ r.saldo_a_deduzir|moeda(m) }}</td><td class="num">{{ r.liberado|moeda(m) }}</td>
+        <td>{% with sit=r.situacao %}{% include "_situacao.html" %}{% endwith %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="vazio">Nenhum desconto encontrado.</p>{% endif %}
+</section>
+{% endblock %}

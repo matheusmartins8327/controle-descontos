@@ -3,21 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block titulo %}Controle de Descontos{% endblock %} · Fornecedores PK</title>
+  <title>{% block titulo %}Controle de Invoices{% endblock %} · Invoices e Descontos</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 {% if g.usuario %}
 <header class="topo">
   <div class="topo-inner">
-    <a class="marca" href="{{ url_for('painel') }}">Controle de Descontos <span>Fornecedores Paquistão</span></a>
+    <a class="marca" href="{{ url_for('painel') }}">Controle de Invoices <span>Importação · Descontos · Pagamentos</span></a>
     <nav>
       <a href="{{ url_for('painel') }}" class="{{ 'ativo' if request.endpoint == 'painel' }}">Painel</a>
-      {% if pode(ETAPAS.cadastrar.perfil) %}<a href="{{ url_for('desconto_novo') }}" class="{{ 'ativo' if request.endpoint == 'desconto_novo' }}">Cadastrar desconto</a>{% endif %}
+      {% if pode('importacao') %}<a href="{{ url_for('invoice_novo') }}" class="{{ 'ativo' if request.endpoint == 'invoice_novo' }}">Novo invoice</a>{% endif %}
+      <a href="{{ url_for('fluxo_pagamentos') }}" class="{{ 'ativo' if request.endpoint == 'fluxo_pagamentos' }}">Fluxo de pagamentos</a>
+      <a href="{{ url_for('descontos') }}" class="{{ 'ativo' if request.endpoint == 'descontos' }}">Descontos</a>
       <a href="{{ url_for('fornecedores') }}" class="{{ 'ativo' if request.endpoint == 'fornecedores' }}">Fornecedores</a>
       <a href="{{ url_for('relatorios') }}" class="{{ 'ativo' if request.endpoint == 'relatorios' }}">Relatórios</a>
       {% if g.usuario.perfil == 'admin' %}<a href="{{ url_for('usuarios') }}" class="{{ 'ativo' if request.endpoint in ('usuarios', 'usuario_form') }}">Usuários</a>
-      <a href="{{ url_for('notificacoes') }}" class="{{ 'ativo' if request.endpoint == 'notificacoes' }}">Notificações</a>
       <a href="{{ url_for('sistema') }}" class="{{ 'ativo' if request.endpoint == 'sistema' }}">Sistema</a>{% endif %}
     </nav>
     <div class="quem">
@@ -34,7 +35,7 @@
   {% endwith %}
   {% block conteudo %}{% endblock %}
 </main>
-<footer class="rodape">Controle de Descontos · versão {{ VERSAO }}</footer>
+<footer class="rodape">Controle de Invoices e Descontos · versão {{ VERSAO }}</footer>
 {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -18,9 +18,6 @@ cd "$DIR"
 
 $PY -c "import app; print('Backup:', app.backup_banco('-diario'))"
 
-# reenvia e-mails ao Financeiro que falharam ou ficaram aguardando envio
-$PY -c "import app; app.tarefa_envios()" || true
-
 git fetch -q origin main
 if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
   $PY -c "import app; app.backup_banco('-antes-atualizacao')"

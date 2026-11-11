@@ -1,7 +1,8 @@
-# Controle de Descontos – Fornecedores do Paquistão (v2.0)
+# Controle de Invoices e Descontos (v3.0)
 
-Sistema web para controlar descontos por má qualidade, desde a inspeção do invoice até o pagamento do valor retido.
-Todos os valores são em **dólar (US$)**.
+Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
+reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
+Valores em **dólar, euro ou real**. Documentos ficam no **OneDrive** (o sistema guarda os links).
 
 ## Hospedagem na nuvem: PythonAnywhere (recomendado)
 
@@ -23,7 +24,7 @@ Os usuários acessam pelo navegador, de qualquer lugar (o link pode ser salvo no
 5. Abra `https://matheusmartins8327.pythonanywhere.com`, informe o código de instalação e crie sua conta de administrador.
 
 ### Atualizações
-- **Automáticas:** a tarefa diária faz backup do banco, reenvia e-mails que falharam e instala a versão mais recente publicada no GitHub.
+- **Automáticas:** a tarefa diária faz backup do banco e instala a versão mais recente publicada no GitHub.
 - **Na hora:** menu **Sistema** → **Verificar e instalar atualização** (somente administrador).
 
 ### Cuidados
@@ -80,66 +81,57 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 - Sem internet, o sistema abre normalmente com a versão atual.
 - Se o sistema estiver aberto, **feche a janela preta e abra novamente** para receber a atualização.
 
-## Fluxo
+## Fluxo do invoice
 
-| # | Etapa | Responsável |
-|---|-------|-------------|
-| 1 | Cadastrar o desconto após a inspeção (fornecedor, invoice inspecionado, data de envio do relatório, valor total do invoice, valor do desconto e observações). **Ao cadastrar, o valor já fica segurado** | Administrador |
-| 2 | Registrar o(s) **novo(s) invoice(s)** com a dedução: nº do invoice e valor deduzido (obrigatórios) e observação (opcional). O desconto pode ser dividido em vários invoices | Importação |
-| 3 | Confirmar a **chegada** de cada invoice deduzido na fábrica | Importação |
-| 4 | **Ciência do Financeiro** pelo link do e-mail (o Financeiro não usa o sistema) | Financeiro, por e-mail |
+| # | Etapa | Quem informa | Informações |
+|---|-------|--------------|-------------|
+| 1 | Criação do invoice | Importação | Fornecedor, nº, moeda, **data de assinatura**, condição de pagamento, agente de carga, despachante, grupo de consolidação, coleta programada e itens (quantidade, valor unitário original e com desconto). Ao criar, aparece a **janela de descontos aprovados** do fornecedor (mesma moeda) para deduzir um ou mais, total ou parcialmente |
+| 2 | Coleta | Importação | Data da HAWB e data real de coleta |
+| 3 | Embarque | Importação / Financeiro | ETD e ETA planejados e reais; banco de débito (Financeiro) |
+| 4 | Desembaraço | Importação | Data de registro no Brasil; DUIMP e boleto do ICMS (links do OneDrive) |
+| 5 | Canal | Importação | Cor do canal, exigências da ANVISA, data programada de chegada e data de desembaraço |
+| 6 | Chegada na fábrica | Importação | Data real de chegada |
+| 7 | Inspeção | Engenharia (administrador) | Fim da inspeção e se há desconto; se sim: valor, data do relatório e aprovação do fornecedor (Enviado → Aprovado) |
+| 8 | Pagamento | Financeiro | Pagamento do invoice (integral, ou parcial quando há valor segurado), com Swift |
+| 9 | Dedução e liberação | Importação / Financeiro | O desconto é deduzido em próximo(s) invoice(s); quando eles chegam, o Financeiro libera o valor segurado, com Swift |
 
-O desconto fica **Concluído** quando todo o valor foi deduzido, todos os invoices chegaram e o Financeiro deu ciência de todos os e-mails.
+O invoice fica **Concluído** quando está pago, o desconto (se houver) foi deduzido e liberado, e todos os pagamentos têm Swift.
 
-### E-mails ao Financeiro
-Um e-mail informativo é enviado a cada evento que exige ação do Financeiro:
+### Regras de pagamento
+- **Vencimento**: antecipado = data de assinatura + 5 dias; a prazo = data da HAWB + prazo da condição. Antes da HAWB, a previsão usa a coleta programada (marcada como **estimada**).
+- **Valor do invoice** = itens − deduções de descontos anteriores aplicadas nele.
+- **Valor segurado**: com desconto, o invoice é pago menos o valor do desconto. Só é possível segurar o que ainda não foi pago: se o invoice já foi pago (ex.: antecipado), o desconto é apenas deduzido no próximo invoice.
+- **Liberação do segurado**: conforme os invoices com a dedução chegam à fábrica. Se o desconto for revalidado para baixo (ou zerado), a diferença fica disponível na hora.
+- **Swift**: pode ser anexado depois (fica pendente), mas o processo só termina com todos os Swifts.
 
-| Evento | O que o e-mail pede |
-|---|---|
-| Cadastro do desconto | Segurar o valor no pagamento do invoice de origem |
-| Revalidação para cima | Segurar o valor adicional |
-| Chegada do invoice deduzido | Liberar a parte correspondente do valor segurado |
-| Revalidação para baixo / desconto zerado | Liberar a diferença ao fornecedor |
-| Cancelamento | Liberar o valor segurado |
-| Correção (ex.: chegada desfeita, cadastro corrigido) | Desconsiderar o e-mail anterior (não pede ciência) |
+### Fluxo de pagamentos (Financeiro)
+Menu **Fluxo de pagamentos**: previsão por mês e por moeda de
+- invoices a pagar (confirmados, estimados e vencidos);
+- liberações do valor segurado (disponíveis e previstas pela chegada dos invoices com dedução);
+- custo estimado de importação (40% do invoice), visível a partir do embarque.
 
-- O e-mail **não tem link para o sistema**: só o botão **Confirmar ciência**, que abre uma página sem login com o botão **"Li e estou de acordo"** (um por destinatário principal). São 2 cliques de propósito: a proteção de links do Outlook abre os links automaticamente, e um clique só seria "confirmado" pelo robô.
-- **Destinatários** (menu **Notificações**): **Principal** recebe em "Para" e confirma; **Cópia** recebe em "Cc". Basta a confirmação de um principal.
-- **Registro**: cada e-mail fica registrado no desconto e no menu **Notificações** (enviado, falhou, ciência, quem confirmou e quando), com **Ver e-mail** e **Reenviar**.
-- **Falhas**: o sistema tenta de novo na hora, avisa no painel e a tarefa diária reenvia automaticamente.
+Filtros por período, moeda e fornecedor e **exportação para Excel (CSV)**.
 
-### Configurar o envio (Gmail)
-1. Crie uma conta Gmail dedicada ao sistema (ex.: `controle.descontos.empresa@gmail.com`).
-2. Na conta Google: **Segurança → Verificação em duas etapas** (ativar) → **Senhas de app** → gere uma senha (16 letras).
-3. No sistema, menu **Notificações**: informe o e-mail remetente e a senha de app, salve, use **Enviar teste** e, funcionando, mude o modo para **Ativo**.
-4. Cadastre os destinatários e peça ao Financeiro para marcar o remetente como **confiável** (para não cair no lixo eletrônico).
-
-Enquanto o modo estiver em **Teste**, os e-mails são apenas registrados (dá para ver cada um em **Ver e-mail**). Ao ativar, use **Enviar agora os e-mails pendentes** para mandar os gerados durante o teste.
-A senha de app fica somente no servidor (`instance/gmail_senha_app.txt`), nunca no GitHub.
-
-### Revalidação do valor
-- Depois do cadastro, o Administrador pode **revalidar** o valor do desconto (com motivo obrigatório). O sistema guarda o **valor inicial segurado** e todas as revalidações; as etapas seguintes usam apenas o **valor final**.
-- O valor final não pode ser menor que o total já deduzido em invoices. Pode ser **zerado** (US$ 0).
-- Pode ficar **acima** do segurado somente enquanto o Financeiro ainda não foi avisado para liberar nenhuma parte; o Administrador confirma que o invoice de origem ainda não foi pago.
-
-### Regras gerais
-- Somente o Administrador cadastra, edita (fornecedor, invoice e valor só enquanto não houver revalidação, dedução ou liberação), revalida, cancela e desfaz etapas (sempre com motivo).
-- O perfil **Consulta** apenas visualiza.
-- Tudo fica registrado no histórico (quem, quando, o quê).
+### Documentos no OneDrive
+Cada documento é um link: salve o arquivo na pasta do OneDrive (o sistema sugere `ano/Fornecedor - Invoice`), copie o link e cole no invoice.
+O link da pasta principal é configurado em **Sistema** e fica somente no servidor (não vai para o GitHub).
+A tabela de documentos já prevê uma futura integração automática com o OneDrive (Microsoft Graph, que depende de liberação da TI).
 
 ## Usuários e perfis
-
-- Limite de **5 usuários ativos** (incluindo o administrador). Configurável em `MAX_USUARIOS` no `app.py`.
-- Perfis: Administrador, Importação e Consulta (somente leitura). O Financeiro não precisa de usuário: é avisado por e-mail.
-- Usuários de perfis antigos são convertidos automaticamente: Compras e Recebimento → Importação; Qualidade e Financeiro → Consulta.
-- Somente o Administrador cria, edita, ativa/desativa usuários e redefine senhas.
+- Até **10 usuários ativos**.
+- **Administrador** (Engenharia de Processos): inspeção, descontos, revalidação, cancelamentos, usuários e sistema; pode executar qualquer etapa.
+- **Importação**: criação do invoice, etapas logísticas, deduções e documentos.
+- **Financeiro**: banco de débito, pagamentos, liberações e Swifts.
+- **Consulta**: somente leitura.
 
 ## Backup
 
 Os dados ficam em `instance\descontos.db`. **Copie a pasta `instance` periodicamente** para um local seguro (rede, OneDrive etc.).
 
 ## Próximas versões (planejado)
+- Relatórios e indicadores (tempo por etapa, pontualidade ETD/ETA, ranking de qualidade, custo real × estimado).
+- Notificações de pendências.
+- Integração automática dos documentos com o OneDrive.
 
-- **Relatórios**: retido em aberto por fornecedor, descontos por período, pendências por etapa, exportação Excel/PDF.
-- **Indicadores**: total retido em aberto, tempo médio entre etapas, % de desconto por fornecedor, ranking de qualidade.
-- Outras ideias: anexos (relatório de inspeção, invoices), notificações por e-mail, hospedagem em servidor.
+## Histórico
+A versão 3.0 recomeçou os registros do zero. Usuários e fornecedores foram mantidos; os dados da versão 2 (controle só de descontos) ficam preservados no banco com o prefixo `legacy_v2_`.
