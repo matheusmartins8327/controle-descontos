@@ -23,25 +23,32 @@
 </section>
 
 {% if pendencias %}
+{% set minhas = pendencias|selectattr('minha')|list %}
+{% set outras = pendencias|rejectattr('minha')|list %}
 <section class="bloco destaque">
-  <h2>Minhas pendências <span class="cont">{{ pendencias|length }}</span></h2>
+  <h2>Pendências <span class="cont">{{ pendencias|length }}</span></h2>
   <div class="rolagem">
   <table>
-    <thead><tr><th>Fornecedor</th><th>Invoice</th><th>O que fazer</th><th>Data</th><th class="num">Valor</th><th></th></tr></thead>
-    <tbody>
-    {% for p in pendencias %}
+    <thead><tr><th>Fornecedor</th><th>Invoice</th><th>O que fazer</th><th>Setor</th><th>Data</th><th class="num">Valor</th><th></th></tr></thead>
+    {% for grupo, titulo in [(minhas, 'Minhas pendências · ' ~ SETORES.get(g.usuario.perfil, '')), (outras, 'Pendências de outros setores' if minhas or g.usuario.perfil in SETORES else 'Pendências dos setores')] if grupo %}
+    <tbody class="grupo-pend {{ 'outras' if grupo is sameas outras }}">
+      <tr class="titulo-grupo"><th colspan="7">{{ titulo }} <span class="cont">{{ grupo|length }}</span></th></tr>
+    {% for p in grupo %}
       <tr class="{{ 'linha-alerta' if p.alerta }}">
         <td>{{ p.r.fornecedor }}</td>
         <td>{{ p.r.numero }}</td>
-        <td>{{ p.acao }}{% if g.usuario.perfil == 'admin' and p.quem != 'admin' %} <small>· {{ PERFIS[p.quem] }}</small>{% endif %}</td>
+        <td>{{ p.acao }}</td>
+        <td><small>{{ SETORES[p.quem] }}</small></td>
         <td>{{ p.data|data if p.data else '—' }}</td>
         <td class="num">{{ p.valor|moeda(p.r.moeda) if p.valor is not none else '—' }}</td>
-        <td><a class="btn pequeno primario" href="{{ url_for('invoice_detalhe', id=p.r.id) }}">Abrir</a></td>
+        <td><a class="btn pequeno {{ 'primario' if p.minha }}" href="{{ url_for('invoice_detalhe', id=p.r.id) }}">Abrir</a></td>
       </tr>
     {% endfor %}
     </tbody>
+    {% endfor %}
   </table>
   </div>
+  <p class="sub dica">Todos os setores veem todas as pendências; cada setor só preenche as informações da sua parte.</p>
 </section>
 {% endif %}
 

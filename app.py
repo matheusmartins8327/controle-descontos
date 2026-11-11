@@ -32,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.13"
+VERSAO = "3.14"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -43,6 +43,8 @@ PERFIS = {
     "financeiro": "Financeiro",
     "consulta": "Consulta (somente leitura)",
 }
+# setor responsável por cada pendência (o Administrador é a Engenharia de Processos)
+SETORES = {"importacao": "Importação", "admin": "Engenharia de Processos", "financeiro": "Financeiro"}
 # perfis de versões anteriores -> perfis atuais (aplicado automaticamente ao iniciar)
 PERFIS_ANTIGOS = {"qualidade": "consulta", "compras": "importacao", "recebimento": "importacao"}
 
@@ -709,7 +711,7 @@ def descontos_disponiveis(fornecedor_id, moeda, excluir_invoice_id=None):
 
 
 app.jinja_env.globals.update(
-    csrf_token=lambda: csrf_token(), PERFIS=PERFIS, MOEDAS=MOEDAS, CONDICOES=CONDICOES, SITUACOES=SITUACOES,
+    csrf_token=lambda: csrf_token(), PERFIS=PERFIS, SETORES=SETORES, MOEDAS=MOEDAS, CONDICOES=CONDICOES, SITUACOES=SITUACOES,
     CAMPOS_ETAPA=CAMPOS_ETAPA, TITULO_ETAPA=TITULO_ETAPA, ORDEM_LOGISTICA=ORDEM_LOGISTICA, CORES_CANAL=CORES_CANAL,
     STATUS_DESCONTO=STATUS_DESCONTO, TIPOS_PAGAMENTO=TIPOS_PAGAMENTO,
     pode=lambda perfil: pode(perfil), MAX_USUARIOS=MAX_USUARIOS, VERSAO=VERSAO, condicao_texto=condicao_texto,
@@ -860,10 +862,10 @@ def minha_senha():
 # Painel e pendências
 # ---------------------------------------------------------------------------
 def listar_pendencias(invoices):
+    """Pendências de todos os setores (todos veem tudo); as do setor do usuário vêm primeiro.
+    Ver não dá permissão de preencher: cada tela continua restrita ao seu setor."""
     perfil = g.usuario["perfil"]
-    adm = perfil == "admin"
-    imp = adm or perfil == "importacao"
-    fin = adm or perfil == "financeiro"
+    adm = imp = fin = True
     pend = []
 
     def add(r, acao, quem, data=None, valor=None, alerta=False):
@@ -917,7 +919,11 @@ def listar_pendencias(invoices):
             add(r, f"Anexar Swift ({r['swifts_pendentes']} pagamento(s))", "financeiro")
         if fin and not r["banco_debito"] and (r["etd_planejado"] or r["etd_real"]):
             add(r, "Informar o banco de débito", "financeiro")
-    pend.sort(key=lambda p: (p["data"] is None, p["data"] or ""))
+    for p in pend:
+        p["minha"] = p["quem"] == perfil
+    ordem_setor = list(SETORES)
+    pend.sort(key=lambda p: (not p["minha"], ordem_setor.index(p["quem"]) if not p["minha"] else 0,
+                             p["data"] is None, p["data"] or ""))
     return pend
 
 

@@ -291,3 +291,7 @@ th { color: var(--marinho); opacity: .8; }
 .pendencias-invoice { background: var(--alerta-claro); border: 1px solid #f3d3a8; border-radius: var(--raio); padding: .7rem 1rem; margin-bottom: 1rem; color: var(--alerta); font-size: .9rem; }
 .pendencias-invoice p { margin: .2rem 0; }
 .s-criacao { background: var(--alerta-claro); color: var(--alerta); }
+
+/* v3.14: pendências agrupadas por setor */
+tr.titulo-grupo th { background: #eef3fd; color: var(--marinho); text-align: left; font-size: .9rem; padding-top: .6rem; }
+tbody.outras td { color: #5b6170; }
