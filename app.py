@@ -32,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.6"
+VERSAO = "3.7"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -1105,8 +1105,8 @@ def ler_form_invoice():
 
 # Cadastro do invoice: obrigatórios para concluir a etapa de criação e opcionais que ficam pendentes no painel
 OPCIONAIS_CADASTRO = [("agente_carga", "Agente de carga"), ("despachante", "Despachante"),
-                      ("grupo_consolidacao", "Grupo de consolidação"), ("data_prog_coleta", "Data programada de coleta")]
-# campos não obrigatórios que não geram pendência
+                      ("data_prog_coleta", "Data programada de coleta")]
+# campos não obrigatórios que não geram pendência (grupo de consolidação também não, por não estar na lista acima)
 SEM_PENDENCIA = {"exigencias_anvisa"}
 
 
