@@ -32,7 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.8"
+VERSAO = "3.9"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -51,7 +51,8 @@ MOEDAS = {"USD": "US$", "EUR": "€", "BRL": "R$"}
 CONDICOES = {"ANTECIPADO": "Antecipado", "PRAZO": "Após a HAWB"}
 PRAZO_ANTECIPADO_DIAS = 5          # pagamento antecipado: data de assinatura + 5 dias
 CUSTO_IMPORTACAO_ESTIMADO = 0.40   # visibilidade do Financeiro a partir do embarque
-CORES_CANAL = ["Verde", "Amarelo", "Vermelho", "Cinza"]
+# canal de parametrização: opção -> cor de preenchimento
+CORES_CANAL = {"Verde": "#22a447", "Amarelo": "#f5c400"}
 TIPOS_ANEXO = {
     "DUIMP": "DUIMP",
     "BOLETO_ICMS": "Boleto do ICMS",
@@ -69,7 +70,7 @@ CAMPOS_ETAPA = {
                  ("etd_real", "ETD real", "data", True),
                  ("eta_planejado", "ETA planejado", "data", True),
                  ("eta_real", "ETA real", "data", True)],
-    "DESEMBARACO": [("data_registro_br", "Data de registro no Brasil", "data", True),
+    "DESEMBARACO": [("data_registro_br", "Data de emissão da DUIMP", "data", True),
                     ("data_parametrizacao", "Data de parametrização", "data", True),
                     ("cor_canal", "Canal", "canal", True),
                     ("exigencias_anvisa", "Exigências da ANVISA", "texto", False),
@@ -77,8 +78,6 @@ CAMPOS_ETAPA = {
     "CHEGADA": [("data_prog_chegada", "Data programada de chegada", "data", True),
                 ("data_chegada", "Data real de chegada na fábrica", "data", True)],
 }
-# após o registro no Brasil, o desembaraço só segue com estes documentos anexados
-DOCUMENTOS_REGISTRO = ("DUIMP", "BOLETO_ICMS")
 TITULO_ETAPA = {"COLETA": "Coleta", "EMBARQUE": "Embarque", "DESEMBARACO": "Desembaraço", "CHEGADA": "Transporte"}
 # Situação atual do invoice (calculada) e quem age nela
 SITUACOES = {
@@ -803,14 +802,6 @@ def minha_senha():
 # ---------------------------------------------------------------------------
 # Painel e pendências
 # ---------------------------------------------------------------------------
-def documentos_faltando(r):
-    """Documentos exigidos após o registro no Brasil que ainda não foram anexados."""
-    if not r["data_registro_br"]:
-        return []
-    tipos = {a["tipo"] for a in r.get("anexos", [])}
-    return [TIPOS_ANEXO[t] for t in DOCUMENTOS_REGISTRO if t not in tipos]
-
-
 def listar_pendencias(invoices):
     perfil = g.usuario["perfil"]
     adm = perfil == "admin"
@@ -826,17 +817,14 @@ def listar_pendencias(invoices):
         sit = r["situacao"]
         if sit == "CANCELADO":
             continue
-        faltando = documentos_faltando(r)
         if imp and sit == "CRIACAO":
             add(r, "Completar o cadastro: falta " + ", ".join(criacao_faltando(r)), "importacao")
         if imp and sit in ORDEM_LOGISTICA:
-            # o que a Importação precisa preencher para concluir a etapa (documentos e banco têm pendência própria)
-            falta = [f for f in etapa_faltando(r, sit) if f not in faltando and not f.startswith("Banco de débito")]
+            # o que a Importação precisa preencher para concluir a etapa (o banco de débito é pendência do Financeiro)
+            falta = [f for f in etapa_faltando(r, sit) if not f.startswith("Banco de débito")]
             if falta:
                 add(r, f"{TITULO_ETAPA[sit]}: falta " + ", ".join(falta), "importacao",
                     r["data_prog_chegada"] if sit == "CHEGADA" else None)
-        if imp and faltando:
-            add(r, "Anexar " + " e ".join(faltando), "importacao")
         opcionais = opcionais_faltando(r)
         if imp and opcionais:
             add(r, "Informações não obrigatórias a preencher: " + ", ".join(opcionais), "importacao")
@@ -1145,8 +1133,6 @@ def etapa_faltando(r, etapa):
     falta = [rot for campo, rot, _t, obrig in CAMPOS_ETAPA[etapa] if obrig and not r[campo]]
     if etapa == "EMBARQUE" and not r["banco_debito"]:
         falta.append("Banco de débito (Financeiro)")
-    if etapa == "DESEMBARACO":
-        falta += documentos_faltando(r)
     return falta
 
 
@@ -1544,8 +1530,7 @@ def invoice_detalhe(id):
     pasta = config("onedrive_pasta", "")
     sugestao_pasta = f"{r['data_assinatura'][:4]}/{r['fornecedor']} - {r['numero']}"
     return render_template("invoice_detalhe.html", r=r, eventos=eventos, revisoes=revisoes, disponiveis=disponiveis,
-                           nomes=nomes, pasta_onedrive=pasta, sugestao_pasta=sugestao_pasta, hoje=hoje(),
-                           faltando=documentos_faltando(r))
+                           nomes=nomes, pasta_onedrive=pasta, sugestao_pasta=sugestao_pasta, hoje=hoje())
 
 
 # ---------------------------------------------------------------------------
