@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.4)
+# Controle de Invoices e Descontos (v4.5)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -171,10 +171,14 @@ Os resumos são disparados por um agendador externo gratuito (cron-job.org) que 
 o endereço secreto exibido na aba E-mails (o passo a passo está na própria aba). Se o agendador falhar, os resumos
 saem no primeiro acesso ao sistema depois das 8h. Cada resumo sai no máximo uma vez por dia.
 
-## Lançamentos Financeiros (v4.4)
-Aba separada do fluxo de invoices. Todo invoice cadastrado aparece automaticamente com um painel próprio, onde o
-Financeiro (e o Administrador) registra lançamentos com **tipo de pagamento** (campo livre, com sugestões como COFINS,
-ICMS, PIS, Armazenagem), **valor em R$** e **data do pagamento**. Todos os campos são opcionais (a linha só não pode
-ficar totalmente vazia); os lançamentos não geram pendências nem e-mails. Os demais perfis veem em modo leitura.
-Inclusões, correções e exclusões ficam no histórico do invoice. Há busca, filtros e exportação para Excel (CSV).
+## Lançamentos Financeiros (v4.5)
+Aba separada do fluxo de invoices, para a **Importação apontar os custos de cada importação** (COFINS, ICMS, PIS,
+armazenagem…) que o **Financeiro deve lançar no ERP**. Todo invoice cadastrado aparece automaticamente com um painel.
 
+- **Importação** (e Administrador): inclui, corrige e exclui custos: tipo de pagamento (livre, com sugestões), valor em R$
+  e data do pagamento. Todos os campos são opcionais (a linha só não pode ficar totalmente vazia).
+- **Financeiro** (e Administrador): marca **Lançado no ERP** em cada custo (fica registrado quem e quando); pode desmarcar.
+- Se a Importação altera um custo já lançado no ERP, ele volta para "a lançar" com o aviso **"Alterado: conferir no ERP"**.
+  Custo já lançado no ERP só pode ser excluído depois que o Financeiro desmarcar (o Administrador pode excluir direto).
+- Quadros com o que falta lançar no ERP, filtro "Com custos a lançar no ERP", busca e exportação para Excel (CSV).
+- Não gera pendências nem e-mails; tudo fica no histórico do invoice.

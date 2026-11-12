@@ -405,3 +405,23 @@ input.inativo { background: #f1f2f6; color: #9aa0ad; }
   .topo-inner { flex-wrap: wrap; row-gap: .35rem; }
   .topo nav { order: 3; flex-basis: 100%; overflow-x: auto; padding-bottom: .15rem; }
 }
+
+/* v4.5: controle "Lançado no ERP" */
+.tabela-lanc .c-tipo { width: 24%; } .tabela-lanc .c-valor { width: 14%; } .tabela-lanc .c-data { width: 15%; }
+.tabela-lanc .c-quem { width: 16%; } .tabela-lanc .c-erp { width: 19%; } .tabela-lanc .c-acoes { width: 12%; }
+.tabela-lanc { min-width: 900px; }
+.form-erp { margin: 0; }
+.flag-erp { display: flex; align-items: center; gap: .55rem; cursor: pointer; padding: .3rem .55rem; border-radius: 8px;
+  border: 1px solid var(--borda); background: #fff; color: var(--suave); font-size: .85rem; line-height: 1.2; }
+.flag-erp input { width: 18px; height: 18px; margin: 0; accent-color: var(--ok); cursor: pointer; flex-shrink: 0; }
+.flag-erp input:disabled { cursor: default; }
+.flag-erp span { display: flex; flex-direction: column; }
+.flag-erp small { font-size: .72rem; }
+.flag-erp.marcado { background: var(--ok-claro); border-color: #b7e2c6; color: var(--ok); }
+tr.lancado td { background: #f6fbf8; }
+tr.conferir td { background: var(--alerta-claro); }
+.txt-conferir { color: var(--alerta); }
+.etiqueta.pendente-erp { background: var(--alerta-claro); color: var(--alerta); font-size: .75rem; padding: .1rem .55rem; border-radius: 99px; font-weight: 600; }
+.etiqueta.ok-erp { background: var(--ok-claro); color: var(--ok); font-size: .75rem; padding: .1rem .55rem; border-radius: 99px; font-weight: 600; }
+.pl-total { font-weight: 600; }
+.cards-lanc a.fluxo-etapa { text-decoration: none; color: inherit; }

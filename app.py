@@ -38,7 +38,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "4.4"
+VERSAO = "4.5"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -297,7 +297,11 @@ CREATE TABLE IF NOT EXISTS lancamentos (
     criado_por INTEGER REFERENCES usuarios(id),
     criado_em TEXT NOT NULL,
     atualizado_por INTEGER REFERENCES usuarios(id),
-    atualizado_em TEXT
+    atualizado_em TEXT,
+    lancado_erp INTEGER NOT NULL DEFAULT 0,      -- marcado pelo Financeiro quando já lançou no ERP
+    lancado_erp_por INTEGER REFERENCES usuarios(id),
+    lancado_erp_em TEXT,
+    alterado_apos_erp INTEGER NOT NULL DEFAULT 0 -- a Importação mudou depois de lançado: conferir no ERP
 );
 CREATE INDEX IF NOT EXISTS idx_lancamentos_invoice ON lancamentos(invoice_id);
 -- versão 4.0: e-mails automáticos
@@ -372,6 +376,12 @@ def init_db():
                 DROP TABLE invoice_itens_v35;
                 CREATE INDEX IF NOT EXISTS idx3_itens_invoice ON invoice_itens(invoice_id);
             """)
+        # versão 4.5: controle do lançamento no ERP pelo Financeiro
+        colunas_l = {r[1] for r in db.execute("PRAGMA table_info(lancamentos)")}
+        for col, tipo in (("lancado_erp", "INTEGER NOT NULL DEFAULT 0"), ("lancado_erp_por", "INTEGER"),
+                          ("lancado_erp_em", "TEXT"), ("alterado_apos_erp", "INTEGER NOT NULL DEFAULT 0")):
+            if col not in colunas_l:
+                db.execute(f"ALTER TABLE lancamentos ADD COLUMN {col} {tipo}")
         # versão 3.2: condição de pagamento em parcelas (invoices antigos viram uma parcela de 100%)
         db.execute("INSERT INTO condicao_parcelas (invoice_id, ordem, percentual, tipo, dias)"
                    " SELECT id, 1, 100, condicao_tipo, condicao_dias FROM invoices i"
@@ -2365,8 +2375,9 @@ def sistema_onedrive():
 # ---------------------------------------------------------------------------
 # Lançamentos Financeiros (fora do fluxo de invoices)
 #
-# Cada invoice cadastrado ganha um painel com lançamentos livres (impostos e despesas da importação:
-# COFINS, ICMS, PIS, armazenagem...). Todos os campos são opcionais; não geram pendências nem e-mails.
+# Cada invoice cadastrado ganha um painel onde a Importação aponta os custos da importação (COFINS, ICMS, PIS,
+# armazenagem...) que o Financeiro deve lançar no ERP; o Financeiro marca cada um quando já lançou no ERP.
+# Todos os campos são opcionais; não geram pendências nem e-mails.
 # ---------------------------------------------------------------------------
 TIPOS_LANCAMENTO_SUGERIDOS = ["II", "IPI", "PIS", "COFINS", "ICMS", "Taxa Siscomex", "AFRMM", "Armazenagem",
                               "Capatazia", "Frete internacional", "Frete rodoviário", "Seguro", "Despachante",
@@ -2374,6 +2385,12 @@ TIPOS_LANCAMENTO_SUGERIDOS = ["II", "IPI", "PIS", "COFINS", "ICMS", "Taxa Siscom
 
 
 def pode_lancar():
+    """Importação aponta os custos (e o Administrador)."""
+    return pode("importacao")
+
+
+def pode_marcar_erp():
+    """Financeiro marca o que já lançou no ERP (e o Administrador)."""
     return pode("financeiro")
 
 
@@ -2410,8 +2427,9 @@ def paineis_lancamentos(args):
         "SELECT i.id, i.numero, i.moeda, i.data_assinatura, i.cancelado_em, i.criado_em, f.nome AS fornecedor"
         " FROM invoices i JOIN fornecedores f ON f.id = i.fornecedor_id ORDER BY i.id DESC").fetchall()
     lancs = {}
-    for l in db.execute("SELECT l.*, u.nome AS usuario FROM lancamentos l LEFT JOIN usuarios u"
-                        " ON u.id = COALESCE(l.atualizado_por, l.criado_por)"
+    for l in db.execute("SELECT l.*, u.nome AS usuario, e.nome AS usuario_erp FROM lancamentos l"
+                        " LEFT JOIN usuarios u ON u.id = COALESCE(l.atualizado_por, l.criado_por)"
+                        " LEFT JOIN usuarios e ON e.id = l.lancado_erp_por"
                         " ORDER BY l.data_pagamento IS NULL, l.data_pagamento, l.id"):
         lancs.setdefault(l["invoice_id"], []).append(l)
     paineis = []
@@ -2425,7 +2443,11 @@ def paineis_lancamentos(args):
             continue
         if filtro == "sem" and lista:
             continue
-        paineis.append({"inv": inv, "lancamentos": lista,
+        pendentes = [l for l in lista if not l["lancado_erp"]]
+        if filtro == "pendentes_erp" and not pendentes:
+            continue
+        paineis.append({"inv": inv, "lancamentos": lista, "pendentes_erp": len(pendentes),
+                        "total_pendente": round(sum(l["valor"] for l in pendentes if l["valor"] is not None), 2),
                         "total": round(sum(l["valor"] for l in lista if l["valor"] is not None), 2)})
     return paineis
 
@@ -2439,8 +2461,12 @@ def lancamentos():
     sugestoes = list(dict.fromkeys(usados + TIPOS_LANCAMENTO_SUGERIDOS))
     total = round(sum(p["total"] for p in paineis), 2)
     qtd = sum(len(p["lancamentos"]) for p in paineis)
+    pend_qtd = sum(p["pendentes_erp"] for p in paineis)
+    pend_total = round(sum(p["total_pendente"] for p in paineis), 2)
     return render_template("lancamentos.html", paineis=paineis, sugestoes=sugestoes, total=total, qtd=qtd,
-                           args=request.args, aberto=request.args.get("aberto", type=int), editar=pode_lancar())
+                           pend_qtd=pend_qtd, pend_total=pend_total, args=request.args,
+                           aberto=request.args.get("aberto", type=int), editar=pode_lancar(),
+                           marcar=pode_marcar_erp())
 
 
 def voltar_lancamentos(iid):
@@ -2485,13 +2511,18 @@ def lancamento_editar(lid):
             flash(e, "erro")
         return voltar_lancamentos(antigo["invoice_id"])
     if (dados["tipo"], dados["valor"], dados["data_pagamento"]) != (antigo["tipo"], antigo["valor"], antigo["data_pagamento"]):
+        # se já estava lançado no ERP, volta para pendente e avisa o Financeiro para conferir
+        ja_no_erp = bool(antigo["lancado_erp"]) or bool(antigo["alterado_apos_erp"])
         db.execute("UPDATE lancamentos SET tipo = ?, valor = ?, data_pagamento = ?, atualizado_por = ?,"
-                   " atualizado_em = ? WHERE id = ?",
-                   (dados["tipo"], dados["valor"], dados["data_pagamento"], g.usuario["id"], agora(), lid))
+                   " atualizado_em = ?, lancado_erp = 0, alterado_apos_erp = ? WHERE id = ?",
+                   (dados["tipo"], dados["valor"], dados["data_pagamento"], g.usuario["id"], agora(),
+                    1 if ja_no_erp else 0, lid))
         registrar_evento(antigo["invoice_id"], "Lançamento financeiro corrigido",
-                         f"{descrever_lancamento(antigo)} → {descrever_lancamento(dados)}")
+                         f"{descrever_lancamento(antigo)} → {descrever_lancamento(dados)}"
+                         + (" (já estava lançado no ERP: voltou para conferência do Financeiro)" if antigo["lancado_erp"] else ""))
         db.commit()
-        flash("Lançamento atualizado.", "ok")
+        flash("Lançamento atualizado." + (" Ele já estava lançado no ERP: o Financeiro verá o aviso para conferir."
+                                          if antigo["lancado_erp"] else ""), "ok")
     return voltar_lancamentos(antigo["invoice_id"])
 
 
@@ -2504,10 +2535,37 @@ def lancamento_excluir(lid):
     l = db.execute("SELECT * FROM lancamentos WHERE id = ?", (lid,)).fetchone()
     if l is None:
         abort(404)
+    if l["lancado_erp"] and g.usuario["perfil"] != "admin":
+        flash("Este custo já foi lançado no ERP pelo Financeiro: para excluí-lo, peça ao Financeiro para desmarcar "
+              "o lançamento no ERP antes (assim o ajuste no ERP não se perde).", "erro")
+        return voltar_lancamentos(l["invoice_id"])
     db.execute("DELETE FROM lancamentos WHERE id = ?", (lid,))
     registrar_evento(l["invoice_id"], "Lançamento financeiro excluído", descrever_lancamento(l))
     db.commit()
     flash("Lançamento excluído.", "ok")
+    return voltar_lancamentos(l["invoice_id"])
+
+
+@app.route("/lancamentos/<int:lid>/erp", methods=["POST"])
+@login_obrigatorio
+def lancamento_erp(lid):
+    """Financeiro marca/desmarca o custo como já lançado no ERP (controle próprio)."""
+    if not pode_marcar_erp():
+        abort(403)
+    db = get_db()
+    l = db.execute("SELECT * FROM lancamentos WHERE id = ?", (lid,)).fetchone()
+    if l is None:
+        abort(404)
+    marcar = request.form.get("lancado") == "1"
+    if marcar:
+        db.execute("UPDATE lancamentos SET lancado_erp = 1, lancado_erp_por = ?, lancado_erp_em = ?,"
+                   " alterado_apos_erp = 0 WHERE id = ?", (g.usuario["id"], agora(), lid))
+        registrar_evento(l["invoice_id"], "Custo lançado no ERP (Financeiro)", descrever_lancamento(l))
+    else:
+        db.execute("UPDATE lancamentos SET lancado_erp = 0, lancado_erp_por = NULL, lancado_erp_em = NULL"
+                   " WHERE id = ?", (lid,))
+        registrar_evento(l["invoice_id"], "Lançamento no ERP desmarcado (Financeiro)", descrever_lancamento(l))
+    db.commit()
     return voltar_lancamentos(l["invoice_id"])
 
 
@@ -2516,12 +2574,16 @@ def lancamento_excluir(lid):
 def lancamentos_csv():
     saida = io.StringIO()
     w = csv.writer(saida, delimiter=";")
-    w.writerow(["Fornecedor", "Invoice", "Tipo de pagamento", "Valor (R$)", "Data do pagamento"])
+    w.writerow(["Fornecedor", "Invoice", "Tipo de pagamento", "Valor (R$)", "Data do pagamento",
+                "Lançado no ERP", "Lançado por", "Lançado em", "Apontado por"])
     for p in paineis_lancamentos(request.args):
         for l in p["lancamentos"]:
             w.writerow([p["inv"]["fornecedor"], p["inv"]["numero"], l["tipo"],
                         fmt_num(l["valor"]) if l["valor"] is not None else "",
-                        fmt_data(l["data_pagamento"]) if l["data_pagamento"] else ""])
+                        fmt_data(l["data_pagamento"]) if l["data_pagamento"] else "",
+                        "Sim" if l["lancado_erp"] else ("Não (alterado após lançamento)" if l["alterado_apos_erp"] else "Não"),
+                        l["usuario_erp"] or "", fmt_data(l["lancado_erp_em"]) if l["lancado_erp_em"] else "",
+                        l["usuario"] or ""])
     return Response("﻿" + saida.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": f"attachment; filename=lancamentos-financeiros-{hoje()}.csv"})
 

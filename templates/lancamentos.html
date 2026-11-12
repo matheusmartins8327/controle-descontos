@@ -2,22 +2,26 @@
 {% block titulo %}Lançamentos Financeiros{% endblock %}
 {% block conteudo %}
 <h1>Lançamentos Financeiros</h1>
-<p class="sub">Impostos e despesas da importação de cada invoice (COFINS, ICMS, PIS, armazenagem…). Cada invoice cadastrado aparece aqui
-  automaticamente. Todos os campos são opcionais e esta aba não faz parte do fluxo do invoice: não gera pendências nem e-mails.
-  {% if not editar %}<br><strong>Somente leitura:</strong> lançamentos são registrados pelo Financeiro.{% endif %}</p>
+<p class="sub">A <strong>Importação</strong> aponta aqui os custos de cada importação (COFINS, ICMS, PIS, armazenagem…) que o
+  <strong>Financeiro</strong> deve lançar no ERP; o Financeiro marca <strong>Lançado no ERP</strong> em cada custo já lançado.
+  Cada invoice cadastrado aparece automaticamente. Todos os campos são opcionais e esta aba não faz parte do fluxo do invoice
+  (não gera pendências nem e-mails).
+  {% if not editar and not marcar %}<br><strong>Somente leitura.</strong>{% endif %}</p>
 
 <section class="fluxo cards-lanc">
-  <div class="fluxo-etapa"><span class="n">{{ paineis|length }} <small>invoices</small></span><span class="rot">Na lista</span></div>
-  <div class="fluxo-etapa"><span class="n">{{ qtd }} <small>lançamentos</small></span><span class="rot">Registrados</span></div>
-  <div class="fluxo-etapa"><span class="n">{{ total|moeda('BRL') }}</span><span class="rot">Total lançado</span></div>
+  <a class="fluxo-etapa {{ 'alerta-card' if pend_qtd }} {{ 'sel' if args.get('filtro') == 'pendentes_erp' }}" href="{{ url_for('lancamentos', filtro='pendentes_erp') }}">
+    <span class="n">{{ pend_qtd }} <small>custos</small></span><span class="rot">A lançar no ERP</span><small>{{ pend_total|moeda('BRL') }}</small></a>
+  <div class="fluxo-etapa"><span class="n">{{ qtd - pend_qtd }} <small>custos</small></span><span class="rot">Já lançados no ERP</span><small>{{ (total - pend_total)|moeda('BRL') }}</small></div>
+  <div class="fluxo-etapa"><span class="n">{{ qtd }} <small>custos</small></span><span class="rot">Total apontado</span><small>{{ total|moeda('BRL') }} · {{ paineis|length }} invoices</small></div>
 </section>
 
 <form class="filtros" method="get">
   <input name="q" value="{{ args.get('q', '') }}" placeholder="Buscar invoice ou fornecedor">
   <select name="filtro">
     <option value="">Invoices ativos</option>
-    <option value="com" {{ 'selected' if args.get('filtro') == 'com' }}>Somente com lançamentos</option>
-    <option value="sem" {{ 'selected' if args.get('filtro') == 'sem' }}>Somente sem lançamentos</option>
+    <option value="pendentes_erp" {{ 'selected' if args.get('filtro') == 'pendentes_erp' }}>Com custos a lançar no ERP</option>
+    <option value="com" {{ 'selected' if args.get('filtro') == 'com' }}>Somente com custos apontados</option>
+    <option value="sem" {{ 'selected' if args.get('filtro') == 'sem' }}>Somente sem custos apontados</option>
     <option value="todos" {{ 'selected' if args.get('filtro') == 'todos' }}>Todos (inclui cancelados)</option>
   </select>
   <button class="btn">Filtrar</button>
@@ -32,56 +36,79 @@
 {% set voltar = request.full_path.rstrip('?') %}
 
 {% for p in paineis %}{% set inv = p.inv %}
-<details class="painel-lanc" id="inv-{{ inv.id }}" {{ 'open' if aberto == inv.id or paineis|length <= 3 or args.get('q') }}>
+<details class="painel-lanc" id="inv-{{ inv.id }}" {{ 'open' if aberto == inv.id or paineis|length <= 3 or args.get('q') or args.get('filtro') == 'pendentes_erp' }}>
   <summary>
     <span class="pl-titulo"><strong>{{ inv.numero }}</strong> <span class="pl-forn">{{ inv.fornecedor }}</span>
       {% if inv.cancelado_em %}<span class="etiqueta cancelado">Cancelado</span>{% endif %}</span>
-    <span class="pl-resumo">{% if p.lancamentos %}<span class="cont">{{ p.lancamentos|length }}</span> {{ p.total|moeda('BRL') }}{% else %}<small>Sem lançamentos</small>{% endif %}</span>
+    <span class="pl-resumo">
+      {% if p.lancamentos %}
+        {% if p.pendentes_erp %}<span class="etiqueta pendente-erp">{{ p.pendentes_erp }} a lançar no ERP</span>
+        {% else %}<span class="etiqueta ok-erp">✓ Tudo lançado no ERP</span>{% endif %}
+        <span class="pl-total">{{ p.lancamentos|length }} {{ 'custo' if p.lancamentos|length == 1 else 'custos' }} · {{ p.total|moeda('BRL') }}</span>
+      {% else %}<small>Sem custos apontados</small>{% endif %}
+    </span>
     <svg class="seta" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M5 7.5l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </summary>
   <div class="pl-corpo">
     <p class="pl-link"><a href="{{ url_for('invoice_detalhe', id=inv.id) }}">Abrir o invoice</a>{% if inv.data_assinatura %} · assinatura {{ inv.data_assinatura|data }}{% endif %} · moeda do invoice {{ inv.moeda }}</p>
     <div class="rolagem">
     <table class="tabela-lanc">
-      <colgroup><col class="c-tipo"><col class="c-valor"><col class="c-data"><col class="c-quem">{% if editar %}<col class="c-acoes">{% endif %}</colgroup>
-      <thead><tr><th>Tipo de pagamento</th><th class="num">Valor (R$)</th><th>Data do pagamento</th><th>Registrado por</th>{% if editar %}<th></th>{% endif %}</tr></thead>
+      <colgroup><col class="c-tipo"><col class="c-valor"><col class="c-data"><col class="c-quem"><col class="c-erp">{% if editar %}<col class="c-acoes">{% endif %}</colgroup>
+      <thead><tr><th>Tipo de pagamento</th><th class="num">Valor (R$)</th><th>Data do pagamento</th><th>Apontado por</th><th>Lançado no ERP</th>{% if editar %}<th></th>{% endif %}</tr></thead>
       <tbody>
       {% for l in p.lancamentos %}
-        {% if editar %}
-        <tr>
+        <tr class="{{ 'lancado' if l.lancado_erp }} {{ 'conferir' if l.alterado_apos_erp and not l.lancado_erp }}">
+          {% if editar %}
           <td><input form="f{{ l.id }}" name="tipo" value="{{ l.tipo or '' }}" list="tipos-lancamento" placeholder="Ex.: COFINS"></td>
           <td><input form="f{{ l.id }}" name="valor" class="num" inputmode="decimal" value="{{ l.valor|num if l.valor is not none else '' }}" placeholder="0,00"></td>
           <td><input form="f{{ l.id }}" type="date" name="data_pagamento" value="{{ l.data_pagamento or '' }}"></td>
+          {% else %}
+          <td><strong>{{ l.tipo or '—' }}</strong></td>
+          <td class="num"><strong>{{ l.valor|num if l.valor is not none else '—' }}</strong></td>
+          <td>{{ l.data_pagamento|data if l.data_pagamento else '—' }}</td>
+          {% endif %}
           <td><small>{{ l.usuario or '—' }} · {{ (l.atualizado_em or l.criado_em)|data }}</small></td>
+          <td>
+            <form method="post" action="{{ url_for('lancamento_erp', lid=l.id) }}" class="form-erp">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
+              <input type="hidden" name="lancado" value="{{ '0' if l.lancado_erp else '1' }}">
+              <label class="flag-erp {{ 'marcado' if l.lancado_erp }}" title="{{ 'Desmarcar' if l.lancado_erp else 'Marcar como lançado no ERP' }}">
+                <input type="checkbox" {{ 'checked' if l.lancado_erp }} {{ 'disabled' if not marcar }} onchange="this.form.submit()">
+                {% if l.lancado_erp %}<span><strong>Lançado</strong><small>{{ l.usuario_erp or '—' }} · {{ l.lancado_erp_em|data }}</small></span>
+                {% elif l.alterado_apos_erp %}<span><strong class="txt-conferir">Alterado: conferir no ERP</strong><small>mudou depois de lançado</small></span>
+                {% else %}<span>A lançar</span>{% endif %}
+              </label>
+            </form>
+          </td>
+          {% if editar %}
           <td><div class="acoes-lanc">
-            <form id="f{{ l.id }}" method="post" action="{{ url_for('lancamento_editar', lid=l.id) }}">
+            <form id="f{{ l.id }}" method="post" action="{{ url_for('lancamento_editar', lid=l.id) }}"
+                  {% if l.lancado_erp %}onsubmit="return confirm('Este custo já foi lançado no ERP pelo Financeiro. Ao alterar, ele volta para conferência do Financeiro. Continuar?')"{% endif %}>
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
               <button class="btn pequeno">Salvar</button></form>
-            <form method="post" action="{{ url_for('lancamento_excluir', lid=l.id) }}" onsubmit="return confirm('Excluir este lançamento?')">
+            <form method="post" action="{{ url_for('lancamento_excluir', lid=l.id) }}" onsubmit="return confirm('Excluir este custo?')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
               <button class="btn pequeno link" title="Excluir">✕</button></form>
           </div></td>
+          {% endif %}
         </tr>
-        {% else %}
-        <tr><td>{{ l.tipo or '—' }}</td><td class="num">{{ l.valor|num if l.valor is not none else '—' }}</td>
-          <td>{{ l.data_pagamento|data if l.data_pagamento else '—' }}</td><td><small>{{ l.usuario or '—' }}</small></td></tr>
-        {% endif %}
       {% else %}
-        <tr><td colspan="{{ 5 if editar else 4 }}" class="vazio">Nenhum lançamento ainda.</td></tr>
+        <tr><td colspan="{{ 6 if editar else 5 }}" class="vazio">Nenhum custo apontado ainda.</td></tr>
       {% endfor %}
       {% if editar %}
         <tr class="linha-nova">
           <td><input form="n{{ inv.id }}" name="tipo" list="tipos-lancamento" placeholder="Ex.: COFINS, ICMS, PIS…"></td>
           <td><input form="n{{ inv.id }}" name="valor" class="num" inputmode="decimal" placeholder="0,00"></td>
           <td><input form="n{{ inv.id }}" type="date" name="data_pagamento"></td>
-          <td></td>
+          <td></td><td></td>
           <td><div class="acoes-lanc"><form id="n{{ inv.id }}" method="post" action="{{ url_for('lancamento_novo', id=inv.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
             <button class="btn pequeno primario">+ Adicionar</button></form></div></td>
         </tr>
       {% endif %}
       </tbody>
-      {% if p.lancamentos|length > 1 %}<tfoot><tr><th>Total</th><th class="num">{{ p.total|num }}</th><th colspan="{{ 3 if editar else 2 }}"></th></tr></tfoot>{% endif %}
+      {% if p.lancamentos|length > 1 %}<tfoot><tr><th>Total</th><th class="num">{{ p.total|num }}</th><th colspan="2"></th>
+        <th>{% if p.pendentes_erp %}<small>a lançar: {{ p.total_pendente|moeda('BRL') }}</small>{% endif %}</th>{% if editar %}<th></th>{% endif %}</tr></tfoot>{% endif %}
     </table>
     </div>
   </div>
