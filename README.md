@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.6)
+# Controle de Invoices e Descontos (v4.7)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -181,4 +181,7 @@ armazenagem…) que o **Financeiro deve lançar no MEGA** (ERP da Quinelato). To
 - Se a Importação altera um custo já lançado no MEGA, ele volta para "a lançar" com o aviso **"Alterado: conferir no MEGA"**.
   Custo já lançado no MEGA só pode ser excluído depois que o Financeiro desmarcar (o Administrador pode excluir direto).
 - Quadros com o que falta lançar no MEGA, filtro "Com custos a lançar no MEGA", busca e exportação para Excel (CSV).
-- Não gera pendências nem e-mails; tudo fica no histórico do invoice.
+- Botão **Avisar o Financeiro** (Importação), em cada invoice com custos a lançar: envia na hora o e-mail
+  "Custos a lançar no MEGA" com tudo o que falta lançar daquele invoice (e mensagem opcional). Destinatários
+  configurados na aba E-mails (sugestão: Anny em Para e o restante do Financeiro em Cc).
+- Não gera pendências; os e-mails só saem pelo botão. Tudo fica no histórico do invoice.

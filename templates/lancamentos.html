@@ -50,7 +50,22 @@
     <svg class="seta" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M5 7.5l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </summary>
   <div class="pl-corpo">
-    <p class="pl-link"><a href="{{ url_for('invoice_detalhe', id=inv.id) }}">Abrir o invoice</a>{% if inv.data_assinatura %} · assinatura {{ inv.data_assinatura|data }}{% endif %} · moeda do invoice {{ inv.moeda }}</p>
+    <div class="pl-topo">
+      <p class="pl-link"><a href="{{ url_for('invoice_detalhe', id=inv.id) }}">Abrir o invoice</a>{% if inv.data_assinatura %} · assinatura {{ inv.data_assinatura|data }}{% endif %} · moeda do invoice {{ inv.moeda }}
+        {% if p.ultimo_aviso %}<br><span class="ultimo-aviso">✉ Último aviso ao Financeiro: {{ p.ultimo_aviso.criado_em|data }}{% if p.ultimo_aviso.status != 'ENVIADO' %} ({{ STATUS_EMAIL[p.ultimo_aviso.status]|lower }}){% endif %}</span>{% endif %}</p>
+      {% if editar and p.pendentes_erp %}
+      <details class="avisar">
+        <summary class="btn pequeno"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
+          Avisar o Financeiro</summary>
+        <form method="post" action="{{ url_for('lancamentos_avisar', id=inv.id) }}" class="avisar-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
+          <p>Envia um e-mail ao Financeiro com os <strong>{{ p.pendentes_erp }} custo(s) a lançar no MEGA</strong> deste invoice ({{ p.total_pendente|moeda('BRL') }}).</p>
+          <label>Mensagem (opcional)<textarea name="mensagem" rows="2" maxlength="500" placeholder="Ex.: valores conferidos com o despachante."></textarea></label>
+          <button class="btn primario pequeno">Enviar e-mail</button>
+        </form>
+      </details>
+      {% endif %}
+    </div>
     <div class="rolagem">
     <table class="tabela-lanc">
       <colgroup><col class="c-tipo"><col class="c-valor"><col class="c-data"><col class="c-quem"><col class="c-erp">{% if editar %}<col class="c-acoes">{% endif %}</colgroup>
@@ -121,5 +136,7 @@
 <script>
   document.getElementById('expandir').addEventListener('click', () => document.querySelectorAll('details.painel-lanc').forEach(d => d.open = true));
   document.getElementById('recolher').addEventListener('click', () => document.querySelectorAll('details.painel-lanc').forEach(d => d.open = false));
+  // fecha o formulário "Avisar o Financeiro" ao clicar fora
+  document.addEventListener('click', e => document.querySelectorAll('details.avisar[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; }));
 </script>
 {% endblock %}

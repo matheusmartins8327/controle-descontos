@@ -38,7 +38,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "4.6"
+VERSAO = "4.7"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2432,6 +2432,10 @@ def paineis_lancamentos(args):
                         " LEFT JOIN usuarios e ON e.id = l.lancado_erp_por"
                         " ORDER BY l.data_pagamento IS NULL, l.data_pagamento, l.id"):
         lancs.setdefault(l["invoice_id"], []).append(l)
+    avisos = {}
+    for e in db.execute("SELECT invoice_id, criado_em, status FROM emails WHERE fluxo = 'lancamentos_mega'"
+                        " ORDER BY id"):
+        avisos[e["invoice_id"]] = e
     paineis = []
     for inv in invoices:
         lista = lancs.get(inv["id"], [])
@@ -2447,6 +2451,7 @@ def paineis_lancamentos(args):
         if filtro == "pendentes_erp" and not pendentes:
             continue
         paineis.append({"inv": inv, "lancamentos": lista, "pendentes_erp": len(pendentes),
+                        "ultimo_aviso": avisos.get(inv["id"]),
                         "total_pendente": round(sum(l["valor"] for l in pendentes if l["valor"] is not None), 2),
                         "total": round(sum(l["valor"] for l in lista if l["valor"] is not None), 2)})
     return paineis
@@ -2569,6 +2574,53 @@ def lancamento_erp(lid):
     return voltar_lancamentos(l["invoice_id"])
 
 
+@app.route("/invoices/<int:id>/lancamentos/avisar", methods=["POST"])
+@login_obrigatorio
+def lancamentos_avisar(id):
+    """Importação avisa o Financeiro, por e-mail, de tudo o que falta lançar no MEGA deste invoice."""
+    if not pode_lancar():
+        abort(403)
+    r = carregar_invoice(id)
+    db = get_db()
+    pendentes = db.execute("SELECT * FROM lancamentos WHERE invoice_id = ? AND lancado_erp = 0"
+                           " ORDER BY data_pagamento IS NULL, data_pagamento, id", (id,)).fetchall()
+    if not pendentes:
+        flash("Nada a lançar no MEGA neste invoice: nenhum e-mail enviado.", "aviso-box")
+        return voltar_lancamentos(id)
+    linhas = []
+    for l in pendentes:
+        txt = f"{l['tipo'] or 'Sem tipo'} · " + (fmt_moeda(l["valor"], "BRL") if l["valor"] is not None else "valor não informado")
+        txt += f" · pagamento {fmt_data(l['data_pagamento'])}" if l["data_pagamento"] else " · data não informada"
+        if l["alterado_apos_erp"]:
+            txt += " · ALTERADO após já ter sido lançado: conferir no MEGA"
+        linhas.append(txt)
+    total = round(sum(l["valor"] for l in pendentes if l["valor"] is not None), 2)
+    linhas.append({"secao": f"Total a lançar: {fmt_moeda(total, 'BRL')} ({len(pendentes)} custo(s))"})
+    msg = " ".join(request.form.get("mensagem", "").split())[:500]
+    obs = f"Solicitado por {g.usuario['nome']} (Importação)."
+    if msg:
+        obs = f"Mensagem: {msg} — {obs}"
+    obs += " Depois de lançar, marque \"Lançado no MEGA\" em cada custo na aba Lançamentos Financeiros do sistema."
+    status, erro = enfileirar_email("lancamentos_mega", r, f"{len(pendentes)} custo(s) a lançar", linhas, obs)
+    registrar_evento(id, "Financeiro avisado dos custos a lançar no MEGA",
+                     f"{len(pendentes)} custo(s), {fmt_moeda(total, 'BRL')}" + (f" · {msg}" if msg else ""))
+    db.commit()
+    if status == "PENDENTE":
+        enviar_fila()
+        final = db.execute("SELECT status, erro, para, cc FROM emails WHERE fluxo = 'lancamentos_mega'"
+                           " AND invoice_id = ? ORDER BY id DESC LIMIT 1", (id,)).fetchone()
+        if final["status"] == "ENVIADO":
+            flash(f"E-mail enviado para {final['para']}" + (f" (cópia: {final['cc']})" if final["cc"] else "") +
+                  f" com {len(pendentes)} custo(s) a lançar no MEGA.", "ok")
+        else:
+            flash(f"O e-mail não foi enviado agora ({final['erro'] or 'falha no envio'}); o sistema tenta de novo "
+                  "automaticamente. Veja a aba E-mails.", "erro")
+    else:
+        flash(f"E-mail não enviado: {erro}" + (" Peça ao Administrador para configurar a aba E-mails."
+                                                if g.usuario["perfil"] != "admin" else ""), "erro")
+    return voltar_lancamentos(id)
+
+
 @app.route("/lancamentos.csv")
 @login_obrigatorio
 def lancamentos_csv():
@@ -2626,6 +2678,11 @@ FLUXOS_EMAIL = {
         "Chegada de invoice com dedução",
         "Aviso à Engenharia de Processos quando chega à fábrica um invoice que recebeu dedução de desconto de "
         "outro invoice.", "admin", ""),
+    "lancamentos_mega": (
+        "Custos a lançar no MEGA",
+        "Enviado quando a Importação clica em \"Avisar o Financeiro\" num invoice da aba Lançamentos Financeiros: "
+        "lista tudo o que falta lançar no MEGA daquele invoice. Sugestão: Anny em Para e o restante do Financeiro em Cc.",
+        "financeiro", ""),
     "resumo_semanal": (
         "Resumo semanal de pendências do Financeiro",
         "Toda segunda-feira às 8h (Brasília): tudo o que o Financeiro precisa fazer, separado em vencidos, "
@@ -2637,6 +2694,7 @@ FLUXOS_EMAIL = {
 }
 HORA_RESUMOS = 8  # horário de Brasília dos resumos (o agendador externo deve chamar neste horário)
 STATUS_EMAIL = {"PENDENTE": "Na fila", "ENVIADO": "Enviado", "ERRO": "Erro", "NAO_ENVIADO": "Não enviado"}
+app.jinja_env.globals["STATUS_EMAIL"] = STATUS_EMAIL
 SMTP_PADRAO = {"smtp_host": "smtp.gmail.com", "smtp_porta": "587",
                "smtp_nome": "Controle de Invoices · Quinelato"}
 RE_EMAIL = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
@@ -2737,6 +2795,7 @@ def enfileirar_email(fluxo, r, assunto_extra, linhas, obs=None):
     get_db().execute("INSERT INTO emails (fluxo, invoice_id, assunto, corpo, para, cc, status, erro, criado_em)"
                      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (fluxo, r["id"] if r is not None else None, assunto, corpo, para, cc, status, erro, agora()))
+    return status, erro
 
 
 # ---------- detecção de mudanças ----------
