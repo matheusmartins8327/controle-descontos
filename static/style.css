@@ -370,3 +370,38 @@ input.inativo { background: #f1f2f6; color: #9aa0ad; }
   .conta-nome { display: none; }
   .marca span { display: none; }
 }
+
+/* v4.4: Lançamentos Financeiros */
+.cards-lanc { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.filtros .espaco { flex: 1; }
+.painel-lanc { background: var(--sup); border: 1px solid var(--borda); border-radius: var(--raio); margin-bottom: .6rem; }
+.painel-lanc > summary { list-style: none; display: flex; align-items: center; gap: 1rem; padding: .8rem 1.1rem; cursor: pointer; }
+.painel-lanc > summary::-webkit-details-marker { display: none; }
+.painel-lanc > summary:hover { background: #f7f9fe; border-radius: var(--raio); }
+.painel-lanc[open] > summary { border-bottom: 1px solid var(--borda); border-radius: var(--raio) var(--raio) 0 0; }
+.pl-titulo { flex: 1; display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+.pl-titulo strong { color: var(--marinho); font-size: 1rem; }
+.pl-forn { color: var(--suave); font-size: .9rem; }
+.pl-resumo { display: flex; align-items: center; gap: .45rem; font-weight: 600; white-space: nowrap; }
+.painel-lanc .seta { color: var(--suave); }
+.painel-lanc[open] .seta { transform: rotate(180deg); }
+.pl-corpo { padding: .6rem 1.1rem 1rem; }
+.pl-link { margin: 0 0 .5rem; font-size: .85rem; color: var(--suave); }
+.tabela-lanc input { width: 100%; min-width: 120px; }
+.tabela-lanc td { vertical-align: middle; }
+.acoes-lanc { display: flex; gap: .3rem; align-items: center; white-space: nowrap; }
+.acoes-lanc form { margin: 0; }
+.linha-nova td { background: #f7f9fe; }
+.etiqueta.cancelado { background: #fdecec; color: #b42318; font-size: .72rem; padding: .05rem .5rem; border-radius: 99px; }
+
+.tabela-lanc { table-layout: fixed; width: 100%; min-width: 760px; }
+.tabela-lanc .c-tipo { width: 30%; } .tabela-lanc .c-valor { width: 18%; } .tabela-lanc .c-data { width: 18%; }
+.tabela-lanc .c-quem { width: 20%; } .tabela-lanc .c-acoes { width: 14%; }
+.tabela-lanc input { min-width: 0; }
+/* cabeçalho com a aba Lançamentos Financeiros: cabe em uma linha a partir de ~1330px; abaixo, o menu vai para a 2ª linha */
+.topo-inner { max-width: 1400px; gap: 1rem; }
+.topo nav a { font-size: .86rem; padding: .38rem .6rem; }
+@media (max-width: 1330px) {
+  .topo-inner { flex-wrap: wrap; row-gap: .35rem; }
+  .topo nav { order: 3; flex-basis: 100%; overflow-x: auto; padding-bottom: .15rem; }
+}

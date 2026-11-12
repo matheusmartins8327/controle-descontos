@@ -38,7 +38,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "4.3"
+VERSAO = "4.4"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -287,6 +287,19 @@ CREATE INDEX IF NOT EXISTS idx3_deducoes_invoice ON deducoes(invoice_id);
 CREATE INDEX IF NOT EXISTS idx3_pagamentos_invoice ON pagamentos(invoice_id);
 CREATE INDEX IF NOT EXISTS idx3_anexos_invoice ON anexos(invoice_id);
 CREATE INDEX IF NOT EXISTS idx3_eventos_invoice ON eventos(invoice_id);
+-- versão 4.4: lançamentos financeiros (fora do fluxo; todos os campos opcionais)
+CREATE TABLE IF NOT EXISTS lancamentos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    tipo TEXT,                            -- livre: COFINS, ICMS, PIS, Armazenagem...
+    valor REAL,                           -- em reais
+    data_pagamento TEXT,
+    criado_por INTEGER REFERENCES usuarios(id),
+    criado_em TEXT NOT NULL,
+    atualizado_por INTEGER REFERENCES usuarios(id),
+    atualizado_em TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_lancamentos_invoice ON lancamentos(invoice_id);
 -- versão 4.0: e-mails automáticos
 CREATE TABLE IF NOT EXISTS notificacoes_estado (
     invoice_id INTEGER PRIMARY KEY,
@@ -2347,6 +2360,170 @@ def sistema_onedrive():
         get_db().commit()
         flash("Pasta do OneDrive salva.", "ok")
     return redirect(url_for("sistema"))
+
+
+# ---------------------------------------------------------------------------
+# Lançamentos Financeiros (fora do fluxo de invoices)
+#
+# Cada invoice cadastrado ganha um painel com lançamentos livres (impostos e despesas da importação:
+# COFINS, ICMS, PIS, armazenagem...). Todos os campos são opcionais; não geram pendências nem e-mails.
+# ---------------------------------------------------------------------------
+TIPOS_LANCAMENTO_SUGERIDOS = ["II", "IPI", "PIS", "COFINS", "ICMS", "Taxa Siscomex", "AFRMM", "Armazenagem",
+                              "Capatazia", "Frete internacional", "Frete rodoviário", "Seguro", "Despachante",
+                              "Honorários", "Outros"]
+
+
+def pode_lancar():
+    return pode("financeiro")
+
+
+def ler_lancamento(f):
+    """Lê um lançamento do formulário. Tudo é opcional, mas a linha não pode ficar totalmente vazia."""
+    tipo = " ".join(f.get("tipo", "").split())[:80]
+    valor_txt = f.get("valor", "").strip()
+    valor = parse_num(valor_txt) if valor_txt else None
+    data_txt = f.get("data_pagamento", "").strip()
+    data = data_valida(data_txt) if data_txt else None
+    erros = []
+    if valor_txt and valor is None:
+        erros.append("Valor inválido (use, por exemplo, 1.234,56).")
+    elif valor is not None and valor < 0:
+        erros.append("O valor não pode ser negativo.")
+    if data_txt and not data:
+        erros.append("Data do pagamento inválida.")
+    if not erros and not tipo and valor is None and not data:
+        erros.append("Preencha ao menos um campo do lançamento.")
+    return {"tipo": tipo, "valor": valor, "data_pagamento": data}, erros
+
+
+def descrever_lancamento(l):
+    partes = [l["tipo"] or "sem tipo", fmt_moeda(l["valor"], "BRL") if l["valor"] is not None else "sem valor",
+              fmt_data(l["data_pagamento"]) if l["data_pagamento"] else "sem data"]
+    return " · ".join(partes)
+
+
+def paineis_lancamentos(args):
+    db = get_db()
+    busca = (args.get("q") or "").strip().lower()
+    filtro = args.get("filtro", "")
+    invoices = db.execute(
+        "SELECT i.id, i.numero, i.moeda, i.data_assinatura, i.cancelado_em, i.criado_em, f.nome AS fornecedor"
+        " FROM invoices i JOIN fornecedores f ON f.id = i.fornecedor_id ORDER BY i.id DESC").fetchall()
+    lancs = {}
+    for l in db.execute("SELECT l.*, u.nome AS usuario FROM lancamentos l LEFT JOIN usuarios u"
+                        " ON u.id = COALESCE(l.atualizado_por, l.criado_por)"
+                        " ORDER BY l.data_pagamento IS NULL, l.data_pagamento, l.id"):
+        lancs.setdefault(l["invoice_id"], []).append(l)
+    paineis = []
+    for inv in invoices:
+        lista = lancs.get(inv["id"], [])
+        if inv["cancelado_em"] and not lista and filtro != "todos":
+            continue
+        if busca and busca not in inv["numero"].lower() and busca not in inv["fornecedor"].lower():
+            continue
+        if filtro == "com" and not lista:
+            continue
+        if filtro == "sem" and lista:
+            continue
+        paineis.append({"inv": inv, "lancamentos": lista,
+                        "total": round(sum(l["valor"] for l in lista if l["valor"] is not None), 2)})
+    return paineis
+
+
+@app.route("/lancamentos")
+@login_obrigatorio
+def lancamentos():
+    paineis = paineis_lancamentos(request.args)
+    usados = [r[0] for r in get_db().execute(
+        "SELECT tipo FROM lancamentos WHERE tipo <> '' GROUP BY lower(tipo) ORDER BY COUNT(*) DESC")]
+    sugestoes = list(dict.fromkeys(usados + TIPOS_LANCAMENTO_SUGERIDOS))
+    total = round(sum(p["total"] for p in paineis), 2)
+    qtd = sum(len(p["lancamentos"]) for p in paineis)
+    return render_template("lancamentos.html", paineis=paineis, sugestoes=sugestoes, total=total, qtd=qtd,
+                           args=request.args, aberto=request.args.get("aberto", type=int), editar=pode_lancar())
+
+
+def voltar_lancamentos(iid):
+    destino = request.form.get("voltar") or url_for("lancamentos")
+    sep = "&" if "?" in destino else "?"
+    return redirect(f"{destino}{sep}aberto={iid}#inv-{iid}")
+
+
+@app.route("/invoices/<int:id>/lancamentos", methods=["POST"])
+@login_obrigatorio
+def lancamento_novo(id):
+    if not pode_lancar():
+        abort(403)
+    if get_db().execute("SELECT 1 FROM invoices WHERE id = ?", (id,)).fetchone() is None:
+        abort(404)
+    dados, erros = ler_lancamento(request.form)
+    if erros:
+        for e in erros:
+            flash(e, "erro")
+        return voltar_lancamentos(id)
+    get_db().execute("INSERT INTO lancamentos (invoice_id, tipo, valor, data_pagamento, criado_por, criado_em)"
+                     " VALUES (?, ?, ?, ?, ?, ?)",
+                     (id, dados["tipo"], dados["valor"], dados["data_pagamento"], g.usuario["id"], agora()))
+    registrar_evento(id, "Lançamento financeiro incluído", descrever_lancamento(dados))
+    get_db().commit()
+    flash("Lançamento incluído.", "ok")
+    return voltar_lancamentos(id)
+
+
+@app.route("/lancamentos/<int:lid>/editar", methods=["POST"])
+@login_obrigatorio
+def lancamento_editar(lid):
+    if not pode_lancar():
+        abort(403)
+    db = get_db()
+    antigo = db.execute("SELECT * FROM lancamentos WHERE id = ?", (lid,)).fetchone()
+    if antigo is None:
+        abort(404)
+    dados, erros = ler_lancamento(request.form)
+    if erros:
+        for e in erros:
+            flash(e, "erro")
+        return voltar_lancamentos(antigo["invoice_id"])
+    if (dados["tipo"], dados["valor"], dados["data_pagamento"]) != (antigo["tipo"], antigo["valor"], antigo["data_pagamento"]):
+        db.execute("UPDATE lancamentos SET tipo = ?, valor = ?, data_pagamento = ?, atualizado_por = ?,"
+                   " atualizado_em = ? WHERE id = ?",
+                   (dados["tipo"], dados["valor"], dados["data_pagamento"], g.usuario["id"], agora(), lid))
+        registrar_evento(antigo["invoice_id"], "Lançamento financeiro corrigido",
+                         f"{descrever_lancamento(antigo)} → {descrever_lancamento(dados)}")
+        db.commit()
+        flash("Lançamento atualizado.", "ok")
+    return voltar_lancamentos(antigo["invoice_id"])
+
+
+@app.route("/lancamentos/<int:lid>/excluir", methods=["POST"])
+@login_obrigatorio
+def lancamento_excluir(lid):
+    if not pode_lancar():
+        abort(403)
+    db = get_db()
+    l = db.execute("SELECT * FROM lancamentos WHERE id = ?", (lid,)).fetchone()
+    if l is None:
+        abort(404)
+    db.execute("DELETE FROM lancamentos WHERE id = ?", (lid,))
+    registrar_evento(l["invoice_id"], "Lançamento financeiro excluído", descrever_lancamento(l))
+    db.commit()
+    flash("Lançamento excluído.", "ok")
+    return voltar_lancamentos(l["invoice_id"])
+
+
+@app.route("/lancamentos.csv")
+@login_obrigatorio
+def lancamentos_csv():
+    saida = io.StringIO()
+    w = csv.writer(saida, delimiter=";")
+    w.writerow(["Fornecedor", "Invoice", "Tipo de pagamento", "Valor (R$)", "Data do pagamento"])
+    for p in paineis_lancamentos(request.args):
+        for l in p["lancamentos"]:
+            w.writerow([p["inv"]["fornecedor"], p["inv"]["numero"], l["tipo"],
+                        fmt_num(l["valor"]) if l["valor"] is not None else "",
+                        fmt_data(l["data_pagamento"]) if l["data_pagamento"] else ""])
+    return Response("﻿" + saida.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=lancamentos-financeiros-{hoje()}.csv"})
 
 
 # ---------------------------------------------------------------------------

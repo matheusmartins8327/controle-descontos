@@ -20,6 +20,7 @@
       <a href="{{ url_for('painel') }}" class="{{ 'ativo' if request.endpoint == 'painel' }}">Painel</a>
       {% if pode('importacao') %}<a href="{{ url_for('invoice_novo') }}" class="{{ 'ativo' if request.endpoint == 'invoice_novo' }}">Novo invoice</a>{% endif %}
       <a href="{{ url_for('fluxo_pagamentos') }}" class="{{ 'ativo' if request.endpoint == 'fluxo_pagamentos' }}">Fluxo de pagamentos</a>
+      <a href="{{ url_for('lancamentos') }}" class="{{ 'ativo' if request.endpoint == 'lancamentos' }}">Lançamentos Financeiros</a>
       <a href="{{ url_for('descontos') }}" class="{{ 'ativo' if request.endpoint == 'descontos' }}">Descontos</a>
       <a href="{{ url_for('fornecedores') }}" class="{{ 'ativo' if request.endpoint == 'fornecedores' }}">Fornecedores</a>
       <a href="{{ url_for('relatorios') }}" class="{{ 'ativo' if request.endpoint == 'relatorios' }}">Relatórios</a>

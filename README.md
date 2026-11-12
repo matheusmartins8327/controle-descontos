@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.3)
+# Controle de Invoices e Descontos (v4.4)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -170,4 +170,11 @@ Ao instalar a v4.0, a situação atual é registrada sem enviar nada sobre o his
 Os resumos são disparados por um agendador externo gratuito (cron-job.org) que chama, todo dia às 8h de Brasília,
 o endereço secreto exibido na aba E-mails (o passo a passo está na própria aba). Se o agendador falhar, os resumos
 saem no primeiro acesso ao sistema depois das 8h. Cada resumo sai no máximo uma vez por dia.
+
+## Lançamentos Financeiros (v4.4)
+Aba separada do fluxo de invoices. Todo invoice cadastrado aparece automaticamente com um painel próprio, onde o
+Financeiro (e o Administrador) registra lançamentos com **tipo de pagamento** (campo livre, com sugestões como COFINS,
+ICMS, PIS, Armazenagem), **valor em R$** e **data do pagamento**. Todos os campos são opcionais (a linha só não pode
+ficar totalmente vazia); os lançamentos não geram pendências nem e-mails. Os demais perfis veem em modo leitura.
+Inclusões, correções e exclusões ficam no histórico do invoice. Há busca, filtros e exportação para Excel (CSV).
 
