@@ -308,3 +308,12 @@ input.curto { width: 3.2rem; display: inline-block; }
 .copiar { display: flex; gap: .5rem; align-items: center; margin: .35rem 0; flex-wrap: wrap; }
 .copiar code { background: #f1f4fa; padding: .3rem .5rem; border-radius: 6px; word-break: break-all; font-size: .85rem; }
 .ok-txt { color: #1d7a3e; }
+
+/* v4.1: agendador dos resumos */
+.resumo-status { display: grid; grid-template-columns: max-content 1fr; gap: .2rem 1rem; margin: .6rem 0; }
+.resumo-status dt { color: #5b6170; }
+.passos { margin: .6rem 0; }
+.passos summary { cursor: pointer; color: var(--pri-escuro); font-weight: 600; }
+.passos ol { margin: .5rem 0 0 1.2rem; line-height: 1.7; }
+.aviso-txt { color: var(--alerta); }
+.novo-fluxo { color: var(--pri-escuro); margin-top: .25rem; }

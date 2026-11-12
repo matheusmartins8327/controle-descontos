@@ -38,7 +38,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "4.0"
+VERSAO = "4.1"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2383,10 +2383,16 @@ FLUXOS_EMAIL = {
         "Chegada de invoice com dedução",
         "Aviso à Engenharia de Processos quando chega à fábrica um invoice que recebeu dedução de desconto de "
         "outro invoice.", "admin", ""),
+    "resumo_semanal": (
+        "Resumo semanal de pendências do Financeiro",
+        "Toda segunda-feira às 8h (Brasília): tudo o que o Financeiro precisa fazer, separado em vencidos, "
+        "vencem na semana, próximos e ações sem data.", "financeiro", ""),
     "resumo_diario": (
-        "Resumo diário de pendências do Financeiro",
-        "Em dias úteis, a partir do horário configurado, se o Financeiro tiver pendências.", "financeiro", ""),
+        "Pendências do Financeiro vencidas ou que vencem hoje",
+        "Todos os dias às 8h (Brasília): somente o que vence no dia ou já venceu. Se não houver nada, não envia.",
+        "financeiro", ""),
 }
+HORA_RESUMOS = 8  # horário de Brasília dos resumos (o agendador externo deve chamar neste horário)
 STATUS_EMAIL = {"PENDENTE": "Na fila", "ENVIADO": "Enviado", "ERRO": "Erro", "NAO_ENVIADO": "Não enviado"}
 SMTP_PADRAO = {"smtp_host": "smtp.gmail.com", "smtp_porta": "587",
                "smtp_nome": "Controle de Invoices · Quinelato"}
@@ -2445,7 +2451,9 @@ def corpo_email(titulo, r, linhas, obs=None):
         cab = "".join(f'<tr><td style="color:#5b6170;padding:2px 12px 2px 0">{escape(k)}</td>'
                       f'<td style="padding:2px 0"><strong>{escape(v)}</strong></td></tr>' for k, v in dados)
         cab = f'<table style="border-collapse:collapse;margin:8px 0 14px">{cab}</table>'
-    itens = "".join(f'<li style="margin:4px 0">{escape(x)}</li>' for x in linhas)
+    itens = "".join(
+        f'<li style="list-style:none;margin:14px 0 4px -20px;font-weight:bold;color:#0a2a7b">{escape(x["secao"])}</li>'
+        if isinstance(x, dict) else f'<li style="margin:4px 0">{escape(x)}</li>' for x in linhas)
     obs_html = f'<p style="margin:12px 0 0">{escape(obs)}</p>' if obs else ""
     return (f'<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#212529;max-width:680px">'
             f'<div style="border-bottom:3px solid #327fef;padding-bottom:6px;margin-bottom:10px">'
@@ -2643,38 +2651,77 @@ def processar_notificacoes():
     db.commit()
 
 
-# ---------- resumo diário ----------
-def resumo_diario(forcar=False):
-    """Envia (uma vez por dia útil) as pendências do Financeiro. Retorna uma mensagem do que aconteceu."""
-    agora_br = agora_brasil()
-    dia = agora_br.date().isoformat()
-    if not forcar:
-        if agora_br.weekday() >= 5:
-            return "Fim de semana: o resumo só é enviado em dias úteis."
-        if agora_br.hour < int(config("resumo_hora", "8")):
-            return "Ainda não chegou o horário do resumo."
-        if config("resumo_ultimo") == dia:
-            return "O resumo de hoje já foi processado."
-    salvar_config("resumo_ultimo", dia)
-    get_db().commit()
+# ---------- resumos do Financeiro ----------
+def linha_pendencia(p):
+    txt = f"{p['r']['fornecedor']} · {p['r']['numero']}: {p['acao']}"
+    if p["data"]:
+        txt += f" · {fmt_data(p['data'])}"
+    if p["valor"] is not None:
+        txt += f" · {fmt_moeda(p['valor'], p['r']['moeda'])}"
+    return txt
+
+
+def gerar_resumo(tipo):
+    """tipo 'diario': só o que vence hoje ou já venceu; 'semanal': todas as pendências do Financeiro."""
+    br = agora_brasil()
+    dia = br.date().isoformat()
     pend = [p for p in listar_pendencias(todos_invoices(), perfil="financeiro") if p["quem"] == "financeiro"]
-    if not pend:
-        return "O Financeiro não tem pendências: nenhum e-mail enviado."
+    vencidos = [p for p in pend if p["data"] and p["data"] < dia]
+    hoje_ = [p for p in pend if p["data"] == dia]
+    if tipo == "diario":
+        grupos = [("Vencidos", vencidos), ("Vencem hoje", hoje_)]
+        obs = "Por favor, realize hoje as ações acima e registre-as no sistema."
+    else:
+        domingo = (br.date() + timedelta(days=6 - br.weekday())).isoformat()
+        grupos = [("Vencidos", vencidos), ("Vencem hoje", hoje_),
+                  (f"Vencem nesta semana (até {fmt_data(domingo)})", [p for p in pend if p["data"] and dia < p["data"] <= domingo]),
+                  ("Próximos vencimentos", [p for p in pend if p["data"] and p["data"] > domingo]),
+                  ("Ações sem data (registrar no sistema)", [p for p in pend if not p["data"]])]
+        obs = "Programação da semana do Financeiro. Registre no sistema cada ação realizada."
+    total = sum(len(itens) for _t, itens in grupos)
+    nome = "resumo diário" if tipo == "diario" else "resumo semanal"
+    if not total:
+        return f"{nome.capitalize()}: nada a enviar."
     linhas = []
-    for p in pend:
-        txt = f"{p['r']['fornecedor']} · {p['r']['numero']}: {p['acao']}"
-        if p["data"]:
-            txt += f" · {fmt_data(p['data'])}"
-        if p["valor"] is not None:
-            txt += f" · {fmt_moeda(p['valor'], p['r']['moeda'])}"
-        if p["alerta"]:
-            txt = "⚠ " + txt
-        linhas.append(txt)
-    enfileirar_email("resumo_diario", None, f"{len(pend)} pendência(s) · {agora_br.strftime('%d/%m/%Y')}",
-                     linhas, "Por favor, realize as ações acima e registre-as no sistema. "
-                             "Itens com ⚠ estão vencidos ou vencem nos próximos 7 dias.")
+    for titulo, itens in grupos:
+        if itens:
+            linhas.append({"secao": f"{titulo} ({len(itens)})"})
+            linhas += [linha_pendencia(p) for p in itens]
+    fluxo = "resumo_diario" if tipo == "diario" else "resumo_semanal"
+    enfileirar_email(fluxo, None, f"{total} pendência(s) · {br.strftime('%d/%m/%Y')}", linhas, obs)
     get_db().commit()
-    return f"Resumo gerado com {len(pend)} pendência(s)."
+    return f"{nome.capitalize()} gerado com {total} pendência(s)."
+
+
+def executar_resumos(pelo_agendador=False):
+    """Gera os resumos do dia (uma vez por dia; o semanal só às segundas-feiras).
+    Pelo agendador o horário é o dele; no acesso ao sistema (reserva), só a partir das 8h."""
+    br = agora_brasil()
+    dia = br.date().isoformat()
+    if pelo_agendador:
+        salvar_config("agendador_ultimo", br.strftime("%Y-%m-%d %H:%M:%S"))
+        get_db().commit()
+    elif br.hour < HORA_RESUMOS:
+        return []
+    msgs = []
+    if config("resumo_ultimo") != dia:
+        salvar_config("resumo_ultimo", dia)
+        get_db().commit()
+        msgs.append(gerar_resumo("diario"))
+    if br.weekday() == 0 and config("resumo_semanal_ultimo") != dia:
+        salvar_config("resumo_semanal_ultimo", dia)
+        get_db().commit()
+        msgs.append(gerar_resumo("semanal"))
+    return msgs or ["Os resumos de hoje já tinham sido processados."]
+
+
+def resumos_pendentes_hoje():
+    if config("email_fluxos") is None:
+        return False
+    br = agora_brasil()
+    dia = br.date().isoformat()
+    return br.hour >= HORA_RESUMOS and (config("resumo_ultimo") != dia or
+                                        (br.weekday() == 0 and config("resumo_semanal_ultimo") != dia))
 
 
 # ---------- envio ----------
@@ -2743,16 +2790,16 @@ def tarefas_em_segundo_plano(resumo=True):
     with app.app_context():
         try:
             if resumo:
-                resumo_diario()
+                executar_resumos()
             enviar_fila()
         except Exception:
             app.logger.exception("Falha nas tarefas de e-mail")
 
 
 def tarefa_diaria():
-    """Para tarefa agendada (deploy/tarefa_diaria.sh) ou agendador externo: resumo + fila."""
+    """Para tarefa agendada (deploy/tarefa_diaria.sh): resumos + fila."""
     with app.app_context():
-        msg = resumo_diario()
+        msg = " ".join(executar_resumos(pelo_agendador=True))
         n = enviar_fila()
         return f"{msg} E-mails enviados agora: {n}."
 
@@ -2774,8 +2821,7 @@ def notificacoes_apos_alteracao(resp):
         except Exception:
             app.logger.exception("Falha ao processar notificações")
     try:
-        precisa_resumo = (config("resumo_ultimo") != agora_brasil().date().isoformat()
-                          and config("email_fluxos") is not None)
+        precisa_resumo = resumos_pendentes_hoje()  # reserva, caso o agendador não tenha chamado
         if g.get("ha_emails_na_fila") or precisa_resumo:
             resp.call_on_close(lambda: tarefas_em_segundo_plano(resumo=precisa_resumo))
     except Exception:
@@ -2785,11 +2831,11 @@ def notificacoes_apos_alteracao(resp):
 
 @app.route("/tarefas/diaria/<chave>")
 def tarefa_diaria_url(chave):
-    """Endereço para um agendador externo (ex.: cron-job.org) chamar uma vez por dia."""
+    """Endereço para um agendador externo (ex.: cron-job.org) chamar todo dia às 8h (Brasília)."""
     certa = config("tarefa_chave")
     if not certa or not secrets.compare_digest(certa, chave):
         abort(404)
-    msg = resumo_diario()
+    msg = " ".join(executar_resumos(pelo_agendador=True))
     n = enviar_fila()
     return Response(f"OK · {msg} E-mails enviados agora: {n}.", mimetype="text/plain")
 
@@ -2808,8 +2854,8 @@ def emails_config():
     return render_template(
         "emails.html", fluxos=fluxos_para_tela(), salvo=config("email_fluxos") is not None,
         smtp={k: config(k, SMTP_PADRAO.get(k, "")) for k in ("smtp_host", "smtp_porta", "smtp_usuario", "smtp_nome")},
-        tem_senha=bool(config("smtp_senha")), resumo_hora=config("resumo_hora", "8"),
-        resumo_ultimo=config("resumo_ultimo"), historico=historico, contagem=contagem,
+        tem_senha=bool(config("smtp_senha")), agendador_ultimo=config("agendador_ultimo"),
+        resumo_ultimo=config("resumo_ultimo"), resumo_semanal_ultimo=config("resumo_semanal_ultimo"), historico=historico, contagem=contagem,
         url_tarefa=re.sub(r"^http://(?=[^/]*pythonanywhere\.com)", "https://",
                           url_for("tarefa_diaria_url", chave=config("tarefa_chave"), _external=True)),
         FLUXOS_EMAIL=FLUXOS_EMAIL, STATUS_EMAIL=STATUS_EMAIL)
@@ -2872,15 +2918,11 @@ def emails_fluxos():
             erros.append(f"{titulo}: e-mail inválido ({', '.join(invalidos)})")
         novos[chave] = {"ativo": bool(f.get(f"ativo_{chave}")), "para": ", ".join(lista_emails(para)),
                         "cc": ", ".join(lista_emails(cc))}
-    hora = f.get("resumo_hora", "8")
-    if not hora.isdigit() or not 0 <= int(hora) <= 23:
-        erros.append("Horário do resumo diário: informe uma hora entre 0 e 23.")
     if erros:
         for e in erros:
             flash(e, "erro")
     else:
         salvar_config("email_fluxos", json.dumps(novos, ensure_ascii=False))
-        salvar_config("resumo_hora", hora)
         get_db().commit()
         flash("Destinatários salvos.", "ok")
     return redirect(url_for("emails_config") + "#fluxos")
@@ -2896,8 +2938,8 @@ def emails_acao():
         db.commit()
         n = enviar_fila()
         flash(f"Reenvio concluído: {n} e-mail(s) enviado(s). Veja o histórico abaixo.", "ok")
-    elif acao == "resumo":
-        msg = resumo_diario(forcar=True)
+    elif acao in ("resumo_diario", "resumo_semanal"):
+        msg = gerar_resumo("diario" if acao == "resumo_diario" else "semanal")
         n = enviar_fila()
         flash(f"{msg} E-mails enviados agora: {n}.", "ok")
     elif acao == "nova_chave":

@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.0)
+# Controle de Invoices e Descontos (v4.1)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -160,12 +160,14 @@ destinatários (Para/Cc) e ativação de cada fluxo, horário do resumo diário 
 | Desconto cadastrado: segurar valor | Desconto registrado na inspeção (a dedução em outro invoice só fica disponível após a aprovação) | Financeiro, Cc Importação |
 | Valor segurado liberado | Invoice com a dedução chega à fábrica (pagar até chegada + 5 dias úteis) ou revalidação para baixo | Financeiro |
 | Chegada de invoice com dedução | Chegada real na fábrica de invoice que recebeu dedução de outro invoice | Engenharia de Processos |
-| Resumo diário | Dias úteis, a partir do horário configurado, se o Financeiro tiver pendências | Financeiro |
+| Resumo semanal | Toda segunda-feira às 8h (Brasília): todas as pendências do Financeiro (vencidos, semana, próximos, sem data) | Financeiro |
+| Pendências vencidas ou que vencem hoje | Todos os dias às 8h (Brasília), só se houver algo vencido ou vencendo no dia | Financeiro |
 
 Funcionamento: a cada alteração salva, o sistema compara a previsibilidade de cada invoice com a última notificada e
 gera os e-mails das diferenças (fila na tabela `emails`, enviados logo após a página responder; até 3 tentativas).
 Ao instalar a v4.0, a situação atual é registrada sem enviar nada sobre o histórico. Dias úteis = segunda a sexta
 (feriados não são considerados). A senha de app do Gmail fica só no banco do servidor (pasta `instance/`).
-O resumo diário sai no primeiro acesso após o horário ou por um agendador externo (ex.: cron-job.org) chamando o
-endereço exibido na aba E-mails.
+Os resumos são disparados por um agendador externo gratuito (cron-job.org) que chama, todo dia às 8h de Brasília,
+o endereço secreto exibido na aba E-mails (o passo a passo está na própria aba). Se o agendador falhar, os resumos
+saem no primeiro acesso ao sistema depois das 8h. Cada resumo sai no máximo uma vez por dia.
 

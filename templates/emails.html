@@ -42,7 +42,7 @@
         <tr>
           <td><input type="checkbox" name="ativo_{{ f.chave }}" value="1" {{ 'checked' if f.ativo }}></td>
           <td><strong>{{ f.titulo }}</strong><small class="bloco-linha">{{ f.quando }}</small>
-            {% if f.chave == 'resumo_diario' %}<label class="inline">A partir das <input name="resumo_hora" value="{{ resumo_hora }}" size="2" class="curto"> h (Brasília)</label>{% endif %}</td>
+            {% if salvo and not f.salvo %}<small class="bloco-linha novo-fluxo">Novo: confira e clique em "Salvar destinatários" para ativar.</small>{% endif %}</td>
           <td><textarea name="para_{{ f.chave }}" rows="2" placeholder="{{ f.sugestao_para }}">{{ f.para }}</textarea></td>
           <td><textarea name="cc_{{ f.chave }}" rows="2" placeholder="{{ f.sugestao_cc or 'opcional' }}">{{ f.cc }}</textarea></td>
         </tr>
@@ -56,20 +56,36 @@
 </section>
 
 <section class="bloco" id="diario">
-  <h2>3. Envio diário (resumo de pendências e reenvios)</h2>
-  <p>O resumo é enviado em dias úteis, uma vez por dia, a partir do horário configurado. Ele é disparado de duas formas:</p>
-  <ul>
-    <li><strong>Automaticamente no primeiro acesso ao sistema</strong> depois do horário (qualquer usuário abrindo qualquer página).</li>
-    <li><strong>Por um agendador externo</strong> (recomendado, para não depender de alguém acessar), chamando uma vez por dia este endereço:
-      <div class="copiar"><code id="url-tarefa">{{ url_tarefa }}</code>
-        <button type="button" class="btn pequeno" onclick="navigator.clipboard.writeText(document.getElementById('url-tarefa').textContent);this.textContent='Copiado'">Copiar</button></div>
-      <small>Guarde este endereço como uma senha: quem o tiver consegue apenas disparar o resumo.</small></li>
-  </ul>
-  <p class="sub">Último resumo processado: {{ resumo_ultimo|data if resumo_ultimo else 'nenhum' }}.</p>
+  <h2>3. Agendador dos resumos (todo dia às 8h de Brasília)</h2>
+  <p>Os resumos do Financeiro são disparados por um <strong>agendador externo gratuito</strong>, que chama o endereço abaixo
+    todos os dias às 8h. Não depende de ninguém abrir o sistema. Em cada chamada, o sistema envia o
+    <strong>resumo diário</strong> (vencidos e que vencem hoje) e, às segundas-feiras, também o <strong>resumo semanal</strong>.</p>
+  <div class="copiar"><code id="url-tarefa">{{ url_tarefa }}</code>
+    <button type="button" class="btn pequeno" onclick="navigator.clipboard.writeText(document.getElementById('url-tarefa').textContent);this.textContent='Copiado'">Copiar</button></div>
+  <p class="sub dica">Guarde este endereço como uma senha: quem o tiver consegue apenas disparar os resumos do dia (cada um sai no máximo uma vez por dia).</p>
+  <dl class="resumo-status">
+    <dt>Último acionamento pelo agendador</dt><dd>{% if agendador_ultimo %}<strong>{{ agendador_ultimo|data }}</strong> (horário de Brasília){% else %}<span class="aviso-txt">nenhum ainda: configure o agendador</span>{% endif %}</dd>
+    <dt>Último resumo diário</dt><dd>{{ resumo_ultimo|data if resumo_ultimo else '—' }}</dd>
+    <dt>Último resumo semanal</dt><dd>{{ resumo_semanal_ultimo|data if resumo_semanal_ultimo else '—' }}</dd>
+  </dl>
+  <details class="passos"><summary>Como configurar o agendador (cron-job.org, gratuito)</summary>
+    <ol>
+      <li>Crie uma conta em <strong>cron-job.org</strong> (Sign up) e confirme o e-mail.</li>
+      <li>Clique em <strong>Create cronjob</strong>.</li>
+      <li><strong>Title</strong>: Resumos Invoices. <strong>URL</strong>: cole o endereço acima (botão Copiar).</li>
+      <li><strong>Execution schedule</strong>: <em>Every day at</em> 8 : 00.</li>
+      <li>Em <strong>Advanced</strong> → <strong>Time zone</strong>: <em>America/Sao_Paulo</em>.</li>
+      <li>Em <strong>Notifications</strong>, marque para avisar se a execução falhar.</li>
+      <li>Clique em <strong>Create</strong> e depois em <strong>Test run</strong>: a resposta deve começar com "OK" e o
+        "Último acionamento" acima passa a mostrar a data e hora do teste.</li>
+    </ol>
+  </details>
+  <p class="sub">Reserva: se o agendador não chamar, os resumos do dia saem no primeiro acesso ao sistema depois das 8h.</p>
   <form method="post" action="{{ url_for('emails_acao') }}" class="linha-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button class="btn" name="acao" value="resumo">Enviar o resumo agora</button>
-    <button class="btn link" name="acao" value="nova_chave" onclick="return confirm('Gerar um novo endereço? O anterior deixa de funcionar.')">Gerar novo endereço</button>
+    <button class="btn" name="acao" value="resumo_diario">Enviar o resumo diário agora</button>
+    <button class="btn" name="acao" value="resumo_semanal">Enviar o resumo semanal agora</button>
+    <button class="btn link" name="acao" value="nova_chave" onclick="return confirm('Gerar um novo endereço? O anterior deixa de funcionar e o agendador precisa ser atualizado.')">Gerar novo endereço</button>
   </form>
 </section>
 
