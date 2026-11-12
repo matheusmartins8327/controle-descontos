@@ -317,3 +317,13 @@ input.curto { width: 3.2rem; display: inline-block; }
 .passos ol { margin: .5rem 0 0 1.2rem; line-height: 1.7; }
 .aviso-txt { color: var(--alerta); }
 .novo-fluxo { color: var(--pri-escuro); margin-top: .25rem; }
+
+/* v4.2: registrar condição de pagamento */
+.acoes-condicao { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .4rem; }
+.status-condicao:empty { display: none; }
+.status-condicao { margin-top: .6rem; padding: .55rem .8rem; border-radius: 8px; font-size: .92rem; }
+.status-condicao.ok { background: var(--ok-claro); color: var(--ok); }
+.status-condicao.erro { background: #fdecec; color: #b42318; }
+.status-condicao.pendente { background: var(--alerta-claro); color: var(--alerta); }
+.status-condicao ul { margin: .3rem 0 0 1.1rem; }
+input.inativo { background: #f1f2f6; color: #9aa0ad; }

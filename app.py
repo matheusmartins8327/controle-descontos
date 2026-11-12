@@ -38,7 +38,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "4.1"
+VERSAO = "4.2"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -1163,7 +1163,7 @@ def ler_form_invoice():
     dados = {
         "fornecedor": " ".join(f.get("fornecedor", "").split()),
         "numero": f.get("numero", "").strip(),
-        "moeda": f.get("moeda", "") if f.get("moeda", "") in MOEDAS else "USD",
+        "moeda": f.get("moeda", "") if f.get("moeda", "") in MOEDAS else "",
         "data_assinatura": data_valida(f.get("data_assinatura")) or "",
         "agente_carga": f.get("agente_carga", "").strip(),
         "despachante": f.get("despachante", "").strip(),
@@ -1176,6 +1176,8 @@ def ler_form_invoice():
         erros.append("Informe o fornecedor.")
     if not dados["numero"]:
         erros.append("Informe o número do invoice.")
+    if not dados["moeda"]:
+        erros.append("Selecione a moeda do invoice.")
     itens = []
     for cod, desc, qtd, vu in zip(f.getlist("item_codigo"), f.getlist("item_desc"), f.getlist("item_qtd"),
                                   f.getlist("item_vu")):
@@ -1187,7 +1189,9 @@ def ler_form_invoice():
         itens.append({"codigo": cod.strip(), "item": desc.strip(), "quantidade": quantidade,
                       "valor_unit_original": preco, "valor_unit": preco})
     condicao = []
-    for pct, tipo, dias in zip(f.getlist("cond_pct"), f.getlist("cond_tipo"), f.getlist("cond_dias")):
+    pcts, tipos, dias_l = f.getlist("cond_pct"), f.getlist("cond_tipo"), f.getlist("cond_dias")
+    dias_l += [""] * (len(pcts) - len(dias_l))  # proteção: cada linha deve ter os três campos
+    for pct, tipo, dias in zip(pcts, tipos, dias_l):
         percentual = parse_num(pct)
         if percentual is None:
             continue
@@ -1561,7 +1565,7 @@ def invoice_novo():
             flash(e, "erro")
         return render_template("invoice_form.html", d=dados, itens=itens, fornecedores=fornecedores, editando=False,
                                deducoes_escolhidas=dict(deducoes))
-    return render_template("invoice_form.html", d={"moeda": "USD", "condicao": [{"percentual": 100, "tipo": "PRAZO"}]},
+    return render_template("invoice_form.html", d={"moeda": "", "condicao": [{"percentual": 100, "tipo": "PRAZO"}]},
                            itens=[],
                            fornecedores=fornecedores, editando=False, deducoes_escolhidas={})
 

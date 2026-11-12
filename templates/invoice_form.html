@@ -14,7 +14,7 @@
     <label>Nº do invoice *<input name="numero" value="{{ d.numero or '' }}" required></label>
     <label>Moeda *
       {% if chave_travada %}<input name="moeda" id="moeda" value="{{ d.moeda }}" readonly>
-      {% else %}<select name="moeda" id="moeda">{% for k, s in MOEDAS.items() %}<option value="{{ k }}" {{ 'selected' if d.moeda == k }}>{{ k }} ({{ s }})</option>{% endfor %}</select>{% endif %}
+      {% else %}<select name="moeda" id="moeda" required><option value="" {{ 'selected' if not d.moeda }}>Selecione…</option>{% for k, s in MOEDAS.items() %}<option value="{{ k }}" {{ 'selected' if d.moeda == k }}>{{ k }} ({{ s }})</option>{% endfor %}</select>{% endif %}
     </label>
     <label>Data de assinatura do invoice *<input type="date" name="data_assinatura" value="{{ d.data_assinatura or '' }}"></label>
     <label>Agente de carga<input name="agente_carga" value="{{ d.agente_carga or '' }}"></label>
@@ -41,7 +41,11 @@
     </tbody>
     <tfoot><tr><th class="num" id="soma-pct">—</th><th colspan="3"></th></tr></tfoot>
   </table>
-  <button type="button" class="btn pequeno" id="add-parcela">+ Adicionar parcela</button>
+  <div class="acoes-condicao">
+    <button type="button" class="btn pequeno" id="add-parcela">+ Adicionar parcela</button>
+    <button type="button" class="btn pequeno primario" id="registrar-condicao">Registrar condição</button>
+  </div>
+  <div id="status-condicao" class="status-condicao" aria-live="polite"></div>
 
   <h2>Itens <small id="contador-itens"></small></h2>
   <div class="carga-planilha">
@@ -116,26 +120,84 @@
     parcelas.querySelectorAll('tr').forEach(tr => {
       soma += num(tr.querySelector('[name=cond_pct]').value) || 0;
       const prazo = tr.querySelector('[name=cond_tipo]').value === 'PRAZO', dias = tr.querySelector('[name=cond_dias]');
-      dias.disabled = !prazo; if (!prazo) dias.value = '';
+      // readonly (e não disabled): campos desabilitados não são enviados e desalinhavam as parcelas
+      dias.readOnly = !prazo; dias.classList.toggle('inativo', !prazo); if (!prazo) dias.value = '';
     });
     const el = document.getElementById('soma-pct');
     el.textContent = `Total: ${soma.toLocaleString('pt-BR')}%`;
     el.classList.toggle('erro-texto', Math.abs(soma - 100) > 0.01);
   }
-  parcelas.addEventListener('input', ajustarParcelas);
-  parcelas.addEventListener('change', ajustarParcelas);
+  // "Registrar condição": confere a condição e mostra como ela foi entendida
+  const statusCond = document.getElementById('status-condicao');
+  let condRegistrada = false;
+  function lerCondicao() {
+    const linhas = [], erros = [];
+    let soma = 0;
+    parcelas.querySelectorAll('tr').forEach((tr, i) => {
+      const pctTxt = tr.querySelector('[name=cond_pct]').value.trim();
+      const tipo = tr.querySelector('[name=cond_tipo]').value;
+      const diasTxt = tr.querySelector('[name=cond_dias]').value.trim();
+      if (!pctTxt) { erros.push(`Parcela ${i + 1}: informe o percentual (ou remova a linha).`); return; }
+      const pct = num(pctTxt);
+      if (pct === null || pct <= 0 || pct > 100) { erros.push(`Parcela ${i + 1}: percentual inválido.`); return; }
+      soma += pct;
+      if (tipo === 'PRAZO') {
+        if (!/^\d+$/.test(diasTxt)) { erros.push(`Parcela ${i + 1}: informe os dias após a HAWB.`); return; }
+        linhas.push(`${pct.toLocaleString('pt-BR')}% ${diasTxt} dias após a HAWB`);
+      } else {
+        linhas.push(`${pct.toLocaleString('pt-BR')}% antecipado (assinatura + {{ PRAZO_ANTECIPADO_DIAS }} dias úteis)`);
+      }
+    });
+    if (!erros.length && Math.abs(soma - 100) > 0.01)
+      erros.push(`As parcelas somam ${soma.toLocaleString('pt-BR')}%: precisam somar 100%.`);
+    return {linhas, erros};
+  }
+  function mostrarStatus(tipo, html) { statusCond.className = 'status-condicao ' + tipo; statusCond.innerHTML = html; }
+  function registrarCondicao() {
+    const {linhas, erros} = lerCondicao();
+    if (erros.length) {
+      condRegistrada = false;
+      mostrarStatus('erro', '<strong>Condição não registrada:</strong><ul>' + erros.map(e => `<li>${e}</li>`).join('') + '</ul>');
+      return false;
+    }
+    condRegistrada = true;
+    mostrarStatus('ok', '✓ <strong>Condição registrada:</strong> ' + linhas.join(' + '));
+    return true;
+  }
+  function condicaoAlterada() {
+    ajustarParcelas();
+    if (condRegistrada || statusCond.textContent) {
+      condRegistrada = false;
+      mostrarStatus('pendente', 'Condição alterada: clique em <strong>Registrar condição</strong> para conferir.');
+    }
+  }
+  parcelas.addEventListener('input', condicaoAlterada);
+  parcelas.addEventListener('change', condicaoAlterada);
   parcelas.addEventListener('click', e => {
     if (!e.target.classList.contains('remover-parcela')) return;
     if (parcelas.rows.length > 1) e.target.closest('tr').remove();
-    ajustarParcelas();
+    condicaoAlterada();
   });
   document.getElementById('add-parcela').addEventListener('click', () => {
     const tr = parcelas.rows[0].cloneNode(true);
     tr.querySelectorAll('input').forEach(i => i.value = '');
     tr.querySelector('[name=cond_tipo]').value = 'PRAZO';
-    parcelas.appendChild(tr); ajustarParcelas();
+    parcelas.appendChild(tr); condicaoAlterada();
+    tr.querySelector('[name=cond_pct]').focus();
   });
+  document.getElementById('registrar-condicao').addEventListener('click', registrarCondicao);
   ajustarParcelas();
+  {% if d.condicao %}if (!lerCondicao().erros.length) registrarCondicao();{% endif %}
+  // ao salvar sem registrar: confere; se estiver incompleta, pergunta antes de salvar (fica pendente)
+  document.getElementById('form-invoice').addEventListener('submit', e => {
+    if (e.submitter && e.submitter.formAction && e.submitter.formAction.includes('exportar')) return;
+    if (condRegistrada || registrarCondicao()) return;
+    if (!confirm('A condição de pagamento não está correta (veja os detalhes em vermelho).\n\n' +
+                 'Salvar mesmo assim? O invoice ficará pendente até a condição ser corrigida.')) {
+      e.preventDefault();
+      statusCond.scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+  });
 
   // ---- itens
   const tbody = document.getElementById('itens');
@@ -249,7 +311,7 @@
   async function carregarDescontos() {
     if (!janela) return;
     const forn = document.getElementById('fornecedor').value.trim(), moeda = document.getElementById('moeda').value;
-    if (!forn) { janela.hidden = true; return; }
+    if (!forn || !moeda) { janela.hidden = true; return; }
     const resp = await fetch(`{{ url_for('api_descontos_disponiveis') }}?fornecedor=${encodeURIComponent(forn)}&moeda=${moeda}`);
     const lista = await resp.json();
     const corpo = document.getElementById('lista-descontos');
