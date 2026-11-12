@@ -13,18 +13,9 @@
 <body>
 {% if g.usuario %}
 <header class="topo">
-  <div class="topo-inner">
+  <div class="topo-barra">
     <a class="marca" href="{{ url_for('painel') }}"><img src="{{ url_for('static', filename='img/logo-quinelato.png') }}" alt="Quinelato">
-      <span><strong>Controle de Invoices</strong><span class="sub-marca">Importação · Descontos · Pagamentos</span></span></a>
-    <nav>
-      <a href="{{ url_for('painel') }}" class="{{ 'ativo' if request.endpoint == 'painel' }}">Painel</a>
-      {% if pode('importacao') %}<a href="{{ url_for('invoice_novo') }}" class="{{ 'ativo' if request.endpoint == 'invoice_novo' }}">Novo invoice</a>{% endif %}
-      <a href="{{ url_for('fluxo_pagamentos') }}" class="{{ 'ativo' if request.endpoint == 'fluxo_pagamentos' }}">Fluxo de pagamentos</a>
-      <a href="{{ url_for('lancamentos') }}" class="{{ 'ativo' if request.endpoint == 'lancamentos' }}">Lançamentos Financeiros</a>
-      <a href="{{ url_for('descontos') }}" class="{{ 'ativo' if request.endpoint == 'descontos' }}">Descontos</a>
-      <a href="{{ url_for('fornecedores') }}" class="{{ 'ativo' if request.endpoint == 'fornecedores' }}">Fornecedores</a>
-      <a href="{{ url_for('relatorios') }}" class="{{ 'ativo' if request.endpoint == 'relatorios' }}">Relatórios</a>
-    </nav>
+      <span><strong>Controle de Invoices</strong></span></a>
     {% set partes = g.usuario.nome.split() %}
     <details class="conta">
       <summary title="Minha conta">
@@ -46,6 +37,17 @@
       </div>
     </details>
   </div>
+  <nav class="abas" aria-label="Menu principal">
+    <div class="abas-inner">
+      <a href="{{ url_for('painel') }}" class="aba {{ 'ativo' if request.endpoint == 'painel' }}"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span>Painel</span></a>
+      <a href="{{ url_for('fluxo_pagamentos') }}" class="aba {{ 'ativo' if request.endpoint == 'fluxo_pagamentos' }}"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M16 2.5v4M8 2.5v4M3 10h18M8 14h3M8 17h6"/></svg><span>Fluxo de pagamentos</span></a>
+      <a href="{{ url_for('lancamentos') }}" class="aba {{ 'ativo' if request.endpoint == 'lancamentos' }}"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5h12v19l-3-2-3 2-3-2-3 2z"/><path d="M9 7.5h6M9 11.5h6M9 15.5h3"/></svg><span>Lançamentos Financeiros</span></a>
+      <a href="{{ url_for('descontos') }}" class="aba {{ 'ativo' if request.endpoint == 'descontos' }}"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L3 13V3h10l7.6 7.6a2 2 0 010 2.8z"/><circle cx="8" cy="8" r="1.6"/></svg><span>Descontos</span></a>
+      <a href="{{ url_for('fornecedores') }}" class="aba {{ 'ativo' if request.endpoint == 'fornecedores' }}"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V9l6 4V9l6 4V5l6 3v13z"/><path d="M3 21h18"/></svg><span>Fornecedores</span></a>
+      <a href="{{ url_for('relatorios') }}" class="aba {{ 'ativo' if request.endpoint == 'relatorios' }}"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Relatórios</span></a>
+      {% if pode('importacao') %}<a href="{{ url_for('invoice_novo') }}" class="novo-invoice {{ 'ativo' if request.endpoint == 'invoice_novo' }}"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg><span>Novo invoice</span></a>{% endif %}
+    </div>
+  </nav>
 </header>
 {% endif %}
 <main class="{{ 'estreito' if not g.usuario }}">

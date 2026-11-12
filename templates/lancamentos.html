@@ -3,15 +3,15 @@
 {% block conteudo %}
 <h1>Lançamentos Financeiros</h1>
 <p class="sub">A <strong>Importação</strong> aponta aqui os custos de cada importação (COFINS, ICMS, PIS, armazenagem…) que o
-  <strong>Financeiro</strong> deve lançar no ERP; o Financeiro marca <strong>Lançado no ERP</strong> em cada custo já lançado.
+  <strong>Financeiro</strong> deve lançar no MEGA (nosso ERP); o Financeiro marca <strong>Lançado no MEGA</strong> em cada custo já lançado.
   Cada invoice cadastrado aparece automaticamente. Todos os campos são opcionais e esta aba não faz parte do fluxo do invoice
   (não gera pendências nem e-mails).
   {% if not editar and not marcar %}<br><strong>Somente leitura.</strong>{% endif %}</p>
 
 <section class="fluxo cards-lanc">
   <a class="fluxo-etapa {{ 'alerta-card' if pend_qtd }} {{ 'sel' if args.get('filtro') == 'pendentes_erp' }}" href="{{ url_for('lancamentos', filtro='pendentes_erp') }}">
-    <span class="n">{{ pend_qtd }} <small>custos</small></span><span class="rot">A lançar no ERP</span><small>{{ pend_total|moeda('BRL') }}</small></a>
-  <div class="fluxo-etapa"><span class="n">{{ qtd - pend_qtd }} <small>custos</small></span><span class="rot">Já lançados no ERP</span><small>{{ (total - pend_total)|moeda('BRL') }}</small></div>
+    <span class="n">{{ pend_qtd }} <small>custos</small></span><span class="rot">A lançar no MEGA</span><small>{{ pend_total|moeda('BRL') }}</small></a>
+  <div class="fluxo-etapa"><span class="n">{{ qtd - pend_qtd }} <small>custos</small></span><span class="rot">Já lançados no MEGA</span><small>{{ (total - pend_total)|moeda('BRL') }}</small></div>
   <div class="fluxo-etapa"><span class="n">{{ qtd }} <small>custos</small></span><span class="rot">Total apontado</span><small>{{ total|moeda('BRL') }} · {{ paineis|length }} invoices</small></div>
 </section>
 
@@ -19,7 +19,7 @@
   <input name="q" value="{{ args.get('q', '') }}" placeholder="Buscar invoice ou fornecedor">
   <select name="filtro">
     <option value="">Invoices ativos</option>
-    <option value="pendentes_erp" {{ 'selected' if args.get('filtro') == 'pendentes_erp' }}>Com custos a lançar no ERP</option>
+    <option value="pendentes_erp" {{ 'selected' if args.get('filtro') == 'pendentes_erp' }}>Com custos a lançar no MEGA</option>
     <option value="com" {{ 'selected' if args.get('filtro') == 'com' }}>Somente com custos apontados</option>
     <option value="sem" {{ 'selected' if args.get('filtro') == 'sem' }}>Somente sem custos apontados</option>
     <option value="todos" {{ 'selected' if args.get('filtro') == 'todos' }}>Todos (inclui cancelados)</option>
@@ -42,8 +42,8 @@
       {% if inv.cancelado_em %}<span class="etiqueta cancelado">Cancelado</span>{% endif %}</span>
     <span class="pl-resumo">
       {% if p.lancamentos %}
-        {% if p.pendentes_erp %}<span class="etiqueta pendente-erp">{{ p.pendentes_erp }} a lançar no ERP</span>
-        {% else %}<span class="etiqueta ok-erp">✓ Tudo lançado no ERP</span>{% endif %}
+        {% if p.pendentes_erp %}<span class="etiqueta pendente-erp">{{ p.pendentes_erp }} a lançar no MEGA</span>
+        {% else %}<span class="etiqueta ok-erp">✓ Tudo lançado no MEGA</span>{% endif %}
         <span class="pl-total">{{ p.lancamentos|length }} {{ 'custo' if p.lancamentos|length == 1 else 'custos' }} · {{ p.total|moeda('BRL') }}</span>
       {% else %}<small>Sem custos apontados</small>{% endif %}
     </span>
@@ -54,7 +54,7 @@
     <div class="rolagem">
     <table class="tabela-lanc">
       <colgroup><col class="c-tipo"><col class="c-valor"><col class="c-data"><col class="c-quem"><col class="c-erp">{% if editar %}<col class="c-acoes">{% endif %}</colgroup>
-      <thead><tr><th>Tipo de pagamento</th><th class="num">Valor (R$)</th><th>Data do pagamento</th><th>Apontado por</th><th>Lançado no ERP</th>{% if editar %}<th></th>{% endif %}</tr></thead>
+      <thead><tr><th>Tipo de pagamento</th><th class="num">Valor (R$)</th><th>Data do pagamento</th><th>Apontado por</th><th>Lançado no MEGA</th>{% if editar %}<th></th>{% endif %}</tr></thead>
       <tbody>
       {% for l in p.lancamentos %}
         <tr class="{{ 'lancado' if l.lancado_erp }} {{ 'conferir' if l.alterado_apos_erp and not l.lancado_erp }}">
@@ -72,10 +72,10 @@
             <form method="post" action="{{ url_for('lancamento_erp', lid=l.id) }}" class="form-erp">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
               <input type="hidden" name="lancado" value="{{ '0' if l.lancado_erp else '1' }}">
-              <label class="flag-erp {{ 'marcado' if l.lancado_erp }}" title="{{ 'Desmarcar' if l.lancado_erp else 'Marcar como lançado no ERP' }}">
+              <label class="flag-erp {{ 'marcado' if l.lancado_erp }}" title="{{ 'Desmarcar' if l.lancado_erp else 'Marcar como lançado no MEGA' }}">
                 <input type="checkbox" {{ 'checked' if l.lancado_erp }} {{ 'disabled' if not marcar }} onchange="this.form.submit()">
                 {% if l.lancado_erp %}<span><strong>Lançado</strong><small>{{ l.usuario_erp or '—' }} · {{ l.lancado_erp_em|data }}</small></span>
-                {% elif l.alterado_apos_erp %}<span><strong class="txt-conferir">Alterado: conferir no ERP</strong><small>mudou depois de lançado</small></span>
+                {% elif l.alterado_apos_erp %}<span><strong class="txt-conferir">Alterado: conferir no MEGA</strong><small>mudou depois de lançado</small></span>
                 {% else %}<span>A lançar</span>{% endif %}
               </label>
             </form>
@@ -83,7 +83,7 @@
           {% if editar %}
           <td><div class="acoes-lanc">
             <form id="f{{ l.id }}" method="post" action="{{ url_for('lancamento_editar', lid=l.id) }}"
-                  {% if l.lancado_erp %}onsubmit="return confirm('Este custo já foi lançado no ERP pelo Financeiro. Ao alterar, ele volta para conferência do Financeiro. Continuar?')"{% endif %}>
+                  {% if l.lancado_erp %}onsubmit="return confirm('Este custo já foi lançado no MEGA pelo Financeiro. Ao alterar, ele volta para conferência do Financeiro. Continuar?')"{% endif %}>
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
               <button class="btn pequeno">Salvar</button></form>
             <form method="post" action="{{ url_for('lancamento_excluir', lid=l.id) }}" onsubmit="return confirm('Excluir este custo?')">

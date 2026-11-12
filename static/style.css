@@ -406,7 +406,7 @@ input.inativo { background: #f1f2f6; color: #9aa0ad; }
   .topo nav { order: 3; flex-basis: 100%; overflow-x: auto; padding-bottom: .15rem; }
 }
 
-/* v4.5: controle "Lançado no ERP" */
+/* v4.5: controle "Lançado no MEGA" */
 .tabela-lanc .c-tipo { width: 24%; } .tabela-lanc .c-valor { width: 14%; } .tabela-lanc .c-data { width: 15%; }
 .tabela-lanc .c-quem { width: 16%; } .tabela-lanc .c-erp { width: 19%; } .tabela-lanc .c-acoes { width: 12%; }
 .tabela-lanc { min-width: 900px; }
@@ -425,3 +425,33 @@ tr.conferir td { background: var(--alerta-claro); }
 .etiqueta.ok-erp { background: var(--ok-claro); color: var(--ok); font-size: .75rem; padding: .1rem .55rem; border-radius: 99px; font-weight: 600; }
 .pl-total { font-weight: 600; }
 .cards-lanc a.fluxo-etapa { text-decoration: none; color: inherit; }
+
+/* v4.6: cabeçalho em duas faixas (marca + conta / abas) alinhado ao conteúdo */
+.topo { background: var(--cabecalho); border-bottom: 0; box-shadow: 0 1px 0 rgba(10,42,123,.06); }
+.topo-barra { max-width: 1200px; margin: 0 auto; padding: .5rem 16px .35rem; display: flex; align-items: center; gap: 1rem; }
+.topo-barra .marca img { height: 28px; }
+.topo-barra .conta { margin-left: auto; }
+.topo-barra .conta summary { padding-top: .2rem; padding-bottom: .2rem; }
+.abas { background: #fff; border-bottom: 1px solid var(--borda); box-shadow: inset 0 3px 0 var(--pri); }
+.abas-inner { max-width: 1200px; margin: 0 auto; padding: 0 16px; display: flex; align-items: stretch; gap: .25rem;
+  overflow-x: auto; scrollbar-width: none; }
+.abas-inner::-webkit-scrollbar { display: none; }
+.abas a.aba { flex: 1 1 0; min-width: max-content; display: flex; align-items: center; justify-content: center; gap: .45rem;
+  padding: .8rem .75rem .7rem; color: var(--suave); text-decoration: none; font-size: .9rem; font-weight: 500;
+  border-bottom: 3px solid transparent; white-space: nowrap; transition: color .15s, background .15s, border-color .15s; }
+.abas a.aba svg { flex-shrink: 0; opacity: .85; }
+.abas a.aba:hover { color: var(--pri-escuro); background: #f5f8fe; }
+.abas a.aba.ativo { color: var(--pri-escuro); border-bottom-color: var(--pri); font-weight: 600; background: #f3f7ff; }
+.abas a.aba.ativo svg { opacity: 1; }
+.abas a.novo-invoice { flex: 0 0 auto; align-self: center; margin-left: .75rem; display: flex; align-items: center; gap: .35rem;
+  background: var(--pri); color: #fff; text-decoration: none; font-size: .86rem; font-weight: 600; white-space: nowrap;
+  padding: .45rem .9rem .45rem .7rem; border-radius: 99px; box-shadow: 0 2px 6px rgba(50,127,239,.3); transition: background .15s; }
+.abas a.novo-invoice:hover, .abas a.novo-invoice.ativo { background: var(--pri-escuro); }
+@media (max-width: 1100px) { .abas a.aba svg { display: none; } .abas a.aba { padding-left: .55rem; padding-right: .55rem; font-size: .86rem; } }
+@media (max-width: 600px) { .topo-barra .marca span { display: none; } }
+/* neutraliza regras do cabeçalho antigo (.topo nav ...) */
+.topo nav.abas { display: block; flex: none; order: 0; overflow: visible; padding: 0; gap: 0; }
+.topo nav.abas a.aba { border-radius: 0; box-shadow: none; border-left: 0; font-size: .9rem; }
+.topo nav.abas a.aba.ativo { box-shadow: none; }
+.topo nav.abas a.novo-invoice { border-left: 0; }
+@media (max-width: 1100px) { .topo nav.abas a.aba { font-size: .86rem; } }
