@@ -1,8 +1,8 @@
-# Controle de Invoices e Descontos (v4.9)
+# Controle de Invoices e Descontos (v4.10)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
-Valores em **dólar, euro ou real**. Visual na identidade da **Quinelato** (azul #327FEF, fonte Plus Jakarta Sans e logo, conforme quinelato.com.br). Documentos circulam por e-mail e OneDrive, **fora do sistema** (só o link do Swift de cada pagamento é registrado).
+Valores em **dólar, euro ou real**. Visual na identidade da **Quinelato** (azul #327FEF, fonte Plus Jakarta Sans e logo, conforme quinelato.com.br). Arquivos (Swift de cada pagamento e documentos dos lançamentos financeiros) são **anexados direto no sistema** e ficam no servidor.
 
 ## Hospedagem na nuvem: PythonAnywhere (recomendado)
 
@@ -121,10 +121,14 @@ Menu **Fluxo de pagamentos**: previsão por mês e por moeda de
 
 Filtros por período, moeda e fornecedor e **exportação para Excel (CSV)**.
 
-### Documentos
-O sistema não recebe anexos: DUIMP, boleto do ICMS, relatórios e demais arquivos seguem por e-mail/OneDrive, fora do fluxo.
-Apenas o link do Swift é informado em cada pagamento. O link da pasta principal do OneDrive é configurado em **Sistema**
-(aparece como botão na seção Pagamentos) e fica somente no servidor (não vai para o GitHub).
+### Arquivos anexados (padrão do sistema)
+Todo anexo é feito pelo botão **Anexar** (envio do arquivo pelo navegador; vários de uma vez; até 10 MB cada; PDF,
+imagens, Excel, Word, XML, ZIP…), nunca por link. Os arquivos ficam no servidor, na pasta `instance/arquivos`
+(fora do GitHub); qualquer usuário logado abre/baixa. A página **Sistema** mostra quantos são e o espaço ocupado.
+- **Swift** de cada pagamento: anexado pelo Financeiro ao registrar o pagamento ou depois, na tabela de pagamentos.
+  Pagamentos antigos com link do OneDrive continuam válidos ("Swift (link antigo)").
+- **Lançamentos Financeiros**: arquivos de cada custo (ver abaixo).
+DUIMP e boleto do ICMS seguem por e-mail, fora do sistema.
 
 ### Correções
 Quem lança cada informação pode corrigi-la: a Importação corrige dados, itens, condição, etapas e deduções; o Financeiro corrige pagamentos, Swifts e banco de débito; o Administrador corrige a inspeção (o valor do desconto, pela revalidação). Toda correção fica no histórico com o valor anterior e o novo.
@@ -187,5 +191,5 @@ armazenagem…) que o **Financeiro deve lançar no MEGA** (ERP da Quinelato). To
 - **Arquivos por lançamento** (guias, boletos, comprovantes, planilhas…): Importação, Financeiro e Administrador anexam
   pelo botão **Anexar** de cada custo (vários arquivos, até 10 MB cada; PDF, imagens, Excel, Word, XML, ZIP…). Qualquer
   usuário logado abre/baixa; só quem anexou (ou o Administrador) exclui. Os arquivos ficam no servidor, na pasta
-  `instance/anexos_lancamentos` (fora do GitHub), e seguem anexados no e-mail "Avisar o Financeiro" (até 20 MB no total).
+  `instance/arquivos` (fora do GitHub), e seguem anexados no e-mail "Avisar o Financeiro" (até 20 MB no total).
 - Não gera pendências; os e-mails só saem pelo botão. Tudo fica no histórico do invoice.

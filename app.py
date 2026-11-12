@@ -9,7 +9,7 @@ Controla o ciclo completo de cada invoice, da criação até o pagamento complet
   Financeiro         -> registra pagamentos (antecipado, integral ou parcial com valor segurado),
                         liberações do valor segurado e Swifts; acompanha o fluxo de pagamentos
 
-Documentos circulam por e-mail/OneDrive, fora do sistema (só o link do Swift é guardado).
+Arquivos (Swifts e documentos dos lançamentos financeiros) são enviados pelo navegador e ficam no servidor.
 """
 import csv
 import glob
@@ -38,13 +38,14 @@ from werkzeug.security import check_password_hash, generate_password_hash
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
-# arquivos anexados aos lançamentos financeiros (ficam no servidor, junto do banco; fora do GitHub)
-ANEXOS_DIR = os.path.join(os.path.dirname(DB_PATH), "anexos_lancamentos")
+# arquivos anexados no sistema (lançamentos, Swifts...): ficam no servidor, junto do banco; fora do GitHub
+ARQUIVOS_DIR = os.path.join(os.path.dirname(DB_PATH), "arquivos")
+ANEXOS_DIR_V49 = os.path.join(os.path.dirname(DB_PATH), "anexos_lancamentos")  # pasta da versão 4.9 (migrada)
 ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.9"
+VERSAO = "4.10"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -263,7 +264,7 @@ CREATE TABLE IF NOT EXISTS pagamentos (
     valor REAL NOT NULL,
     data_pagamento TEXT NOT NULL,
     banco TEXT,
-    swift_url TEXT,                       -- link do Swift no OneDrive (pendente enquanto vazio)
+    swift_url TEXT,                       -- legado: link do Swift no OneDrive (desde a v4.10 o Swift é arquivo anexado)
     obs TEXT,
     registrado_por INTEGER REFERENCES usuarios(id),
     registrado_em TEXT NOT NULL
@@ -316,12 +317,24 @@ CREATE TABLE IF NOT EXISTS lancamento_anexos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lancamento_id INTEGER NOT NULL REFERENCES lancamentos(id) ON DELETE CASCADE,
     nome TEXT NOT NULL,                   -- nome original do arquivo
-    arquivo TEXT NOT NULL,                -- nome gravado no servidor (pasta anexos_lancamentos)
+    arquivo TEXT NOT NULL,                -- (v4.9; migrado para a tabela arquivos)
     tamanho INTEGER NOT NULL,
     enviado_por INTEGER REFERENCES usuarios(id),
     enviado_em TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_lanc_anexos ON lancamento_anexos(lancamento_id);
+-- versão 4.10: todos os arquivos anexados do sistema (substitui lancamento_anexos e os links do OneDrive)
+CREATE TABLE IF NOT EXISTS arquivos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    origem TEXT NOT NULL,                 -- lancamento | pagamento
+    origem_id INTEGER NOT NULL,
+    nome TEXT NOT NULL,                   -- nome original do arquivo
+    arquivo TEXT NOT NULL,                -- nome gravado no servidor (pasta arquivos)
+    tamanho INTEGER NOT NULL,
+    enviado_por INTEGER REFERENCES usuarios(id),
+    enviado_em TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_arquivos_origem ON arquivos(origem, origem_id);
 -- versão 4.0: e-mails automáticos
 CREATE TABLE IF NOT EXISTS notificacoes_estado (
     invoice_id INTEGER PRIMARY KEY,
@@ -394,6 +407,17 @@ def init_db():
                 DROP TABLE invoice_itens_v35;
                 CREATE INDEX IF NOT EXISTS idx3_itens_invoice ON invoice_itens(invoice_id);
             """)
+        # versão 4.10: anexos dos lançamentos (v4.9) passam para a tabela/pasta únicas de arquivos
+        antigos = db.execute("SELECT * FROM lancamento_anexos").fetchall()
+        if antigos:
+            os.makedirs(ARQUIVOS_DIR, exist_ok=True)
+            for a in antigos:  # (id, lancamento_id, nome, arquivo, tamanho, enviado_por, enviado_em)
+                origem_arq = os.path.join(ANEXOS_DIR_V49, a[3])
+                if os.path.exists(origem_arq):
+                    os.replace(origem_arq, os.path.join(ARQUIVOS_DIR, a[3]))
+                db.execute("INSERT INTO arquivos (origem, origem_id, nome, arquivo, tamanho, enviado_por, enviado_em)"
+                           " VALUES ('lancamento', ?, ?, ?, ?, ?, ?)", (a[1], a[2], a[3], a[4], a[5], a[6]))
+            db.execute("DELETE FROM lancamento_anexos")
         # versão 4.9: e-mails podem levar arquivos anexados
         if "anexos" not in {r[1] for r in db.execute("PRAGMA table_info(emails)")}:
             db.execute("ALTER TABLE emails ADD COLUMN anexos TEXT")
@@ -737,7 +761,9 @@ def calcular(inv):
     r["liberacao_disponivel"] = max(round(liberavel - r["liberado"], 2), 0)
     r["parcelas_liberacao"] = parcelas_liberacao(r, d)
     r["nacionalizacao"] = janela_nacionalizacao(r)
-    r["swifts_pendentes"] = sum(1 for p in r["pagamentos"] if not p["swift_url"])
+    # Swift: arquivo anexado ao pagamento (pagamentos antigos podem ter só o link do OneDrive, que continua valendo)
+    r["swift_arquivos"] = arquivos_de("pagamento", [p["id"] for p in r["pagamentos"]])
+    r["swifts_pendentes"] = sum(1 for p in r["pagamentos"] if not p["swift_url"] and not r["swift_arquivos"].get(p["id"]))
     r["parcelas"] = calcular_parcelas(r)
     pendentes = [p for p in r["parcelas"] if p["pendente"] > TOLERANCIA]
     # próximo vencimento em aberto (sem data: parcela a prazo de invoice sem data da HAWB)
@@ -806,6 +832,7 @@ def descontos_disponiveis(fornecedor_id, moeda, excluir_invoice_id=None):
 
 
 app.jinja_env.globals.update(
+    ANEXO_MAX_MB=ANEXO_MAX_MB,
     csrf_token=lambda: csrf_token(), PERFIS=PERFIS, SETORES=SETORES, MOEDAS=MOEDAS, CONDICOES=CONDICOES, SITUACOES=SITUACOES,
     CAMPOS_ETAPA=CAMPOS_ETAPA, TITULO_ETAPA=TITULO_ETAPA, ORDEM_LOGISTICA=ORDEM_LOGISTICA, CORES_CANAL=CORES_CANAL,
     STATUS_DESCONTO=STATUS_DESCONTO, TIPOS_PAGAMENTO=TIPOS_PAGAMENTO,
@@ -1685,9 +1712,8 @@ def invoice_detalhe(id):
         " WHERE v.desconto_id = ? ORDER BY v.id", (r["desconto"]["id"],)).fetchall() if r["desconto"] else []
     disponiveis = descontos_disponiveis(r["fornecedor_id"], r["moeda"], excluir_invoice_id=id)
     nomes = {u["id"]: u["nome"] for u in db.execute("SELECT id, nome FROM usuarios")}
-    pasta = config("onedrive_pasta", "")
     return render_template("invoice_detalhe.html", r=r, eventos=eventos, revisoes=revisoes, disponiveis=disponiveis,
-                           nomes=nomes, pasta_onedrive=pasta, hoje=hoje())
+                           nomes=nomes, hoje=hoje())
 
 
 # ---------------------------------------------------------------------------
@@ -2030,7 +2056,7 @@ def pagamento_novo(id):
     tipo = f.get("tipo")
     valor = parse_num(f.get("valor"))
     data_pg = data_valida(f.get("data_pagamento"))
-    swift = f.get("swift_url", "").strip() or None
+    arquivos_swift = [a for a in request.files.getlist("swift_arquivo") if a and a.filename]
     banco = f.get("banco", "").strip() or r["banco_debito"]
     limite = {"PRINCIPAL": r["principal_pendente"], "LIBERACAO": r["liberacao_disponivel"]}.get(tipo)
     erro = None
@@ -2045,40 +2071,48 @@ def pagamento_novo(id):
     elif valor > limite + TOLERANCIA:
         erro = (f"O valor é maior que o disponível para {TIPOS_PAGAMENTO[tipo].lower()} "
                 f"({fmt_moeda(limite, r['moeda'])}).")
-    elif swift and not link_valido(swift):
-        erro = "O link do Swift deve começar com https://."
     if erro:
         flash(erro, "erro")
         return volta
     db = get_db()
     valor = round(valor, 2)
-    db.execute("INSERT INTO pagamentos (invoice_id, tipo, valor, data_pagamento, banco, swift_url, obs, registrado_por,"
-               " registrado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-               (id, tipo, valor, data_pg, banco, swift, f.get("obs", "").strip() or None, g.usuario["id"], agora()))
+    pid = db.execute("INSERT INTO pagamentos (invoice_id, tipo, valor, data_pagamento, banco, swift_url, obs,"
+                     " registrado_por, registrado_em) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+                     (id, tipo, valor, data_pg, banco, f.get("obs", "").strip() or None, g.usuario["id"],
+                      agora())).lastrowid
+    salvos, erros = salvar_arquivos("pagamento", pid, arquivos_swift)
     registrar_evento(id, f"{TIPOS_PAGAMENTO[tipo]}: {fmt_moeda(valor, r['moeda'])} em {fmt_data(data_pg)}",
-                     ("Swift anexado" if swift else "Swift pendente") + (f" · banco: {banco}" if banco else ""))
+                     (f"Swift anexado: {', '.join(salvos)}" if salvos else "Swift pendente")
+                     + (f" · banco: {banco}" if banco else ""))
     db.commit()
-    flash("Pagamento registrado." + ("" if swift else " O Swift ficou pendente."), "ok")
+    flash("Pagamento registrado." + ("" if salvos else " O Swift ficou pendente: anexe o arquivo na tabela de pagamentos."), "ok")
+    for e in erros:
+        flash(e, "erro")
     return volta
 
 
 @app.route("/pagamentos/<int:pid>/swift", methods=["POST"])
 @login_obrigatorio
 def pagamento_swift(pid):
+    """O Financeiro anexa o arquivo do Swift a um pagamento."""
     if not pode("financeiro"):
         abort(403)
     db = get_db()
     p = db.execute("SELECT * FROM pagamentos WHERE id = ?", (pid,)).fetchone()
     if p is None:
         abort(404)
-    url = request.form.get("swift_url", "").strip()
-    if not link_valido(url):
-        flash("Cole o link do Swift no OneDrive (começando com https://).", "erro")
+    arquivos = [a for a in request.files.getlist("arquivo") if a and a.filename]
+    if not arquivos:
+        flash("Escolha o arquivo do Swift.", "erro")
     else:
-        db.execute("UPDATE pagamentos SET swift_url = ? WHERE id = ?", (url, pid))
-        registrar_evento(p["invoice_id"], f"Swift anexado ao pagamento de {fmt_data(p['data_pagamento'])}")
-        db.commit()
-        flash("Swift anexado.", "ok")
+        salvos, erros = salvar_arquivos("pagamento", pid, arquivos)
+        if salvos:
+            registrar_evento(p["invoice_id"], f"Swift anexado ao pagamento de {fmt_data(p['data_pagamento'])}",
+                             ", ".join(salvos))
+            db.commit()
+            flash("Swift anexado: " + ", ".join(salvos) + ".", "ok")
+        for e in erros:
+            flash(e, "erro")
     return redirect(url_for("invoice_detalhe", id=p["invoice_id"]) + "#pagamentos")
 
 
@@ -2097,7 +2131,6 @@ def pagamento_editar(pid):
     f = request.form
     valor = parse_num(f.get("valor"))
     data_pg = data_valida(f.get("data_pagamento"))
-    swift = f.get("swift_url", "").strip() or None
     banco = f.get("banco", "").strip() or None
     obs = f.get("obs", "").strip() or None
     # limite: o que ainda pode ser pago desse tipo, devolvendo o valor atual deste pagamento
@@ -2112,8 +2145,6 @@ def pagamento_editar(pid):
         erro = "Informe o valor pago."
     elif valor > limite + TOLERANCIA:
         erro = f"O valor é maior que o permitido para este pagamento ({fmt_moeda(limite, r['moeda'])})."
-    elif swift and not link_valido(swift):
-        erro = "O link do Swift deve começar com https://."
     if erro:
         flash(erro, "erro")
         return volta
@@ -2125,13 +2156,11 @@ def pagamento_editar(pid):
         mudancas.append(f"valor {fmt_moeda(p['valor'], r['moeda'])} → {fmt_moeda(valor, r['moeda'])}")
     if banco != p["banco"]:
         mudancas.append(f"banco {p['banco'] or '—'} → {banco or '—'}")
-    if swift != p["swift_url"]:
-        mudancas.append("Swift " + ("corrigido" if p["swift_url"] and swift else "anexado" if swift else "removido"))
     if obs != p["obs"]:
         mudancas.append("observação")
     if mudancas:
-        db.execute("UPDATE pagamentos SET data_pagamento = ?, valor = ?, banco = ?, swift_url = ?, obs = ? WHERE id = ?",
-                   (data_pg, valor, banco, swift, obs, pid))
+        db.execute("UPDATE pagamentos SET data_pagamento = ?, valor = ?, banco = ?, obs = ? WHERE id = ?",
+                   (data_pg, valor, banco, obs, pid))
         registrar_evento(r["id"], f"Pagamento corrigido ({TIPOS_PAGAMENTO[p['tipo']]})", "; ".join(mudancas))
         db.commit()
         flash("Pagamento corrigido.", "ok")
@@ -2154,10 +2183,12 @@ def pagamento_excluir(pid):
     elif p["tipo"] == "PRINCIPAL" and r["liberado"] > TOLERANCIA:
         flash("Exclua antes as liberações do valor segurado deste invoice.", "erro")
     else:
+        arquivos_swift = excluir_arquivos_de("pagamento", pid)
         db.execute("DELETE FROM pagamentos WHERE id = ?", (pid,))
         registrar_evento(p["invoice_id"], f"Pagamento excluído: {TIPOS_PAGAMENTO[p['tipo']]} de "
                          f"{fmt_moeda(p['valor'], r['moeda'])} em {fmt_data(p['data_pagamento'])}", motivo)
         db.commit()
+        remover_arquivos(arquivos_swift)
         flash("Pagamento excluído.", "ok")
     return redirect(url_for("invoice_detalhe", id=p["invoice_id"]) + "#pagamentos")
 
@@ -2375,22 +2406,9 @@ def sistema():
     commit = git("log", "-1", "--format=%h · %cd · %s", "--date=format:%d/%m/%Y %H:%M")[1] if usa_git else None
     backups = sorted(os.listdir(os.path.join(INSTANCE_DIR, "backups")), reverse=True)[:10] \
         if os.path.isdir(os.path.join(INSTANCE_DIR, "backups")) else []
-    uso = get_db().execute("SELECT COUNT(*), COALESCE(SUM(tamanho), 0) FROM lancamento_anexos").fetchone()
+    uso = get_db().execute("SELECT COUNT(*), COALESCE(SUM(tamanho), 0) FROM arquivos").fetchone()
     return render_template("sistema.html", usa_git=usa_git, commit=commit, backups=backups,
-                           pasta_onedrive=config("onedrive_pasta", ""), anexos_qtd=uso[0], anexos_bytes=uso[1])
-
-
-@app.route("/sistema/onedrive", methods=["POST"])
-@somente_admin
-def sistema_onedrive():
-    url = request.form.get("onedrive_pasta", "").strip()
-    if url and not link_valido(url):
-        flash("O link da pasta deve começar com https://.", "erro")
-    else:
-        salvar_config("onedrive_pasta", url)
-        get_db().commit()
-        flash("Pasta do OneDrive salva.", "ok")
-    return redirect(url_for("sistema"))
+                           anexos_qtd=uso[0], anexos_bytes=uso[1])
 
 
 # ---------------------------------------------------------------------------
@@ -2566,8 +2584,7 @@ def lancamento_excluir(lid):
         flash("Este custo já foi lançado no MEGA pelo Financeiro: para excluí-lo, peça ao Financeiro para desmarcar "
               "o lançamento no MEGA antes (assim o ajuste no MEGA não se perde).", "erro")
         return voltar_lancamentos(l["invoice_id"])
-    anexos = anexos_por_lancamento([lid]).get(lid, [])
-    db.execute("DELETE FROM lancamento_anexos WHERE lancamento_id = ?", (lid,))
+    anexos = excluir_arquivos_de("lancamento", lid)
     db.execute("DELETE FROM lancamentos WHERE id = ?", (lid,))
     registrar_evento(l["invoice_id"], "Lançamento financeiro excluído", descrever_lancamento(l)
                      + (f" (com {len(anexos)} arquivo(s) anexado(s))" if anexos else ""))
@@ -2600,23 +2617,35 @@ def lancamento_erp(lid):
     return voltar_lancamentos(l["invoice_id"])
 
 
-# ---------- arquivos anexados aos lançamentos ----------
-def anexos_por_lancamento(ids=None):
-    sql = ("SELECT a.*, u.nome AS usuario FROM lancamento_anexos a LEFT JOIN usuarios u ON u.id = a.enviado_por")
-    params = ()
+# ---------- arquivos anexados (padrão do sistema para qualquer anexo) ----------
+# Os arquivos são enviados pelo navegador e ficam no servidor (pasta ARQUIVOS_DIR, fora do GitHub).
+# origem: 'lancamento' (custos da aba Lançamentos Financeiros) | 'pagamento' (Swift de cada pagamento)
+ORIGENS_ARQUIVO = {"lancamento": "lançamento financeiro", "pagamento": "pagamento (Swift)"}
+
+
+def arquivos_de(origem, ids=None):
+    """{origem_id: [arquivos]} de uma origem (opcionalmente só alguns ids)."""
+    sql = ("SELECT a.*, u.nome AS usuario FROM arquivos a LEFT JOIN usuarios u ON u.id = a.enviado_por"
+           " WHERE a.origem = ?")
+    params = [origem]
     if ids is not None:
+        ids = list(ids)
         if not ids:
             return {}
-        sql += f" WHERE a.lancamento_id IN ({','.join('?' * len(ids))})"
-        params = tuple(ids)
+        sql += f" AND a.origem_id IN ({','.join('?' * len(ids))})"
+        params += ids
     mapa = {}
     for a in get_db().execute(sql + " ORDER BY a.id", params):
-        mapa.setdefault(a["lancamento_id"], []).append(a)
+        mapa.setdefault(a["origem_id"], []).append(a)
     return mapa
 
 
+def anexos_por_lancamento(ids=None):
+    return arquivos_de("lancamento", ids)
+
+
 def caminho_anexo(a):
-    return os.path.join(ANEXOS_DIR, a["arquivo"])
+    return os.path.join(ARQUIVOS_DIR, a["arquivo"])
 
 
 def fmt_tamanho(n):
@@ -2642,6 +2671,56 @@ def remover_arquivos(anexos):
             pass
 
 
+def excluir_arquivos_de(origem, origem_id):
+    lista = arquivos_de(origem, [origem_id]).get(origem_id, [])
+    get_db().execute("DELETE FROM arquivos WHERE origem = ? AND origem_id = ?", (origem, origem_id))
+    return lista  # apagar do disco depois do commit (remover_arquivos)
+
+
+def salvar_arquivos(origem, origem_id, arquivos):
+    """Grava os arquivos enviados (lista de FileStorage). Retorna (nomes salvos, mensagens de erro)."""
+    os.makedirs(ARQUIVOS_DIR, exist_ok=True)
+    salvos, erros = [], []
+    for f in arquivos:
+        if not f or not f.filename:
+            continue
+        nome = os.path.basename(f.filename.replace("\\", "/")).strip()[:150] or "arquivo"
+        ext = nome.rsplit(".", 1)[-1].lower() if "." in nome else ""
+        if ext not in EXTENSOES_ANEXO:
+            erros.append(f"{nome}: tipo de arquivo não permitido (use PDF, imagem, Excel, Word, XML, ZIP…).")
+            continue
+        conteudo = f.read(ANEXO_MAX_MB * 1024 * 1024 + 1)
+        if len(conteudo) > ANEXO_MAX_MB * 1024 * 1024:
+            erros.append(f"{nome}: maior que {ANEXO_MAX_MB} MB.")
+            continue
+        if not conteudo:
+            erros.append(f"{nome}: arquivo vazio.")
+            continue
+        gravado = f"{origem}-{origem_id}-{secrets.token_hex(8)}.{ext}"
+        with open(os.path.join(ARQUIVOS_DIR, gravado), "wb") as saida:
+            saida.write(conteudo)
+        get_db().execute("INSERT INTO arquivos (origem, origem_id, nome, arquivo, tamanho, enviado_por, enviado_em)"
+                         " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (origem, origem_id, nome, gravado, len(conteudo), g.usuario["id"], agora()))
+        salvos.append(nome)
+    return salvos, erros
+
+
+def info_origem(a):
+    """(invoice_id, descrição, url de volta) do registro ao qual o arquivo pertence."""
+    db = get_db()
+    if a["origem"] == "lancamento":
+        l = db.execute("SELECT invoice_id, tipo FROM lancamentos WHERE id = ?", (a["origem_id"],)).fetchone()
+        if l is None:
+            return None, "", url_for("lancamentos")
+        return l["invoice_id"], l["tipo"] or "sem tipo", None
+    p = db.execute("SELECT invoice_id, data_pagamento FROM pagamentos WHERE id = ?", (a["origem_id"],)).fetchone()
+    if p is None:
+        return None, "", url_for("painel")
+    return p["invoice_id"], f"pagamento de {fmt_data(p['data_pagamento'])}", \
+        url_for("invoice_detalhe", id=p["invoice_id"]) + "#pagamentos"
+
+
 @app.route("/lancamentos/<int:lid>/anexos", methods=["POST"])
 @login_obrigatorio
 def lancamento_anexar(lid):
@@ -2655,27 +2734,7 @@ def lancamento_anexar(lid):
     if not arquivos:
         flash("Escolha um arquivo para anexar.", "erro")
         return voltar_lancamentos(l["invoice_id"])
-    os.makedirs(ANEXOS_DIR, exist_ok=True)
-    salvos, erros = [], []
-    for f in arquivos:
-        nome = os.path.basename(f.filename.replace("\\", "/")).strip()[:150] or "arquivo"
-        ext = nome.rsplit(".", 1)[-1].lower() if "." in nome else ""
-        if ext not in EXTENSOES_ANEXO:
-            erros.append(f"{nome}: tipo de arquivo não permitido (use PDF, imagem, Excel, Word, XML, ZIP…).")
-            continue
-        conteudo = f.read(ANEXO_MAX_MB * 1024 * 1024 + 1)
-        if len(conteudo) > ANEXO_MAX_MB * 1024 * 1024:
-            erros.append(f"{nome}: maior que {ANEXO_MAX_MB} MB.")
-            continue
-        if not conteudo:
-            erros.append(f"{nome}: arquivo vazio.")
-            continue
-        gravado = f"{lid}-{secrets.token_hex(8)}.{ext}"
-        with open(os.path.join(ANEXOS_DIR, gravado), "wb") as saida:
-            saida.write(conteudo)
-        db.execute("INSERT INTO lancamento_anexos (lancamento_id, nome, arquivo, tamanho, enviado_por, enviado_em)"
-                   " VALUES (?, ?, ?, ?, ?, ?)", (lid, nome, gravado, len(conteudo), g.usuario["id"], agora()))
-        salvos.append(nome)
+    salvos, erros = salvar_arquivos("lancamento", lid, arquivos)
     if salvos:
         registrar_evento(l["invoice_id"], "Arquivo anexado ao lançamento financeiro",
                          f"{l['tipo'] or 'sem tipo'}: " + ", ".join(salvos))
@@ -2686,10 +2745,10 @@ def lancamento_anexar(lid):
     return voltar_lancamentos(l["invoice_id"])
 
 
-@app.route("/anexos-lancamentos/<int:aid>")
+@app.route("/arquivos/<int:aid>")
 @login_obrigatorio
-def lancamento_anexo_baixar(aid):
-    a = get_db().execute("SELECT * FROM lancamento_anexos WHERE id = ?", (aid,)).fetchone()
+def arquivo_baixar(aid):
+    a = get_db().execute("SELECT * FROM arquivos WHERE id = ?", (aid,)).fetchone()
     if a is None or not os.path.exists(caminho_anexo(a)):
         abort(404)
     ext = a["nome"].rsplit(".", 1)[-1].lower()
@@ -2697,23 +2756,32 @@ def lancamento_anexo_baixar(aid):
     return send_file(caminho_anexo(a), download_name=a["nome"], as_attachment=not abrir_no_navegador)
 
 
-@app.route("/anexos-lancamentos/<int:aid>/excluir", methods=["POST"])
+@app.route("/arquivos/<int:aid>/excluir", methods=["POST"])
 @login_obrigatorio
-def lancamento_anexo_excluir(aid):
+def arquivo_excluir(aid):
     db = get_db()
-    a = db.execute("SELECT a.*, l.invoice_id, l.tipo FROM lancamento_anexos a JOIN lancamentos l"
-                   " ON l.id = a.lancamento_id WHERE a.id = ?", (aid,)).fetchone()
+    a = db.execute("SELECT * FROM arquivos WHERE id = ?", (aid,)).fetchone()
     if a is None:
         abort(404)
-    if not (g.usuario["perfil"] == "admin" or (pode_anexar() and a["enviado_por"] == g.usuario["id"])):
-        flash("Só quem anexou o arquivo (ou o Administrador) pode excluí-lo.", "erro")
-        return voltar_lancamentos(a["invoice_id"])
-    db.execute("DELETE FROM lancamento_anexos WHERE id = ?", (aid,))
-    registrar_evento(a["invoice_id"], "Arquivo excluído do lançamento financeiro", f"{a['tipo'] or 'sem tipo'}: {a['nome']}")
+    invoice_id, descricao, volta_url = info_origem(a)
+    voltar = (lambda: voltar_lancamentos(invoice_id)) if a["origem"] == "lancamento" and invoice_id \
+        else (lambda: redirect(volta_url))
+    if a["origem"] == "pagamento":
+        permitido = pode("financeiro")
+    else:
+        permitido = g.usuario["perfil"] == "admin" or (pode_anexar() and a["enviado_por"] == g.usuario["id"])
+    if not permitido:
+        flash("Só quem anexou o arquivo (ou o Administrador) pode excluí-lo." if a["origem"] == "lancamento"
+              else "Só o Financeiro pode excluir o Swift.", "erro")
+        return voltar()
+    db.execute("DELETE FROM arquivos WHERE id = ?", (aid,))
+    if invoice_id:
+        registrar_evento(invoice_id, f"Arquivo excluído ({ORIGENS_ARQUIVO.get(a['origem'], a['origem'])})",
+                         f"{descricao}: {a['nome']}")
     db.commit()
     remover_arquivos([a])
     flash(f"Arquivo excluído: {a['nome']}.", "ok")
-    return voltar_lancamentos(a["invoice_id"])
+    return voltar()
 
 
 @app.errorhandler(413)

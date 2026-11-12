@@ -260,8 +260,7 @@
 
 {# ---------- pagamentos (Financeiro) ---------- #}
 <section class="bloco" id="pagamentos">
-  <h2>Pagamentos <small>· Financeiro</small>
-    {% if pasta_onedrive %}<a class="btn pequeno" href="{{ pasta_onedrive }}" target="_blank" rel="noopener">Abrir pasta no OneDrive</a>{% endif %}</h2>
+  <h2>Pagamentos <small>· Financeiro</small></h2>
   <dl class="dl-colunas">
     <dt>Valor total do invoice</dt><dd>{{ r.itens_total|moeda(m) }}</dd>
     {% if r.deducoes_aplicadas %}<dt>(−) Deduções de descontos</dt><dd>{{ r.deducoes_aplicadas|moeda(m) }}</dd>{% endif %}
@@ -313,18 +312,32 @@
     {% for p in r.pagamentos %}
       <tr><td>{{ p.data_pagamento|data }}</td><td>{{ TIPOS_PAGAMENTO[p.tipo] }}{% if p.obs %}<small class="bloco-linha">{{ p.obs }}</small>{% endif %}</td>
         <td class="num">{{ p.valor|moeda(m) }}</td><td>{{ p.banco or '—' }}</td>
-        <td>{% if p.swift_url %}<a href="{{ p.swift_url }}" target="_blank" rel="noopener">Swift ↗</a>
-          {% elif fin %}<form method="post" action="{{ url_for('pagamento_swift', pid=p.id) }}" class="linha-mini">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="swift_url" placeholder="Link do Swift (https://...)" required>
-            <button class="btn pequeno">Anexar</button></form>
-          {% else %}<span class="ciencia c-pendente">Pendente</span>{% endif %}</td>
+        <td class="arquivos">
+          {% for a in r.swift_arquivos.get(p.id, []) %}
+          <div class="arq">
+            <a href="{{ url_for('arquivo_baixar', aid=a.id) }}" target="_blank" rel="noopener" title="{{ a.nome }} · {{ a.tamanho|tamanho }} · {{ a.usuario or '—' }} em {{ a.enviado_em|data }}">
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2.5H6a2 2 0 00-2 2v15a2 2 0 002 2h12a2 2 0 002-2V8.5z"/><path d="M14 2.5v6h6"/></svg>
+              <span>{{ a.nome }}</span></a>
+            {% if fin %}<form method="post" action="{{ url_for('arquivo_excluir', aid=a.id) }}" onsubmit="return confirm('Excluir o arquivo do Swift?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="arq-x" title="Excluir arquivo">✕</button></form>{% endif %}
+          </div>
+          {% endfor %}
+          {% if p.swift_url %}<div class="arq"><a href="{{ p.swift_url }}" target="_blank" rel="noopener" title="Link do OneDrive registrado antes da versão 4.10">↗ <span>Swift (link antigo)</span></a></div>{% endif %}
+          {% if not p.swift_url and not r.swift_arquivos.get(p.id) %}<span class="ciencia c-pendente">Pendente</span>{% endif %}
+          {% if fin %}
+          <form method="post" action="{{ url_for('pagamento_swift', pid=p.id) }}" enctype="multipart/form-data" class="form-anexar">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="btn-anexar" title="Anexar o arquivo do Swift (até {{ ANEXO_MAX_MB }} MB)">
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9"/></svg>
+              {{ 'Anexar Swift' if not p.swift_url and not r.swift_arquivos.get(p.id) else 'Anexar' }}<input type="file" name="arquivo" multiple onchange="this.form.classList.add('enviando'); this.form.submit()"></label>
+          </form>
+          {% endif %}</td>
         <td>{% if fin %}<details class="admin-desfazer"><summary>Corrigir</summary>
           <form method="post" action="{{ url_for('pagamento_editar', pid=p.id) }}" class="form-corrigir">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <label>Data<input type="date" name="data_pagamento" value="{{ p.data_pagamento }}" required></label>
             <label>Valor<input name="valor" inputmode="decimal" value="{{ p.valor|num }}" required></label>
             <label>Banco<input name="banco" value="{{ p.banco or '' }}"></label>
-            <label>Swift<input name="swift_url" value="{{ p.swift_url or '' }}" placeholder="https://..."></label>
             <label>Observação<input name="obs" value="{{ p.obs or '' }}"></label>
             <button class="btn pequeno">Salvar correção</button></form>
           <form method="post" action="{{ url_for('pagamento_excluir', pid=p.id) }}" onsubmit="return confirm('Excluir este pagamento?')" class="linha-mini">
@@ -336,7 +349,7 @@
   </div>
   {% endif %}
   {% if fin and (r.principal_pendente > 0.005 or r.liberacao_disponivel > 0.005) %}
-  <form method="post" action="{{ url_for('pagamento_novo', id=r.id) }}" class="form-pagamento-novo">
+  <form method="post" action="{{ url_for('pagamento_novo', id=r.id) }}" class="form-pagamento-novo" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <h3>Registrar pagamento</h3>
     <div class="grade">
@@ -349,8 +362,8 @@
       <label>Valor pago ({{ m }}) *<input name="valor" id="valor-pagamento" inputmode="decimal" required>
         <small>Pode ser parcial.</small></label>
       <label>Banco<input name="banco" value="{{ r.banco_debito or '' }}"></label>
-      <label class="largo">Link do Swift no OneDrive<input name="swift_url" placeholder="https://... (pode anexar depois)">
-        <small>O processo só é concluído com o Swift de todos os pagamentos.</small></label>
+      <label class="largo">Arquivo do Swift<input type="file" name="swift_arquivo" multiple>
+        <small>PDF ou imagem, até {{ ANEXO_MAX_MB }} MB. Pode anexar depois. O processo só é concluído com o Swift de todos os pagamentos.</small></label>
       <label class="largo">Observação<input name="obs" placeholder="Opcional"></label>
     </div>
     <button class="btn primario">Registrar pagamento</button>

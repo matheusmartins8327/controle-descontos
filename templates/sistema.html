@@ -19,20 +19,9 @@
   {% endif %}
 </section>
 
-<section class="bloco" id="onedrive">
-  <h2>Pasta de documentos no OneDrive</h2>
-  <p class="sub">Os documentos ficam no OneDrive, fora do sistema (o sistema guarda apenas o link do Swift de cada pagamento).
-    Este link aparece como botão "Abrir pasta no OneDrive" na seção Pagamentos de cada invoice. Ele fica salvo somente no servidor (não vai para o GitHub).</p>
-  <form method="post" action="{{ url_for('sistema_onedrive') }}" class="linha-form">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label class="cresce">Link da pasta<input name="onedrive_pasta" value="{{ pasta_onedrive }}" placeholder="https://...sharepoint.com/..."></label>
-    <button class="btn primario">Salvar</button>
-  </form>
-</section>
-
 <section class="bloco">
-  <h2>Arquivos anexados <small>· pasta instance/anexos_lancamentos</small></h2>
-  <p>{{ anexos_qtd }} arquivo(s) anexados aos lançamentos financeiros, ocupando <strong>{{ anexos_bytes|tamanho }}</strong>.
+  <h2>Arquivos anexados <small>· pasta instance/arquivos</small></h2>
+  <p>{{ anexos_qtd }} arquivo(s) anexados (Swifts e lançamentos financeiros), ocupando <strong>{{ anexos_bytes|tamanho }}</strong>.
     <small>O plano gratuito do PythonAnywhere tem 512 MB de espaço no total (código, banco e arquivos).</small></p>
 </section>
 

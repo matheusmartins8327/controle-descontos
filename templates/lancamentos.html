@@ -85,11 +85,11 @@
           <td class="arquivos">
             {% for a in p.anexos.get(l.id, []) %}
             <div class="arq">
-              <a href="{{ url_for('lancamento_anexo_baixar', aid=a.id) }}" target="_blank" rel="noopener" title="{{ a.nome }} · {{ a.tamanho|tamanho }} · {{ a.usuario or '—' }} em {{ a.enviado_em|data }}">
+              <a href="{{ url_for('arquivo_baixar', aid=a.id) }}" target="_blank" rel="noopener" title="{{ a.nome }} · {{ a.tamanho|tamanho }} · {{ a.usuario or '—' }} em {{ a.enviado_em|data }}">
                 <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2.5H6a2 2 0 00-2 2v15a2 2 0 002 2h12a2 2 0 002-2V8.5z"/><path d="M14 2.5v6h6"/></svg>
                 <span>{{ a.nome }}</span></a>
               {% if g.usuario.perfil == 'admin' or (pode_anexar and a.enviado_por == g.usuario.id) %}
-              <form method="post" action="{{ url_for('lancamento_anexo_excluir', aid=a.id) }}" onsubmit="return confirm('Excluir o arquivo {{ a.nome|replace("'", "") }}?')">
+              <form method="post" action="{{ url_for('arquivo_excluir', aid=a.id) }}" onsubmit="return confirm('Excluir o arquivo {{ a.nome|replace("'", "") }}?')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
                 <button class="arq-x" title="Excluir arquivo">✕</button></form>{% endif %}
             </div>
