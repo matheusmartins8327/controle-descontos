@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block titulo %}E-mails automáticos{% endblock %}
+{% block conteudo %}
+<h1>E-mails automáticos</h1>
+<p class="sub">O sistema avisa por e-mail quando muda a previsibilidade de pagamento de um invoice, quando uma data de pagamento é confirmada e
+  nos demais eventos abaixo. Os e-mails são informativos (sem links para o sistema) e saem pela conta Gmail configurada aqui.</p>
+
+<section class="bloco" id="conta">
+  <h2>1. Conta de envio (Gmail)</h2>
+  <form method="post" action="{{ url_for('emails_conta') }}" class="grade-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>E-mail da conta Gmail<input name="smtp_usuario" value="{{ smtp.smtp_usuario }}" placeholder="exemplo@gmail.com"></label>
+    <label>Senha de app (16 letras){% if tem_senha %} <small class="ok-txt">· salva</small>{% endif %}
+      <input name="smtp_senha" type="password" autocomplete="new-password" placeholder="{{ 'deixe em branco para manter a atual' if tem_senha else 'xxxx xxxx xxxx xxxx' }}"></label>
+    <label>Nome do remetente<input name="smtp_nome" value="{{ smtp.smtp_nome }}"></label>
+    <details class="avancado"><summary>Servidor (avançado)</summary>
+      <label>Servidor SMTP<input name="smtp_host" value="{{ smtp.smtp_host }}"></label>
+      <label>Porta<input name="smtp_porta" value="{{ smtp.smtp_porta }}"></label>
+      {% if tem_senha %}<label class="check"><input type="checkbox" name="remover_senha" value="1"> Apagar a senha salva</label>{% endif %}
+    </details>
+    <div><button class="btn primario">Salvar conta</button></div>
+  </form>
+  <form method="post" action="{{ url_for('emails_teste') }}" class="linha-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="cresce">Enviar e-mail de teste para<input name="destino" placeholder="seu.email@quinelato.com.br"></label>
+    <button class="btn">Enviar teste</button>
+  </form>
+  <p class="sub dica">A senha fica guardada somente no banco de dados do servidor (não vai para o GitHub) e nunca é exibida.</p>
+</section>
+
+<section class="bloco" id="fluxos">
+  <h2>2. Destinatários de cada e-mail</h2>
+  {% if not salvo %}<div class="flash aviso-box">Os destinatários abaixo são uma sugestão a partir dos usuários de cada setor.
+    <strong>Nenhum e-mail é enviado até você clicar em "Salvar destinatários".</strong></div>{% endif %}
+  <form method="post" action="{{ url_for('emails_fluxos') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="rolagem">
+    <table class="tabela-fluxos">
+      <thead><tr><th>Ativo</th><th>E-mail</th><th>Para</th><th>Cc (cópia)</th></tr></thead>
+      <tbody>
+      {% for f in fluxos %}
+        <tr>
+          <td><input type="checkbox" name="ativo_{{ f.chave }}" value="1" {{ 'checked' if f.ativo }}></td>
+          <td><strong>{{ f.titulo }}</strong><small class="bloco-linha">{{ f.quando }}</small>
+            {% if f.chave == 'resumo_diario' %}<label class="inline">A partir das <input name="resumo_hora" value="{{ resumo_hora }}" size="2" class="curto"> h (Brasília)</label>{% endif %}</td>
+          <td><textarea name="para_{{ f.chave }}" rows="2" placeholder="{{ f.sugestao_para }}">{{ f.para }}</textarea></td>
+          <td><textarea name="cc_{{ f.chave }}" rows="2" placeholder="{{ f.sugestao_cc or 'opcional' }}">{{ f.cc }}</textarea></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="sub dica">Separe vários e-mails por vírgula. Pode usar qualquer endereço (inclusive de quem não tem usuário no sistema).</p>
+    <button class="btn primario">Salvar destinatários</button>
+  </form>
+</section>
+
+<section class="bloco" id="diario">
+  <h2>3. Envio diário (resumo de pendências e reenvios)</h2>
+  <p>O resumo é enviado em dias úteis, uma vez por dia, a partir do horário configurado. Ele é disparado de duas formas:</p>
+  <ul>
+    <li><strong>Automaticamente no primeiro acesso ao sistema</strong> depois do horário (qualquer usuário abrindo qualquer página).</li>
+    <li><strong>Por um agendador externo</strong> (recomendado, para não depender de alguém acessar), chamando uma vez por dia este endereço:
+      <div class="copiar"><code id="url-tarefa">{{ url_tarefa }}</code>
+        <button type="button" class="btn pequeno" onclick="navigator.clipboard.writeText(document.getElementById('url-tarefa').textContent);this.textContent='Copiado'">Copiar</button></div>
+      <small>Guarde este endereço como uma senha: quem o tiver consegue apenas disparar o resumo.</small></li>
+  </ul>
+  <p class="sub">Último resumo processado: {{ resumo_ultimo|data if resumo_ultimo else 'nenhum' }}.</p>
+  <form method="post" action="{{ url_for('emails_acao') }}" class="linha-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn" name="acao" value="resumo">Enviar o resumo agora</button>
+    <button class="btn link" name="acao" value="nova_chave" onclick="return confirm('Gerar um novo endereço? O anterior deixa de funcionar.')">Gerar novo endereço</button>
+  </form>
+</section>
+
+<section class="bloco" id="historico">
+  <h2>4. Histórico de e-mails
+    {% for k, v in STATUS_EMAIL.items() if contagem.get(k) %}<small>· {{ v }}: {{ contagem[k] }}</small>{% endfor %}</h2>
+  <form method="post" action="{{ url_for('emails_acao') }}" class="linha-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if contagem.get('PENDENTE') %}<button class="btn" name="acao" value="enviar_fila">Enviar a fila agora</button>{% endif %}
+    {% if contagem.get('ERRO') %}<button class="btn" name="acao" value="reenviar">Reenviar os que deram erro</button>{% endif %}
+  </form>
+  {% if historico %}
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>Data</th><th>Assunto</th><th>Para / Cc</th><th>Situação</th></tr></thead>
+    <tbody>
+    {% for e in historico %}
+      <tr class="{{ 'linha-alerta' if e.status == 'ERRO' }}">
+        <td><small>{{ e.criado_em|data }}</small></td>
+        <td><a href="{{ url_for('email_ver', eid=e.id) }}">{{ e.assunto }}</a></td>
+        <td><small>{{ e.para or '—' }}{% if e.cc %}<br>cc: {{ e.cc }}{% endif %}</small></td>
+        <td>{{ STATUS_EMAIL[e.status] }}{% if e.erro %}<small class="bloco-linha">{{ e.erro }}</small>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="vazio">Nenhum e-mail gerado ainda.</p>{% endif %}
+</section>
+{% endblock %}

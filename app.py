@@ -18,11 +18,17 @@ import unicodedata
 import os
 import re
 import secrets
+import json
+import smtplib
 import socket
 import sqlite3
 import subprocess
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from email.message import EmailMessage
+from email.utils import formataddr
 from functools import wraps
+
+from markupsafe import escape
 
 from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_template, request,
                    session, url_for)
@@ -32,7 +38,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
 MAX_USUARIOS = 10
-VERSAO = "3.14"
+VERSAO = "4.0"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -51,7 +57,9 @@ PERFIS_ANTIGOS = {"qualidade": "consulta", "compras": "importacao", "recebimento
 MOEDAS = {"USD": "US$", "EUR": "€", "BRL": "R$"}
 # Condição de pagamento: uma ou mais parcelas (ex.: 25% antecipado + 75% 60 dias após a HAWB)
 CONDICOES = {"ANTECIPADO": "Antecipado", "PRAZO": "Após a HAWB"}
-PRAZO_ANTECIPADO_DIAS = 5          # pagamento antecipado: data de assinatura + 5 dias
+PRAZO_ANTECIPADO_DIAS = 5          # pagamento antecipado: data de assinatura + 5 dias úteis
+NACIONALIZACAO_PLANEJADA = (-1, 3)  # impostos de nacionalização: ETA planejado -1 a +3 dias úteis
+NACIONALIZACAO_REAL = (0, 2)        # com o ETA real: ETA real a +2 dias úteis
 PRAZO_LIBERACAO_DIAS_UTEIS = 5     # liberação do segurado: chegada real do invoice deduzido + 5 dias úteis
 CUSTO_IMPORTACAO_ESTIMADO = 0.40   # visibilidade do Financeiro a partir do embarque
 # canal de parametrização: opção -> (cor de fundo pastel, cor do texto)
@@ -203,7 +211,7 @@ CREATE TABLE IF NOT EXISTS condicao_parcelas (
     invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
     ordem INTEGER NOT NULL,
     percentual REAL NOT NULL,
-    tipo TEXT NOT NULL,                   -- ANTECIPADO (assinatura + 5 dias) | PRAZO (HAWB + dias)
+    tipo TEXT NOT NULL,                   -- ANTECIPADO (assinatura + 5 dias úteis) | PRAZO (HAWB + dias)
     dias INTEGER
 );
 -- Desconto por má qualidade de um invoice (no máximo um por invoice)
@@ -279,6 +287,26 @@ CREATE INDEX IF NOT EXISTS idx3_deducoes_invoice ON deducoes(invoice_id);
 CREATE INDEX IF NOT EXISTS idx3_pagamentos_invoice ON pagamentos(invoice_id);
 CREATE INDEX IF NOT EXISTS idx3_anexos_invoice ON anexos(invoice_id);
 CREATE INDEX IF NOT EXISTS idx3_eventos_invoice ON eventos(invoice_id);
+-- versão 4.0: e-mails automáticos
+CREATE TABLE IF NOT EXISTS notificacoes_estado (
+    invoice_id INTEGER PRIMARY KEY,
+    estado TEXT NOT NULL,                 -- última situação de previsibilidade notificada (JSON)
+    atualizado_em TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS emails (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fluxo TEXT NOT NULL,
+    invoice_id INTEGER,
+    assunto TEXT NOT NULL,
+    corpo TEXT NOT NULL,
+    para TEXT,
+    cc TEXT,
+    status TEXT NOT NULL,                 -- PENDENTE | ENVIADO | ERRO | NAO_ENVIADO
+    erro TEXT,
+    tentativas INTEGER NOT NULL DEFAULT 0,
+    criado_em TEXT NOT NULL,
+    enviado_em TEXT
+);
 """
 
 # Tabelas da versão 2 (controle só de descontos). Na versão 3 elas são preservadas com o
@@ -487,10 +515,10 @@ FROM invoices i JOIN fornecedores f ON f.id = i.fornecedor_id
 
 
 def vencimento_parcela(inv, c):
-    """Antecipado: data de assinatura + 5 dias. A prazo: data da HAWB (registrada na Coleta) + dias da condição;
+    """Antecipado: data de assinatura + 5 dias úteis. A prazo: data da HAWB (registrada na Coleta) + dias da condição;
     antes da HAWB, a parcela a prazo fica sem vencimento (não há estimativa)."""
     if c["tipo"] == "ANTECIPADO":
-        return somar_dias(inv["data_assinatura"], PRAZO_ANTECIPADO_DIAS)
+        return somar_dias_uteis(inv["data_assinatura"], PRAZO_ANTECIPADO_DIAS)
     return somar_dias(inv["data_hawb"], c["dias"]) if inv["data_hawb"] else None
 
 
@@ -499,8 +527,8 @@ def calcular_parcelas(r):
     parcelas e distribui os pagamentos já feitos na ordem de vencimento."""
     V = r["valor_invoice"]
     parcelas = []
-    for c in r["condicao"]:
-        parcelas.append({"percentual": c["percentual"], "tipo": c["tipo"], "dias": c["dias"],
+    for idx, c in enumerate(r["condicao"]):
+        parcelas.append({"idx": idx, "percentual": c["percentual"], "tipo": c["tipo"], "dias": c["dias"],
                          "texto": texto_parcela(c, sozinha=len(r["condicao"]) == 1),
                          "valor": round(V * c["percentual"] / 100, 2), "vencimento": vencimento_parcela(r, c)})
     if parcelas:  # ajuste de centavos na última parcela
@@ -534,15 +562,37 @@ def etapa_concluida(inv, etapa):
 
 
 def somar_dias_uteis(data_iso, dias):
-    """Soma dias úteis (segunda a sexta; feriados não são considerados)."""
+    """Soma (ou subtrai, se negativo) dias úteis: segunda a sexta; feriados não são considerados.
+    Com 0 dias, uma data em fim de semana vai para o próximo dia útil."""
     if not data_iso:
         return None
     data = datetime.strptime(data_iso[:10], "%Y-%m-%d")
-    while dias > 0:
-        data += timedelta(days=1)
+    passo = 1 if dias >= 0 else -1
+    restantes = abs(dias)
+    if restantes == 0:
+        while data.weekday() >= 5:
+            data += timedelta(days=1)
+    while restantes > 0:
+        data += timedelta(days=passo)
         if data.weekday() < 5:
-            dias -= 1
+            restantes -= 1
     return data.strftime("%Y-%m-%d")
+
+
+def janela_nacionalizacao(r):
+    """Janela de pagamento dos impostos de nacionalização (até o desembaraço):
+    ETA planejado -1 a +3 dias úteis; quando houver ETA real, ETA real a +2 dias úteis."""
+    if r["cancelado_em"] or r["data_desembaraco"]:
+        return None
+    if r["eta_real"]:
+        ini, fim = NACIONALIZACAO_REAL
+        return {"ini": somar_dias_uteis(r["eta_real"], ini), "fim": somar_dias_uteis(r["eta_real"], fim),
+                "base": "real", "eta": r["eta_real"]}
+    if r["eta_planejado"]:
+        ini, fim = NACIONALIZACAO_PLANEJADA
+        return {"ini": somar_dias_uteis(r["eta_planejado"], ini), "fim": somar_dias_uteis(r["eta_planejado"], fim),
+                "base": "planejado", "eta": r["eta_planejado"]}
+    return None
 
 
 def parcelas_liberacao(r, d):
@@ -642,6 +692,7 @@ def calcular(inv):
     r["liberavel"] = round(liberavel, 2)
     r["liberacao_disponivel"] = max(round(liberavel - r["liberado"], 2), 0)
     r["parcelas_liberacao"] = parcelas_liberacao(r, d)
+    r["nacionalizacao"] = janela_nacionalizacao(r)
     r["swifts_pendentes"] = sum(1 for p in r["pagamentos"] if not p["swift_url"])
     r["parcelas"] = calcular_parcelas(r)
     pendentes = [p for p in r["parcelas"] if p["pendente"] > TOLERANCIA]
@@ -861,10 +912,10 @@ def minha_senha():
 # ---------------------------------------------------------------------------
 # Painel e pendências
 # ---------------------------------------------------------------------------
-def listar_pendencias(invoices):
+def listar_pendencias(invoices, perfil=None):
     """Pendências de todos os setores (todos veem tudo); as do setor do usuário vêm primeiro.
     Ver não dá permissão de preencher: cada tela continua restrita ao seu setor."""
-    perfil = g.usuario["perfil"]
+    perfil = perfil or g.usuario["perfil"]
     adm = imp = fin = True
     pend = []
 
@@ -1006,9 +1057,12 @@ def itens_fluxo(invoices):
                 tipo = "Liberação do segurado · aguardando dedução em próximo invoice"
             itens.append(dict(base, categoria="LIBERACAO", tipo=tipo, data=p["vencimento"],
                               estimado=p["status"] != "DISPONIVEL", valor=p["pendente"]))
-        if (r["etd_planejado"] or r["etd_real"]) and not r["data_desembaraco"]:
-            itens.append(dict(base, categoria="CUSTO", tipo="Custo estimado de importação (40% do invoice)",
-                              data=r["eta_real"] or r["eta_planejado"] or r["data_prog_chegada"], estimado=True,
+        jan = r["nacionalizacao"]
+        if (jan or r["etd_planejado"] or r["etd_real"]) and not r["data_desembaraco"]:
+            tipo = "Impostos de nacionalização (estimativa: 40% do invoice)"
+            tipo += (f" · pagar entre {fmt_data(jan['ini'])} e {fmt_data(jan['fim'])} (ETA {jan['base']})" if jan
+                     else " · aguardando o ETA planejado")
+            itens.append(dict(base, categoria="CUSTO", tipo=tipo, data=jan["ini"] if jan else None, estimado=True,
                               valor=round(r["itens_total"] * CUSTO_IMPORTACAO_ESTIMADO, 2)))
     for it in itens:
         if it["data"] and it["data"] < hj and it["categoria"] != "CUSTO":
@@ -2289,6 +2343,579 @@ def sistema_onedrive():
         get_db().commit()
         flash("Pasta do OneDrive salva.", "ok")
     return redirect(url_for("sistema"))
+
+
+# ---------------------------------------------------------------------------
+# E-mails automáticos
+#
+# A cada alteração salva no sistema, a "fotografia" de previsibilidade de cada invoice (parcelas,
+# janela de nacionalização, liberações, desconto, chegada...) é comparada com a anterior; as
+# diferenças viram e-mails, na fila da tabela `emails`. O envio acontece logo após a resposta da
+# página (o usuário não espera) pela conta Gmail configurada na aba E-mails.
+# ---------------------------------------------------------------------------
+FLUXOS_EMAIL = {
+    # chave: (título, quando é enviado, setor sugerido em "Para", setor sugerido em "Cc")
+    "pagamento_programado": (
+        "Pagamento programado",
+        "Parcela antecipada (data de assinatura + 5 dias úteis) e parcelas após a HAWB, assim que a data de "
+        "vencimento e o valor ficam definidos.", "financeiro", ""),
+    "pagamento_alterado": (
+        "Pagamento alterado",
+        "Mudança na data de vencimento ou no valor de uma parcela já programada (ex.: HAWB corrigida, itens, "
+        "dedução, desconto) e cancelamento de invoice.", "financeiro", ""),
+    "nacionalizacao": (
+        "Impostos de nacionalização",
+        "Janela de pagamento: ETA planejado −1 a +3 dias úteis; com o ETA real, ETA real a +2 dias úteis. "
+        "Avisa no cadastro e em cada alteração.", "financeiro", ""),
+    "banco_debito": (
+        "Informar banco de débito",
+        "Pedido para o Financeiro informar o banco de débito, quando o ETA planejado é cadastrado.",
+        "financeiro", ""),
+    "desconto_segurar": (
+        "Desconto cadastrado: segurar valor",
+        "Quando um desconto é cadastrado: o valor deve ser segurado no pagamento do invoice. A dedução em "
+        "outro invoice só acontece após a aprovação do fornecedor.", "financeiro", "importacao"),
+    "liberacao": (
+        "Valor segurado liberado",
+        "Quando o invoice com a dedução chega à fábrica (ou o desconto é revalidado para baixo): realizar o "
+        "pagamento do valor segurado até a chegada + 5 dias úteis.", "financeiro", ""),
+    "chegada_deducao": (
+        "Chegada de invoice com dedução",
+        "Aviso à Engenharia de Processos quando chega à fábrica um invoice que recebeu dedução de desconto de "
+        "outro invoice.", "admin", ""),
+    "resumo_diario": (
+        "Resumo diário de pendências do Financeiro",
+        "Em dias úteis, a partir do horário configurado, se o Financeiro tiver pendências.", "financeiro", ""),
+}
+STATUS_EMAIL = {"PENDENTE": "Na fila", "ENVIADO": "Enviado", "ERRO": "Erro", "NAO_ENVIADO": "Não enviado"}
+SMTP_PADRAO = {"smtp_host": "smtp.gmail.com", "smtp_porta": "587",
+               "smtp_nome": "Controle de Invoices · Quinelato"}
+RE_EMAIL = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+FUSO_BRASIL = timedelta(hours=-3)  # horário de Brasília (sem horário de verão)
+
+
+def agora_brasil():
+    return datetime.now(timezone.utc).replace(tzinfo=None) + FUSO_BRASIL
+
+
+def lista_emails(texto):
+    return [e.strip().lower() for e in re.split(r"[,;\s]+", texto or "") if e.strip()]
+
+
+def emails_do_setor(perfil):
+    if not perfil:
+        return ""
+    return ", ".join(u["email"] for u in get_db().execute(
+        "SELECT email FROM usuarios WHERE ativo = 1 AND perfil = ? ORDER BY nome", (perfil,)))
+
+
+def config_fluxos():
+    """Configuração salva de cada fluxo: {fluxo: {ativo, para, cc}} (vazio se nunca foi salva)."""
+    try:
+        return json.loads(config("email_fluxos", "{}"))
+    except ValueError:
+        return {}
+
+
+def fluxos_para_tela():
+    salvos = config_fluxos()
+    linhas = []
+    for chave, (titulo, quando, para, cc) in FLUXOS_EMAIL.items():
+        c = salvos.get(chave)
+        linhas.append({"chave": chave, "titulo": titulo, "quando": quando,
+                       "sugestao_para": SETORES.get(para, ""), "sugestao_cc": SETORES.get(cc, ""),
+                       "ativo": c["ativo"] if c else True,
+                       "para": c["para"] if c else emails_do_setor(para),
+                       "cc": c["cc"] if c else emails_do_setor(cc), "salvo": bool(c)})
+    return linhas
+
+
+def conta_configurada():
+    return bool(config("smtp_usuario") and config("smtp_senha"))
+
+
+# ---------- conteúdo dos e-mails ----------
+def corpo_email(titulo, r, linhas, obs=None):
+    """HTML simples (sem links para o sistema), com os dados do invoice e a lista de informações."""
+    cab = ""
+    if r is not None:
+        dados = [("Fornecedor", r["fornecedor"]), ("Invoice", r["numero"]), ("Moeda", r["moeda"]),
+                 ("Valor do invoice", fmt_moeda(r["valor_invoice"], r["moeda"])),
+                 ("Condição de pagamento", condicao_texto(r) if r["condicao"] else "não informada")]
+        cab = "".join(f'<tr><td style="color:#5b6170;padding:2px 12px 2px 0">{escape(k)}</td>'
+                      f'<td style="padding:2px 0"><strong>{escape(v)}</strong></td></tr>' for k, v in dados)
+        cab = f'<table style="border-collapse:collapse;margin:8px 0 14px">{cab}</table>'
+    itens = "".join(f'<li style="margin:4px 0">{escape(x)}</li>' for x in linhas)
+    obs_html = f'<p style="margin:12px 0 0">{escape(obs)}</p>' if obs else ""
+    return (f'<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#212529;max-width:680px">'
+            f'<div style="border-bottom:3px solid #327fef;padding-bottom:6px;margin-bottom:10px">'
+            f'<strong style="color:#0a2a7b;font-size:16px">{escape(titulo)}</strong></div>{cab}'
+            f'<ul style="padding-left:20px;margin:0">{itens}</ul>{obs_html}'
+            f'<p style="color:#8a8f9c;font-size:12px;margin-top:22px">E-mail automático do sistema Controle de '
+            f'Invoices e Descontos · Quinelato. Não é necessário responder.</p></div>')
+
+
+def texto_simples(html):
+    txt = re.sub(r"</(li|tr|p|div)>", "\n", html)
+    txt = re.sub(r"<li[^>]*>", "• ", txt)
+    txt = re.sub(r"<[^>]+>", " ", txt)
+    txt = re.sub(r"[ \t]+", " ", txt)
+    import html as _html
+    return "\n".join(l.strip() for l in _html.unescape(txt).splitlines() if l.strip())
+
+
+def enfileirar_email(fluxo, r, assunto_extra, linhas, obs=None):
+    """Grava o e-mail na fila (ou como não enviado, explicando o motivo)."""
+    titulo = FLUXOS_EMAIL[fluxo][0]
+    assunto = f"[Invoices] {titulo}" + (f" · {r['fornecedor']} {r['numero']}" if r is not None else "") + \
+              (f" · {assunto_extra}" if assunto_extra else "")
+    corpo = corpo_email(titulo + (f" · {assunto_extra}" if assunto_extra else ""), r, linhas, obs)
+    c = config_fluxos().get(fluxo)
+    para, cc = (c["para"], c["cc"]) if c else ("", "")
+    if not c:
+        status, erro = "NAO_ENVIADO", "Fluxo ainda não configurado (salve a aba E-mails)."
+    elif not c.get("ativo"):
+        status, erro = "NAO_ENVIADO", "Fluxo desativado."
+    elif not lista_emails(para):
+        status, erro = "NAO_ENVIADO", "Sem destinatário em 'Para'."
+    elif not conta_configurada():
+        status, erro = "NAO_ENVIADO", "Conta de envio (Gmail) não configurada."
+    else:
+        status, erro = "PENDENTE", None
+        g.ha_emails_na_fila = True
+    get_db().execute("INSERT INTO emails (fluxo, invoice_id, assunto, corpo, para, cc, status, erro, criado_em)"
+                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (fluxo, r["id"] if r is not None else None, assunto, corpo, para, cc, status, erro, agora()))
+
+
+# ---------- detecção de mudanças ----------
+def estado_previsao(r):
+    """Fotografia do que interessa às notificações de um invoice."""
+    if r["cancelado_em"]:
+        return {"cancelado": True}
+    return {
+        "cancelado": False,
+        "parcelas": {str(p["idx"]): {"texto": p["texto"], "venc": p["vencimento"], "valor": p["devido"],
+                                     "quitada": p["pendente"] <= TOLERANCIA} for p in r["parcelas"]},
+        "nac": r["nacionalizacao"],
+        "eta_planejado": r["eta_planejado"],
+        "banco": bool(r["banco_debito"]),
+        "chegada": r["data_chegada"],
+        "desconto": r["desconto"]["id"] if r["desconto"] else None,
+        "lib": {p["texto"]: {"valor": p["valor"], "venc": p["vencimento"]}
+                for p in r["parcelas_liberacao"] if p["status"] == "DISPONIVEL"},
+    }
+
+
+def descrever_parcela(r, p):
+    if p["tipo"] == "ANTECIPADO":
+        regra = f"data de assinatura {fmt_data(r['data_assinatura'])} + {PRAZO_ANTECIPADO_DIAS} dias úteis"
+    else:
+        regra = f"HAWB {fmt_data(r['data_hawb'])} + {p['dias']} dias"
+    return f"Parcela {p['texto']} ({regra})"
+
+
+def gerar_emails(r, antigo, novo):
+    m = r["moeda"]
+    if novo.get("cancelado"):
+        if not antigo.get("cancelado"):
+            prog = [p for p in (antigo.get("parcelas") or {}).values() if p["venc"] and not p["quitada"]]
+            if prog:
+                enfileirar_email("pagamento_alterado", r, "invoice cancelado",
+                                 [f"Parcela {p['texto']}: vencimento {fmt_data(p['venc'])}, "
+                                  f"{fmt_moeda(p['valor'], m)} — desconsiderar" for p in prog],
+                                 "O invoice foi cancelado: os pagamentos programados acima não devem ser feitos.")
+        return
+    parcelas = {str(p["idx"]): p for p in r["parcelas"]}
+    antigas = antigo.get("parcelas") or {}
+    novo_desconto = novo["desconto"] and novo["desconto"] != antigo.get("desconto")
+
+    # parcelas: programação e alterações
+    programadas, alteradas = [], []
+    for k, n in novo["parcelas"].items():
+        p, a = parcelas[k], antigas.get(k)
+        if n["quitada"]:
+            continue
+        definida = n["venc"] and n["valor"] > TOLERANCIA
+        a_definida = a and a["venc"] and a["valor"] > TOLERANCIA
+        if definida and not a_definida:
+            programadas.append(f"{descrever_parcela(r, p)}: vencimento {fmt_data(n['venc'])} · "
+                               f"valor a pagar {fmt_moeda(n['valor'], m)}")
+        elif a_definida and not definida:
+            alteradas.append(f"Parcela {n['texto']}: vencimento {fmt_data(a['venc'])} e valor "
+                             f"{fmt_moeda(a['valor'], m)} deixaram de valer (aguardando nova definição)")
+        elif definida and (a["venc"] != n["venc"] or abs(a["valor"] - n["valor"]) > TOLERANCIA
+                           or a["texto"] != n["texto"]):
+            if novo_desconto and a["venc"] == n["venc"] and a["texto"] == n["texto"]:
+                continue  # redução pelo valor segurado: já informada no e-mail do desconto
+            mud = []
+            if a["venc"] != n["venc"]:
+                mud.append(f"vencimento {fmt_data(a['venc'])} → {fmt_data(n['venc'])}")
+            if abs(a["valor"] - n["valor"]) > TOLERANCIA:
+                mud.append(f"valor {fmt_moeda(a['valor'], m)} → {fmt_moeda(n['valor'], m)}")
+            if a["texto"] != n["texto"]:
+                mud.append(f"condição {a['texto']} → {n['texto']}")
+            alteradas.append(f"{descrever_parcela(r, p)}: " + "; ".join(mud))
+    for k, a in antigas.items():
+        if k not in novo["parcelas"] and a["venc"] and not a["quitada"]:
+            alteradas.append(f"Parcela {a['texto']} (vencimento {fmt_data(a['venc'])}, "
+                             f"{fmt_moeda(a['valor'], m)}) foi removida da condição de pagamento")
+    if programadas:
+        enfileirar_email("pagamento_programado", r, None, programadas,
+                         "Programar o pagamento conforme acima.")
+    if alteradas:
+        enfileirar_email("pagamento_alterado", r, None, alteradas,
+                         "A programação de pagamento deste invoice mudou. Atualize a programação.")
+
+    # impostos de nacionalização
+    jan, jan_a = novo["nac"], antigo.get("nac")
+    if jan and jan != jan_a:
+        valor = fmt_moeda(round(r["itens_total"] * CUSTO_IMPORTACAO_ESTIMADO, 2), m)
+        regra = ("ETA planejado −1 a +3 dias úteis" if jan["base"] == "planejado" else "ETA real a +2 dias úteis")
+        linhas = [f"Pagamento dos impostos de nacionalização entre {fmt_data(jan['ini'])} e {fmt_data(jan['fim'])}",
+                  f"Base: ETA {jan['base']} {fmt_data(jan['eta'])} ({regra})",
+                  f"Valor estimado: {valor} (40% do valor dos itens; o valor real vem do despachante)"]
+        if jan_a:
+            linhas.insert(1, f"Janela anterior: {fmt_data(jan_a['ini'])} a {fmt_data(jan_a['fim'])} "
+                             f"(ETA {jan_a['base']} {fmt_data(jan_a['eta'])})")
+        extra = ("ETA real cadastrado" if jan["base"] == "real" and (not jan_a or jan_a["base"] != "real")
+                 else "data alterada" if jan_a else None)
+        enfileirar_email("nacionalizacao", r, extra, linhas)
+
+    # banco de débito
+    if novo["eta_planejado"] and not antigo.get("eta_planejado") and not novo["banco"]:
+        enfileirar_email("banco_debito", r, None,
+                         [f"ETA planejado cadastrado: {fmt_data(novo['eta_planejado'])}",
+                          "Informe no sistema o banco de débito deste invoice (seção Etapas logísticas → Embarque)."],
+                         "Sem o banco de débito, a etapa de Embarque não é concluída.")
+
+    # chegada de invoice que recebeu dedução
+    if novo["chegada"] and not antigo.get("chegada") and r["deducoes_recebidas"]:
+        enfileirar_email("chegada_deducao", r, None,
+                         [f"Chegada real na fábrica: {fmt_data(novo['chegada'])}"] +
+                         [f"Dedução de {fmt_moeda(x['valor'], m)} do desconto do invoice {x['invoice_origem']}"
+                          for x in r["deducoes_recebidas"]],
+                         "O valor segurado dos invoices de origem fica disponível para liberação pelo Financeiro.")
+
+    # desconto cadastrado: segurar
+    if novo_desconto and r["segurado"] > TOLERANCIA:
+        d = r["desconto"]
+        linhas = [f"Valor do desconto: {fmt_moeda(d['valor_final'], m)} ({STATUS_DESCONTO[d['status']]})",
+                  f"Valor a segurar no pagamento deste invoice: {fmt_moeda(r['segurado'], m)}"]
+        linhas += [f"Parcela {p['texto']}: pagar {fmt_moeda(p['devido'], m)}"
+                   + (f" (vencimento {fmt_data(p['vencimento'])})" if p["vencimento"] else " (vencimento a definir)")
+                   for p in r["parcelas"] if p["pendente"] > TOLERANCIA]
+        enfileirar_email("desconto_segurar", r, None, linhas,
+                         "Segure este valor até a liberação. A Importação só poderá deduzi-lo em outro invoice "
+                         "depois que o fornecedor aprovar o desconto.")
+
+    # liberações do valor segurado
+    antigas_lib = antigo.get("lib") or {}
+    novas = [(k, v) for k, v in novo["lib"].items()
+             if k not in antigas_lib or abs(antigas_lib[k]["valor"] - v["valor"]) > TOLERANCIA
+             or antigas_lib[k]["venc"] != v["venc"]]
+    if novas:
+        enfileirar_email("liberacao", r, None,
+                         [f"{k}: liberar {fmt_moeda(v['valor'], m)} · pagar até {fmt_data(v['venc'])}"
+                          for k, v in novas],
+                         f"Realize o pagamento do valor segurado (chegada + {PRAZO_LIBERACAO_DIAS_UTEIS} dias "
+                         f"úteis) e registre o pagamento com o Swift no sistema.")
+
+
+def processar_notificacoes():
+    """Compara a previsibilidade atual de cada invoice com a última registrada e gera os e-mails.
+    Na primeira execução apenas registra a situação (não envia nada sobre o histórico)."""
+    db = get_db()
+    inicial = config("notif_inicio") is None
+    estados = {row["invoice_id"]: row["estado"] for row in db.execute("SELECT * FROM notificacoes_estado")}
+    for r in todos_invoices(incluir_cancelados=True):
+        novo = json.dumps(estado_previsao(r), sort_keys=True)
+        antigo = estados.get(r["id"])
+        if antigo == novo:
+            continue
+        if not inicial:
+            gerar_emails(r, json.loads(antigo) if antigo else {}, json.loads(novo))
+        db.execute("INSERT INTO notificacoes_estado (invoice_id, estado, atualizado_em) VALUES (?, ?, ?)"
+                   " ON CONFLICT(invoice_id) DO UPDATE SET estado = excluded.estado,"
+                   " atualizado_em = excluded.atualizado_em", (r["id"], novo, agora()))
+    if inicial:
+        salvar_config("notif_inicio", agora())
+    db.commit()
+
+
+# ---------- resumo diário ----------
+def resumo_diario(forcar=False):
+    """Envia (uma vez por dia útil) as pendências do Financeiro. Retorna uma mensagem do que aconteceu."""
+    agora_br = agora_brasil()
+    dia = agora_br.date().isoformat()
+    if not forcar:
+        if agora_br.weekday() >= 5:
+            return "Fim de semana: o resumo só é enviado em dias úteis."
+        if agora_br.hour < int(config("resumo_hora", "8")):
+            return "Ainda não chegou o horário do resumo."
+        if config("resumo_ultimo") == dia:
+            return "O resumo de hoje já foi processado."
+    salvar_config("resumo_ultimo", dia)
+    get_db().commit()
+    pend = [p for p in listar_pendencias(todos_invoices(), perfil="financeiro") if p["quem"] == "financeiro"]
+    if not pend:
+        return "O Financeiro não tem pendências: nenhum e-mail enviado."
+    linhas = []
+    for p in pend:
+        txt = f"{p['r']['fornecedor']} · {p['r']['numero']}: {p['acao']}"
+        if p["data"]:
+            txt += f" · {fmt_data(p['data'])}"
+        if p["valor"] is not None:
+            txt += f" · {fmt_moeda(p['valor'], p['r']['moeda'])}"
+        if p["alerta"]:
+            txt = "⚠ " + txt
+        linhas.append(txt)
+    enfileirar_email("resumo_diario", None, f"{len(pend)} pendência(s) · {agora_br.strftime('%d/%m/%Y')}",
+                     linhas, "Por favor, realize as ações acima e registre-as no sistema. "
+                             "Itens com ⚠ estão vencidos ou vencem nos próximos 7 dias.")
+    get_db().commit()
+    return f"Resumo gerado com {len(pend)} pendência(s)."
+
+
+# ---------- envio ----------
+def conectar_smtp():
+    host = config("smtp_host", SMTP_PADRAO["smtp_host"])
+    porta = int(config("smtp_porta", SMTP_PADRAO["smtp_porta"]))
+    if porta == 465:
+        srv = smtplib.SMTP_SSL(host, porta, timeout=20)
+    else:
+        srv = smtplib.SMTP(host, porta, timeout=20)
+        srv.starttls()
+    srv.login(config("smtp_usuario"), config("smtp_senha"))
+    return srv
+
+
+def montar_mensagem(assunto, html, para, cc):
+    msg = EmailMessage()
+    msg["Subject"] = assunto
+    msg["From"] = formataddr((config("smtp_nome", SMTP_PADRAO["smtp_nome"]), config("smtp_usuario")))
+    msg["To"] = ", ".join(lista_emails(para))
+    if lista_emails(cc):
+        msg["Cc"] = ", ".join(lista_emails(cc))
+    msg.set_content(texto_simples(html))
+    msg.add_alternative(html, subtype="html")
+    return msg
+
+
+def enviar_fila():
+    """Envia os e-mails pendentes (até 3 tentativas cada)."""
+    db = get_db()
+    fila = db.execute("SELECT * FROM emails WHERE status = 'PENDENTE' ORDER BY id LIMIT 50").fetchall()
+    if not fila:
+        return 0
+    enviados = 0
+    try:
+        srv = conectar_smtp()
+    except Exception as e:  # conta/senha/rede: registra a falha em cada e-mail
+        for em in fila:
+            tent = em["tentativas"] + 1
+            db.execute("UPDATE emails SET tentativas = ?, erro = ?, status = ? WHERE id = ?",
+                       (tent, f"Falha ao conectar: {e}", "ERRO" if tent >= 3 else "PENDENTE", em["id"]))
+        db.commit()
+        return 0
+    try:
+        for em in fila:
+            try:
+                srv.send_message(montar_mensagem(em["assunto"], em["corpo"], em["para"], em["cc"]))
+                db.execute("UPDATE emails SET status = 'ENVIADO', erro = NULL, enviado_em = ?,"
+                           " tentativas = tentativas + 1 WHERE id = ?", (agora(), em["id"]))
+                enviados += 1
+            except Exception as e:
+                tent = em["tentativas"] + 1
+                db.execute("UPDATE emails SET tentativas = ?, erro = ?, status = ? WHERE id = ?",
+                           (tent, str(e), "ERRO" if tent >= 3 else "PENDENTE", em["id"]))
+            db.commit()
+    finally:
+        try:
+            srv.quit()
+        except Exception:
+            pass
+    return enviados
+
+
+def tarefas_em_segundo_plano(resumo=True):
+    """Roda depois que a página já foi entregue ao usuário: resumo diário (se for a hora) e envio da fila."""
+    with app.app_context():
+        try:
+            if resumo:
+                resumo_diario()
+            enviar_fila()
+        except Exception:
+            app.logger.exception("Falha nas tarefas de e-mail")
+
+
+def tarefa_diaria():
+    """Para tarefa agendada (deploy/tarefa_diaria.sh) ou agendador externo: resumo + fila."""
+    with app.app_context():
+        msg = resumo_diario()
+        n = enviar_fila()
+        return f"{msg} E-mails enviados agora: {n}."
+
+
+@app.before_request
+def notificacoes_linha_de_base():
+    # na primeira alteração após instalar esta versão, registra a situação atual antes de qualquer mudança
+    if request.method == "POST" and g.get("usuario") and config("notif_inicio") is None:
+        processar_notificacoes()
+
+
+@app.after_request
+def notificacoes_apos_alteracao(resp):
+    if request.endpoint == "static":
+        return resp
+    if request.method == "POST" and g.get("usuario") and resp.status_code < 400:
+        try:
+            processar_notificacoes()
+        except Exception:
+            app.logger.exception("Falha ao processar notificações")
+    try:
+        precisa_resumo = (config("resumo_ultimo") != agora_brasil().date().isoformat()
+                          and config("email_fluxos") is not None)
+        if g.get("ha_emails_na_fila") or precisa_resumo:
+            resp.call_on_close(lambda: tarefas_em_segundo_plano(resumo=precisa_resumo))
+    except Exception:
+        app.logger.exception("Falha ao agendar e-mails")
+    return resp
+
+
+@app.route("/tarefas/diaria/<chave>")
+def tarefa_diaria_url(chave):
+    """Endereço para um agendador externo (ex.: cron-job.org) chamar uma vez por dia."""
+    certa = config("tarefa_chave")
+    if not certa or not secrets.compare_digest(certa, chave):
+        abort(404)
+    msg = resumo_diario()
+    n = enviar_fila()
+    return Response(f"OK · {msg} E-mails enviados agora: {n}.", mimetype="text/plain")
+
+
+# ---------- aba E-mails (administrador) ----------
+@app.route("/emails")
+@somente_admin
+def emails_config():
+    if not config("tarefa_chave"):
+        salvar_config("tarefa_chave", secrets.token_urlsafe(24))
+        get_db().commit()
+    historico = get_db().execute(
+        "SELECT e.*, i.numero FROM emails e LEFT JOIN invoices i ON i.id = e.invoice_id"
+        " ORDER BY e.id DESC LIMIT 60").fetchall()
+    contagem = {k: n for k, n in get_db().execute("SELECT status, COUNT(*) FROM emails GROUP BY status")}
+    return render_template(
+        "emails.html", fluxos=fluxos_para_tela(), salvo=config("email_fluxos") is not None,
+        smtp={k: config(k, SMTP_PADRAO.get(k, "")) for k in ("smtp_host", "smtp_porta", "smtp_usuario", "smtp_nome")},
+        tem_senha=bool(config("smtp_senha")), resumo_hora=config("resumo_hora", "8"),
+        resumo_ultimo=config("resumo_ultimo"), historico=historico, contagem=contagem,
+        url_tarefa=re.sub(r"^http://(?=[^/]*pythonanywhere\.com)", "https://",
+                          url_for("tarefa_diaria_url", chave=config("tarefa_chave"), _external=True)),
+        FLUXOS_EMAIL=FLUXOS_EMAIL, STATUS_EMAIL=STATUS_EMAIL)
+
+
+@app.route("/emails/conta", methods=["POST"])
+@somente_admin
+def emails_conta():
+    f = request.form
+    usuario = f.get("smtp_usuario", "").strip().lower()
+    porta = f.get("smtp_porta", "587").strip()
+    if usuario and not RE_EMAIL.match(usuario):
+        flash("Informe um e-mail válido para a conta de envio.", "erro")
+    elif not porta.isdigit():
+        flash("A porta deve ser um número (Gmail: 587).", "erro")
+    else:
+        salvar_config("smtp_usuario", usuario)
+        salvar_config("smtp_host", f.get("smtp_host", "").strip() or SMTP_PADRAO["smtp_host"])
+        salvar_config("smtp_porta", porta)
+        salvar_config("smtp_nome", f.get("smtp_nome", "").strip() or SMTP_PADRAO["smtp_nome"])
+        senha = f.get("smtp_senha", "").replace(" ", "")
+        if senha:
+            salvar_config("smtp_senha", senha)
+        if f.get("remover_senha"):
+            salvar_config("smtp_senha", None)
+        get_db().commit()
+        flash("Conta de envio salva.", "ok")
+    return redirect(url_for("emails_config") + "#conta")
+
+
+@app.route("/emails/teste", methods=["POST"])
+@somente_admin
+def emails_teste():
+    destino = request.form.get("destino", "").strip()
+    if not RE_EMAIL.match(destino):
+        flash("Informe um e-mail válido para o teste.", "erro")
+    elif not conta_configurada():
+        flash("Configure a conta de envio (e-mail e senha de app) antes do teste.", "erro")
+    else:
+        html = corpo_email("E-mail de teste", None, ["Se você recebeu esta mensagem, a conta de envio está correta."])
+        try:
+            srv = conectar_smtp()
+            srv.send_message(montar_mensagem("[Invoices] E-mail de teste", html, destino, ""))
+            srv.quit()
+            flash(f"E-mail de teste enviado para {destino}. Confira a caixa de entrada (e o spam).", "ok")
+        except Exception as e:
+            flash(f"Não foi possível enviar: {e}", "erro")
+    return redirect(url_for("emails_config") + "#conta")
+
+
+@app.route("/emails/fluxos", methods=["POST"])
+@somente_admin
+def emails_fluxos():
+    f = request.form
+    novos, erros = {}, []
+    for chave, (titulo, *_r) in FLUXOS_EMAIL.items():
+        para, cc = f.get(f"para_{chave}", ""), f.get(f"cc_{chave}", "")
+        invalidos = [e for e in lista_emails(para) + lista_emails(cc) if not RE_EMAIL.match(e)]
+        if invalidos:
+            erros.append(f"{titulo}: e-mail inválido ({', '.join(invalidos)})")
+        novos[chave] = {"ativo": bool(f.get(f"ativo_{chave}")), "para": ", ".join(lista_emails(para)),
+                        "cc": ", ".join(lista_emails(cc))}
+    hora = f.get("resumo_hora", "8")
+    if not hora.isdigit() or not 0 <= int(hora) <= 23:
+        erros.append("Horário do resumo diário: informe uma hora entre 0 e 23.")
+    if erros:
+        for e in erros:
+            flash(e, "erro")
+    else:
+        salvar_config("email_fluxos", json.dumps(novos, ensure_ascii=False))
+        salvar_config("resumo_hora", hora)
+        get_db().commit()
+        flash("Destinatários salvos.", "ok")
+    return redirect(url_for("emails_config") + "#fluxos")
+
+
+@app.route("/emails/acao", methods=["POST"])
+@somente_admin
+def emails_acao():
+    acao = request.form.get("acao")
+    db = get_db()
+    if acao == "reenviar":
+        db.execute("UPDATE emails SET status = 'PENDENTE', tentativas = 0 WHERE status = 'ERRO'")
+        db.commit()
+        n = enviar_fila()
+        flash(f"Reenvio concluído: {n} e-mail(s) enviado(s). Veja o histórico abaixo.", "ok")
+    elif acao == "resumo":
+        msg = resumo_diario(forcar=True)
+        n = enviar_fila()
+        flash(f"{msg} E-mails enviados agora: {n}.", "ok")
+    elif acao == "nova_chave":
+        salvar_config("tarefa_chave", secrets.token_urlsafe(24))
+        db.commit()
+        flash("Novo endereço gerado: atualize-o no agendador externo.", "ok")
+    elif acao == "enviar_fila":
+        flash(f"E-mails enviados agora: {enviar_fila()}.", "ok")
+    return redirect(url_for("emails_config") + "#historico")
+
+
+@app.route("/emails/<int:eid>")
+@somente_admin
+def email_ver(eid):
+    em = get_db().execute("SELECT * FROM emails WHERE id = ?", (eid,)).fetchone()
+    if em is None:
+        abort(404)
+    return render_template("email_ver.html", em=em, STATUS_EMAIL=STATUS_EMAIL, FLUXOS_EMAIL=FLUXOS_EMAIL)
 
 
 @app.errorhandler(403)

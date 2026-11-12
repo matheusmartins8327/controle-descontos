@@ -295,3 +295,16 @@ th { color: var(--marinho); opacity: .8; }
 /* v3.14: pendências agrupadas por setor */
 tr.titulo-grupo th { background: #eef3fd; color: var(--marinho); text-align: left; font-size: .9rem; padding-top: .6rem; }
 tbody.outras td { color: #5b6170; }
+
+/* v4.0: aba E-mails */
+.grade-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: .6rem 1rem; align-items: end; margin-bottom: 1rem; }
+.grade-form .avancado { grid-column: 1 / -1; }
+.grade-form .avancado label { display: inline-block; margin-right: 1rem; }
+.tabela-fluxos textarea { width: 100%; min-width: 210px; font: inherit; font-size: .88rem; }
+.tabela-fluxos td { vertical-align: top; }
+.tabela-fluxos td:nth-child(2) { min-width: 260px; }
+label.inline { display: block; margin-top: .35rem; font-size: .85rem; }
+input.curto { width: 3.2rem; display: inline-block; }
+.copiar { display: flex; gap: .5rem; align-items: center; margin: .35rem 0; flex-wrap: wrap; }
+.copiar code { background: #f1f4fa; padding: .3rem .5rem; border-radius: 6px; word-break: break-all; font-size: .85rem; }
+.ok-txt { color: #1d7a3e; }

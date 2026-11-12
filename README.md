@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v3.14)
+# Controle de Invoices e Descontos (v4.0)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -107,7 +107,7 @@ O invoice fica **Concluído** quando está pago, o desconto (se houver) foi dedu
 
 ### Regras de pagamento
 - **Condição de pagamento em parcelas** que somam 100% (ex.: 25% antecipado + 75% 60 dias após a HAWB).
-- **Vencimento de cada parcela**: antecipada = data de assinatura + 5 dias; a prazo = data da HAWB (registrada na Coleta) + dias. **Antes da HAWB, a parcela a prazo fica sem vencimento** (não há estimativa).
+- **Vencimento de cada parcela**: antecipada = data de assinatura + 5 dias úteis; a prazo = data da HAWB (registrada na Coleta) + dias. **Antes da HAWB, a parcela a prazo fica sem vencimento** (não há estimativa).
 - Pagamentos são distribuídos nas parcelas por ordem de vencimento; o valor segurado sai das parcelas que vencem por último.
 - **Valor segurado**: com desconto, o invoice é pago menos o valor do desconto. Só é possível segurar o que ainda não foi pago: se o invoice já foi pago (ex.: antecipado), o desconto é apenas deduzido no próximo invoice.
 - **Liberação do segurado**: conforme os invoices com a dedução chegam à fábrica. Se o desconto for revalidado para baixo (ou zerado), a diferença fica disponível na hora. Cada parcela liberada vence na **data real de chegada na fábrica do invoice deduzido + 5 dias úteis**; enquanto esse invoice não chega, não há vencimento ("aguardando a chegada na Quinelato"). A diferença de uma revalidação para baixo vence na data da revalidação + 5 dias úteis.
@@ -146,3 +146,26 @@ Os dados ficam em `instance\descontos.db`. **Copie a pasta `instance` periodicam
 
 ## Histórico
 A versão 3.0 recomeçou os registros do zero. Usuários e fornecedores foram mantidos; os dados da versão 2 (controle só de descontos) ficam preservados no banco com o prefixo `legacy_v2_`.
+
+## E-mails automáticos (v4.0)
+Configurados pelo Administrador na aba **E-mails** (canto superior, ao lado de Usuários/Sistema): conta Gmail de envio,
+destinatários (Para/Cc) e ativação de cada fluxo, horário do resumo diário e histórico de tudo que foi enviado.
+
+| E-mail | Quando | Sugestão de destino |
+|---|---|---|
+| Pagamento programado | Parcela antecipada (assinatura + 5 dias úteis) ou parcela após a HAWB fica com data e valor definidos | Financeiro |
+| Pagamento alterado | Muda a data ou o valor de uma parcela já programada (HAWB corrigida, itens, dedução…) ou o invoice é cancelado | Financeiro |
+| Impostos de nacionalização | ETA planejado cadastrado/alterado (pagar entre ETA −1 e +3 dias úteis) e ETA real (ETA real a +2 dias úteis) | Financeiro |
+| Informar banco de débito | ETA planejado cadastrado e banco ainda vazio | Financeiro |
+| Desconto cadastrado: segurar valor | Desconto registrado na inspeção (a dedução em outro invoice só fica disponível após a aprovação) | Financeiro, Cc Importação |
+| Valor segurado liberado | Invoice com a dedução chega à fábrica (pagar até chegada + 5 dias úteis) ou revalidação para baixo | Financeiro |
+| Chegada de invoice com dedução | Chegada real na fábrica de invoice que recebeu dedução de outro invoice | Engenharia de Processos |
+| Resumo diário | Dias úteis, a partir do horário configurado, se o Financeiro tiver pendências | Financeiro |
+
+Funcionamento: a cada alteração salva, o sistema compara a previsibilidade de cada invoice com a última notificada e
+gera os e-mails das diferenças (fila na tabela `emails`, enviados logo após a página responder; até 3 tentativas).
+Ao instalar a v4.0, a situação atual é registrada sem enviar nada sobre o histórico. Dias úteis = segunda a sexta
+(feriados não são considerados). A senha de app do Gmail fica só no banco do servidor (pasta `instance/`).
+O resumo diário sai no primeiro acesso após o horário ou por um agendador externo (ex.: cron-job.org) chamando o
+endereço exibido na aba E-mails.
+

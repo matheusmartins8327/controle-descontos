@@ -17,6 +17,8 @@ set -e
 cd "$DIR"
 
 $PY -c "import app; print('Backup:', app.backup_banco('-diario'))"
+# resumo diário de pendências do Financeiro e reenvio de e-mails na fila
+$PY -c "import app; print('E-mails:', app.tarefa_diaria())" || true
 
 git fetch -q origin main
 if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then

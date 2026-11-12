@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block titulo %}E-mail{% endblock %}
+{% block conteudo %}
+<p><a href="{{ url_for('emails_config') }}#historico">← E-mails automáticos</a></p>
+<h1>{{ em.assunto }}</h1>
+<p class="sub">{{ FLUXOS_EMAIL[em.fluxo][0] if em.fluxo in FLUXOS_EMAIL else em.fluxo }} · gerado em {{ em.criado_em|data }}
+  · {{ STATUS_EMAIL[em.status] }}{% if em.enviado_em %} em {{ em.enviado_em|data }}{% endif %}{% if em.erro %} · {{ em.erro }}{% endif %}</p>
+<p><strong>Para:</strong> {{ em.para or '—' }}{% if em.cc %} · <strong>Cc:</strong> {{ em.cc }}{% endif %}</p>
+<section class="bloco">{{ em.corpo|safe }}</section>
+{% endblock %}

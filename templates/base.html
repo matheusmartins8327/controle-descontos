@@ -28,6 +28,7 @@
       <strong>{{ g.usuario.nome }}</strong>
       <small>{{ PERFIS[g.usuario.perfil] }}</small>
       {% if g.usuario.perfil == 'admin' %}<a href="{{ url_for('usuarios') }}" class="{{ 'ativo' if request.endpoint in ('usuarios', 'usuario_form') }}">Usuários</a> ·
+      <a href="{{ url_for('emails_config') }}" class="{{ 'ativo' if request.endpoint in ('emails_config', 'email_ver') }}">E-mails</a> ·
       <a href="{{ url_for('sistema') }}" class="{{ 'ativo' if request.endpoint == 'sistema' }}">Sistema</a> · {% endif %}
       <a href="{{ url_for('minha_senha') }}">Senha</a> · <a href="{{ url_for('logout') }}">Sair</a>
     </div>
