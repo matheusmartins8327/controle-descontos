@@ -24,14 +24,26 @@
       <a href="{{ url_for('fornecedores') }}" class="{{ 'ativo' if request.endpoint == 'fornecedores' }}">Fornecedores</a>
       <a href="{{ url_for('relatorios') }}" class="{{ 'ativo' if request.endpoint == 'relatorios' }}">Relatórios</a>
     </nav>
-    <div class="quem">
-      <strong>{{ g.usuario.nome }}</strong>
-      <small>{{ PERFIS[g.usuario.perfil] }}</small>
-      {% if g.usuario.perfil == 'admin' %}<a href="{{ url_for('usuarios') }}" class="{{ 'ativo' if request.endpoint in ('usuarios', 'usuario_form') }}">Usuários</a> ·
-      <a href="{{ url_for('emails_config') }}" class="{{ 'ativo' if request.endpoint in ('emails_config', 'email_ver') }}">E-mails</a> ·
-      <a href="{{ url_for('sistema') }}" class="{{ 'ativo' if request.endpoint == 'sistema' }}">Sistema</a> · {% endif %}
-      <a href="{{ url_for('minha_senha') }}">Senha</a> · <a href="{{ url_for('logout') }}">Sair</a>
-    </div>
+    {% set partes = g.usuario.nome.split() %}
+    <details class="conta">
+      <summary title="Minha conta">
+        <span class="avatar">{{ (partes[0][0] ~ (partes[-1][0] if partes|length > 1 else ''))|upper }}</span>
+        <span class="conta-nome"><strong>{{ partes[0] }}{% if partes|length > 1 %} {{ partes[-1] }}{% endif %}</strong><small>{{ PERFIS[g.usuario.perfil] }}</small></span>
+        <svg class="seta" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </summary>
+      <div class="conta-menu">
+        <div class="conta-cab"><strong>{{ g.usuario.nome }}</strong><small>{{ g.usuario.email }}</small></div>
+        {% if g.usuario.perfil == 'admin' %}
+        <span class="conta-grupo">Administração</span>
+        <a href="{{ url_for('usuarios') }}" class="{{ 'ativo' if request.endpoint in ('usuarios', 'usuario_form') }}">Usuários</a>
+        <a href="{{ url_for('emails_config') }}" class="{{ 'ativo' if request.endpoint in ('emails_config', 'email_ver') }}">E-mails automáticos</a>
+        <a href="{{ url_for('sistema') }}" class="{{ 'ativo' if request.endpoint == 'sistema' }}">Sistema</a>
+        {% endif %}
+        <span class="conta-grupo">Conta</span>
+        <a href="{{ url_for('minha_senha') }}" class="{{ 'ativo' if request.endpoint == 'minha_senha' }}">Alterar senha</a>
+        <a href="{{ url_for('logout') }}" class="sair">Sair</a>
+      </div>
+    </details>
   </div>
 </header>
 {% endif %}
@@ -42,6 +54,15 @@
   {% block conteudo %}{% endblock %}
 </main>
 <footer class="rodape">Quinelato · Controle de Invoices e Descontos · versão {{ VERSAO }}</footer>
+<script>
+  // fecha o menu da conta ao clicar fora ou apertar Esc
+  (function () {
+    const conta = document.querySelector('details.conta');
+    if (!conta) return;
+    document.addEventListener('click', e => { if (conta.open && !conta.contains(e.target)) conta.open = false; });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') conta.open = false; });
+  })();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.2)
+# Controle de Invoices e Descontos (v4.3)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
