@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.7)
+# Controle de Invoices e Descontos (v4.8)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -130,7 +130,7 @@ Apenas o link do Swift é informado em cada pagamento. O link da pasta principal
 Quem lança cada informação pode corrigi-la: a Importação corrige dados, itens, condição, etapas e deduções; o Financeiro corrige pagamentos, Swifts e banco de débito; o Administrador corrige a inspeção (o valor do desconto, pela revalidação). Toda correção fica no histórico com o valor anterior e o novo.
 
 ## Usuários e perfis
-- Até **10 usuários ativos**.
+- Até **20 usuários ativos**.
 - **Administrador** (Engenharia de Processos): inspeção, descontos, revalidação, cancelamentos, usuários e sistema; pode executar qualquer etapa.
 - **Importação**: criação do invoice, etapas logísticas e deduções.
 - **Financeiro**: banco de débito, pagamentos, liberações e Swifts.

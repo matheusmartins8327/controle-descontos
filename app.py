@@ -37,8 +37,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
-MAX_USUARIOS = 10
-VERSAO = "4.7"
+MAX_USUARIOS = 20
+VERSAO = "4.8"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
