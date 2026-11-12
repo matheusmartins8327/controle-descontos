@@ -31,6 +31,12 @@
 </section>
 
 <section class="bloco">
+  <h2>Arquivos anexados <small>· pasta instance/anexos_lancamentos</small></h2>
+  <p>{{ anexos_qtd }} arquivo(s) anexados aos lançamentos financeiros, ocupando <strong>{{ anexos_bytes|tamanho }}</strong>.
+    <small>O plano gratuito do PythonAnywhere tem 512 MB de espaço no total (código, banco e arquivos).</small></p>
+</section>
+
+<section class="bloco">
   <h2>Backups do banco de dados <small>· pasta instance/backups</small></h2>
   {% if backups %}
   <ul class="historico">{% for b in backups %}<li>{{ b }}</li>{% endfor %}</ul>

@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.8)
+# Controle de Invoices e Descontos (v4.9)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -184,4 +184,8 @@ armazenagem…) que o **Financeiro deve lançar no MEGA** (ERP da Quinelato). To
 - Botão **Avisar o Financeiro** (Importação), em cada invoice com custos a lançar: envia na hora o e-mail
   "Custos a lançar no MEGA" com tudo o que falta lançar daquele invoice (e mensagem opcional). Destinatários
   configurados na aba E-mails (sugestão: Anny em Para e o restante do Financeiro em Cc).
+- **Arquivos por lançamento** (guias, boletos, comprovantes, planilhas…): Importação, Financeiro e Administrador anexam
+  pelo botão **Anexar** de cada custo (vários arquivos, até 10 MB cada; PDF, imagens, Excel, Word, XML, ZIP…). Qualquer
+  usuário logado abre/baixa; só quem anexou (ou o Administrador) exclui. Os arquivos ficam no servidor, na pasta
+  `instance/anexos_lancamentos` (fora do GitHub), e seguem anexados no e-mail "Avisar o Financeiro" (até 20 MB no total).
 - Não gera pendências; os e-mails só saem pelo botão. Tudo fica no histórico do invoice.

@@ -469,3 +469,26 @@ tr.conferir td { background: var(--alerta-claro); }
 .avisar-form p { margin: 0; font-size: .86rem; }
 .avisar-form textarea { width: 100%; font: inherit; font-size: .86rem; }
 .avisar-form .btn { align-self: flex-end; }
+
+/* v4.9: arquivos dos lançamentos */
+.tabela-lanc { min-width: 1080px; }
+.tabela-lanc .c-tipo { width: 18%; } .tabela-lanc .c-valor { width: 11%; } .tabela-lanc .c-data { width: 13%; }
+.tabela-lanc .c-arq { width: 18%; } .tabela-lanc .c-quem { width: 12%; } .tabela-lanc .c-erp { width: 17%; } .tabela-lanc .c-acoes { width: 11%; }
+.arquivos { font-size: .82rem; }
+.arq { display: flex; align-items: center; gap: .2rem; margin-bottom: .2rem; }
+.arq a { display: inline-flex; align-items: center; gap: .3rem; min-width: 0; color: var(--pri-escuro); text-decoration: none;
+  background: #eef3fd; border-radius: 6px; padding: .15rem .45rem; max-width: 100%; }
+.arq a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arq a:hover { background: #dfe9fc; }
+.arq form { margin: 0; }
+.arq-x { border: 0; background: none; color: var(--suave); cursor: pointer; font-size: .8rem; padding: .1rem .3rem; }
+.arq-x:hover { color: #b42318; }
+.form-anexar { margin: 0; }
+.btn-anexar { display: inline-flex; align-items: center; gap: .3rem; cursor: pointer; color: var(--suave); font-size: .8rem;
+  border: 1px dashed #b9c3d8; border-radius: 6px; padding: .15rem .5rem; }
+.btn-anexar:hover { color: var(--pri-escuro); border-color: var(--pri); background: #f5f8fe; }
+.btn-anexar input[type=file] { display: none; }
+.form-anexar.enviando .btn-anexar { opacity: .6; pointer-events: none; }
+.form-anexar.enviando .btn-anexar::after { content: " enviando…"; }
+.dica-arq { color: var(--suave); font-size: .75rem; }
+.filtros input[name=q] { flex: 0 1 240px; min-width: 160px; }

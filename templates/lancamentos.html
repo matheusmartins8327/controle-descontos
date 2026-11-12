@@ -68,8 +68,8 @@
     </div>
     <div class="rolagem">
     <table class="tabela-lanc">
-      <colgroup><col class="c-tipo"><col class="c-valor"><col class="c-data"><col class="c-quem"><col class="c-erp">{% if editar %}<col class="c-acoes">{% endif %}</colgroup>
-      <thead><tr><th>Tipo de pagamento</th><th class="num">Valor (R$)</th><th>Data do pagamento</th><th>Apontado por</th><th>Lançado no MEGA</th>{% if editar %}<th></th>{% endif %}</tr></thead>
+      <colgroup><col class="c-tipo"><col class="c-valor"><col class="c-data"><col class="c-arq"><col class="c-quem"><col class="c-erp">{% if editar %}<col class="c-acoes">{% endif %}</colgroup>
+      <thead><tr><th>Tipo de pagamento</th><th class="num">Valor (R$)</th><th>Data do pagamento</th><th>Arquivos</th><th>Apontado por</th><th>Lançado no MEGA</th>{% if editar %}<th></th>{% endif %}</tr></thead>
       <tbody>
       {% for l in p.lancamentos %}
         <tr class="{{ 'lancado' if l.lancado_erp }} {{ 'conferir' if l.alterado_apos_erp and not l.lancado_erp }}">
@@ -82,6 +82,27 @@
           <td class="num"><strong>{{ l.valor|num if l.valor is not none else '—' }}</strong></td>
           <td>{{ l.data_pagamento|data if l.data_pagamento else '—' }}</td>
           {% endif %}
+          <td class="arquivos">
+            {% for a in p.anexos.get(l.id, []) %}
+            <div class="arq">
+              <a href="{{ url_for('lancamento_anexo_baixar', aid=a.id) }}" target="_blank" rel="noopener" title="{{ a.nome }} · {{ a.tamanho|tamanho }} · {{ a.usuario or '—' }} em {{ a.enviado_em|data }}">
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2.5H6a2 2 0 00-2 2v15a2 2 0 002 2h12a2 2 0 002-2V8.5z"/><path d="M14 2.5v6h6"/></svg>
+                <span>{{ a.nome }}</span></a>
+              {% if g.usuario.perfil == 'admin' or (pode_anexar and a.enviado_por == g.usuario.id) %}
+              <form method="post" action="{{ url_for('lancamento_anexo_excluir', aid=a.id) }}" onsubmit="return confirm('Excluir o arquivo {{ a.nome|replace("'", "") }}?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
+                <button class="arq-x" title="Excluir arquivo">✕</button></form>{% endif %}
+            </div>
+            {% endfor %}
+            {% if pode_anexar %}
+            <form method="post" action="{{ url_for('lancamento_anexar', lid=l.id) }}" enctype="multipart/form-data" class="form-anexar">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
+              <label class="btn-anexar" title="Anexar arquivo (até {{ ANEXO_MAX_MB }} MB)">
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9"/></svg>
+                Anexar<input type="file" name="arquivo" multiple onchange="this.form.classList.add('enviando'); this.form.submit()"></label>
+            </form>
+            {% elif not p.anexos.get(l.id) %}<small>—</small>{% endif %}
+          </td>
           <td><small>{{ l.usuario or '—' }} · {{ (l.atualizado_em or l.criado_em)|data }}</small></td>
           <td>
             <form method="post" action="{{ url_for('lancamento_erp', lid=l.id) }}" class="form-erp">
@@ -108,21 +129,21 @@
           {% endif %}
         </tr>
       {% else %}
-        <tr><td colspan="{{ 6 if editar else 5 }}" class="vazio">Nenhum custo apontado ainda.</td></tr>
+        <tr><td colspan="{{ 7 if editar else 6 }}" class="vazio">Nenhum custo apontado ainda.</td></tr>
       {% endfor %}
       {% if editar %}
         <tr class="linha-nova">
           <td><input form="n{{ inv.id }}" name="tipo" list="tipos-lancamento" placeholder="Ex.: COFINS, ICMS, PIS…"></td>
           <td><input form="n{{ inv.id }}" name="valor" class="num" inputmode="decimal" placeholder="0,00"></td>
           <td><input form="n{{ inv.id }}" type="date" name="data_pagamento"></td>
-          <td></td><td></td>
+          <td><small class="dica-arq">Anexe depois de adicionar</small></td><td></td><td></td>
           <td><div class="acoes-lanc"><form id="n{{ inv.id }}" method="post" action="{{ url_for('lancamento_novo', id=inv.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
             <button class="btn pequeno primario">+ Adicionar</button></form></div></td>
         </tr>
       {% endif %}
       </tbody>
-      {% if p.lancamentos|length > 1 %}<tfoot><tr><th>Total</th><th class="num">{{ p.total|num }}</th><th colspan="2"></th>
+      {% if p.lancamentos|length > 1 %}<tfoot><tr><th>Total</th><th class="num">{{ p.total|num }}</th><th colspan="3"></th>
         <th>{% if p.pendentes_erp %}<small>a lançar: {{ p.total_pendente|moeda('BRL') }}</small>{% endif %}</th>{% if editar %}<th></th>{% endif %}</tr></tfoot>{% endif %}
     </table>
     </div>

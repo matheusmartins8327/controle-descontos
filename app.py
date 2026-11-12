@@ -19,6 +19,7 @@ import os
 import re
 import secrets
 import json
+import mimetypes
 import smtplib
 import socket
 import sqlite3
@@ -31,14 +32,19 @@ from functools import wraps
 from markupsafe import escape
 
 from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_template, request,
-                   session, url_for)
+                   send_file, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.db"))
+# arquivos anexados aos lançamentos financeiros (ficam no servidor, junto do banco; fora do GitHub)
+ANEXOS_DIR = os.path.join(os.path.dirname(DB_PATH), "anexos_lancamentos")
+ANEXO_MAX_MB = 10                       # por arquivo
+EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
+                   "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.8"
+VERSAO = "4.9"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -104,6 +110,7 @@ ORDEM_LOGISTICA = ["COLETA", "EMBARQUE", "DESEMBARACO", "CHEGADA"]
 TOLERANCIA = 0.005  # diferença de arredondamento aceita (meio centavo)
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # vários arquivos de até 10 MB num envio
 
 
 def _secret_key():
@@ -304,6 +311,17 @@ CREATE TABLE IF NOT EXISTS lancamentos (
     alterado_apos_erp INTEGER NOT NULL DEFAULT 0 -- a Importação mudou depois de lançado: conferir no MEGA
 );
 CREATE INDEX IF NOT EXISTS idx_lancamentos_invoice ON lancamentos(invoice_id);
+-- versão 4.9: arquivos anexados aos lançamentos financeiros
+CREATE TABLE IF NOT EXISTS lancamento_anexos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lancamento_id INTEGER NOT NULL REFERENCES lancamentos(id) ON DELETE CASCADE,
+    nome TEXT NOT NULL,                   -- nome original do arquivo
+    arquivo TEXT NOT NULL,                -- nome gravado no servidor (pasta anexos_lancamentos)
+    tamanho INTEGER NOT NULL,
+    enviado_por INTEGER REFERENCES usuarios(id),
+    enviado_em TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lanc_anexos ON lancamento_anexos(lancamento_id);
 -- versão 4.0: e-mails automáticos
 CREATE TABLE IF NOT EXISTS notificacoes_estado (
     invoice_id INTEGER PRIMARY KEY,
@@ -376,6 +394,9 @@ def init_db():
                 DROP TABLE invoice_itens_v35;
                 CREATE INDEX IF NOT EXISTS idx3_itens_invoice ON invoice_itens(invoice_id);
             """)
+        # versão 4.9: e-mails podem levar arquivos anexados
+        if "anexos" not in {r[1] for r in db.execute("PRAGMA table_info(emails)")}:
+            db.execute("ALTER TABLE emails ADD COLUMN anexos TEXT")
         # versão 4.5: controle do lançamento no MEGA pelo Financeiro
         colunas_l = {r[1] for r in db.execute("PRAGMA table_info(lancamentos)")}
         for col, tipo in (("lancado_erp", "INTEGER NOT NULL DEFAULT 0"), ("lancado_erp_por", "INTEGER"),
@@ -1309,7 +1330,6 @@ COLUNAS_PLANILHA = {  # cabeçalho normalizado -> campo
     "valor unitario original": "valor_unit",
 }
 MAX_LINHAS_PLANILHA = 2000
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # planilhas de até 5 MB
 
 
 def normalizar(texto):
@@ -2355,8 +2375,9 @@ def sistema():
     commit = git("log", "-1", "--format=%h · %cd · %s", "--date=format:%d/%m/%Y %H:%M")[1] if usa_git else None
     backups = sorted(os.listdir(os.path.join(INSTANCE_DIR, "backups")), reverse=True)[:10] \
         if os.path.isdir(os.path.join(INSTANCE_DIR, "backups")) else []
+    uso = get_db().execute("SELECT COUNT(*), COALESCE(SUM(tamanho), 0) FROM lancamento_anexos").fetchone()
     return render_template("sistema.html", usa_git=usa_git, commit=commit, backups=backups,
-                           pasta_onedrive=config("onedrive_pasta", ""))
+                           pasta_onedrive=config("onedrive_pasta", ""), anexos_qtd=uso[0], anexos_bytes=uso[1])
 
 
 @app.route("/sistema/onedrive", methods=["POST"])
@@ -2432,6 +2453,7 @@ def paineis_lancamentos(args):
                         " LEFT JOIN usuarios e ON e.id = l.lancado_erp_por"
                         " ORDER BY l.data_pagamento IS NULL, l.data_pagamento, l.id"):
         lancs.setdefault(l["invoice_id"], []).append(l)
+    anexos = anexos_por_lancamento()
     avisos = {}
     for e in db.execute("SELECT invoice_id, criado_em, status FROM emails WHERE fluxo = 'lancamentos_mega'"
                         " ORDER BY id"):
@@ -2450,7 +2472,7 @@ def paineis_lancamentos(args):
         pendentes = [l for l in lista if not l["lancado_erp"]]
         if filtro == "pendentes_erp" and not pendentes:
             continue
-        paineis.append({"inv": inv, "lancamentos": lista, "pendentes_erp": len(pendentes),
+        paineis.append({"inv": inv, "lancamentos": lista, "pendentes_erp": len(pendentes), "anexos": anexos,
                         "ultimo_aviso": avisos.get(inv["id"]),
                         "total_pendente": round(sum(l["valor"] for l in pendentes if l["valor"] is not None), 2),
                         "total": round(sum(l["valor"] for l in lista if l["valor"] is not None), 2)})
@@ -2471,7 +2493,7 @@ def lancamentos():
     return render_template("lancamentos.html", paineis=paineis, sugestoes=sugestoes, total=total, qtd=qtd,
                            pend_qtd=pend_qtd, pend_total=pend_total, args=request.args,
                            aberto=request.args.get("aberto", type=int), editar=pode_lancar(),
-                           marcar=pode_marcar_erp())
+                           marcar=pode_marcar_erp(), pode_anexar=pode_anexar(), ANEXO_MAX_MB=ANEXO_MAX_MB)
 
 
 def voltar_lancamentos(iid):
@@ -2544,9 +2566,13 @@ def lancamento_excluir(lid):
         flash("Este custo já foi lançado no MEGA pelo Financeiro: para excluí-lo, peça ao Financeiro para desmarcar "
               "o lançamento no MEGA antes (assim o ajuste no MEGA não se perde).", "erro")
         return voltar_lancamentos(l["invoice_id"])
+    anexos = anexos_por_lancamento([lid]).get(lid, [])
+    db.execute("DELETE FROM lancamento_anexos WHERE lancamento_id = ?", (lid,))
     db.execute("DELETE FROM lancamentos WHERE id = ?", (lid,))
-    registrar_evento(l["invoice_id"], "Lançamento financeiro excluído", descrever_lancamento(l))
+    registrar_evento(l["invoice_id"], "Lançamento financeiro excluído", descrever_lancamento(l)
+                     + (f" (com {len(anexos)} arquivo(s) anexado(s))" if anexos else ""))
     db.commit()
+    remover_arquivos(anexos)
     flash("Lançamento excluído.", "ok")
     return voltar_lancamentos(l["invoice_id"])
 
@@ -2574,6 +2600,129 @@ def lancamento_erp(lid):
     return voltar_lancamentos(l["invoice_id"])
 
 
+# ---------- arquivos anexados aos lançamentos ----------
+def anexos_por_lancamento(ids=None):
+    sql = ("SELECT a.*, u.nome AS usuario FROM lancamento_anexos a LEFT JOIN usuarios u ON u.id = a.enviado_por")
+    params = ()
+    if ids is not None:
+        if not ids:
+            return {}
+        sql += f" WHERE a.lancamento_id IN ({','.join('?' * len(ids))})"
+        params = tuple(ids)
+    mapa = {}
+    for a in get_db().execute(sql + " ORDER BY a.id", params):
+        mapa.setdefault(a["lancamento_id"], []).append(a)
+    return mapa
+
+
+def caminho_anexo(a):
+    return os.path.join(ANEXOS_DIR, a["arquivo"])
+
+
+def fmt_tamanho(n):
+    n = n or 0
+    if n >= 1024 * 1024:
+        return f"{n / 1024 / 1024:.1f} MB".replace(".", ",")
+    return f"{max(1, round(n / 1024))} KB"
+
+
+app.jinja_env.filters["tamanho"] = fmt_tamanho
+
+
+def pode_anexar():
+    """Importação, Financeiro e Administrador podem anexar arquivos aos lançamentos."""
+    return g.usuario is not None and g.usuario["perfil"] in ("admin", "importacao", "financeiro")
+
+
+def remover_arquivos(anexos):
+    for a in anexos:
+        try:
+            os.remove(caminho_anexo(a))
+        except OSError:
+            pass
+
+
+@app.route("/lancamentos/<int:lid>/anexos", methods=["POST"])
+@login_obrigatorio
+def lancamento_anexar(lid):
+    if not pode_anexar():
+        abort(403)
+    db = get_db()
+    l = db.execute("SELECT * FROM lancamentos WHERE id = ?", (lid,)).fetchone()
+    if l is None:
+        abort(404)
+    arquivos = [f for f in request.files.getlist("arquivo") if f and f.filename]
+    if not arquivos:
+        flash("Escolha um arquivo para anexar.", "erro")
+        return voltar_lancamentos(l["invoice_id"])
+    os.makedirs(ANEXOS_DIR, exist_ok=True)
+    salvos, erros = [], []
+    for f in arquivos:
+        nome = os.path.basename(f.filename.replace("\\", "/")).strip()[:150] or "arquivo"
+        ext = nome.rsplit(".", 1)[-1].lower() if "." in nome else ""
+        if ext not in EXTENSOES_ANEXO:
+            erros.append(f"{nome}: tipo de arquivo não permitido (use PDF, imagem, Excel, Word, XML, ZIP…).")
+            continue
+        conteudo = f.read(ANEXO_MAX_MB * 1024 * 1024 + 1)
+        if len(conteudo) > ANEXO_MAX_MB * 1024 * 1024:
+            erros.append(f"{nome}: maior que {ANEXO_MAX_MB} MB.")
+            continue
+        if not conteudo:
+            erros.append(f"{nome}: arquivo vazio.")
+            continue
+        gravado = f"{lid}-{secrets.token_hex(8)}.{ext}"
+        with open(os.path.join(ANEXOS_DIR, gravado), "wb") as saida:
+            saida.write(conteudo)
+        db.execute("INSERT INTO lancamento_anexos (lancamento_id, nome, arquivo, tamanho, enviado_por, enviado_em)"
+                   " VALUES (?, ?, ?, ?, ?, ?)", (lid, nome, gravado, len(conteudo), g.usuario["id"], agora()))
+        salvos.append(nome)
+    if salvos:
+        registrar_evento(l["invoice_id"], "Arquivo anexado ao lançamento financeiro",
+                         f"{l['tipo'] or 'sem tipo'}: " + ", ".join(salvos))
+        db.commit()
+        flash(("Arquivo anexado: " if len(salvos) == 1 else "Arquivos anexados: ") + ", ".join(salvos) + ".", "ok")
+    for e in erros:
+        flash(e, "erro")
+    return voltar_lancamentos(l["invoice_id"])
+
+
+@app.route("/anexos-lancamentos/<int:aid>")
+@login_obrigatorio
+def lancamento_anexo_baixar(aid):
+    a = get_db().execute("SELECT * FROM lancamento_anexos WHERE id = ?", (aid,)).fetchone()
+    if a is None or not os.path.exists(caminho_anexo(a)):
+        abort(404)
+    ext = a["nome"].rsplit(".", 1)[-1].lower()
+    abrir_no_navegador = ext in ("pdf", "png", "jpg", "jpeg", "gif", "webp", "txt")
+    return send_file(caminho_anexo(a), download_name=a["nome"], as_attachment=not abrir_no_navegador)
+
+
+@app.route("/anexos-lancamentos/<int:aid>/excluir", methods=["POST"])
+@login_obrigatorio
+def lancamento_anexo_excluir(aid):
+    db = get_db()
+    a = db.execute("SELECT a.*, l.invoice_id, l.tipo FROM lancamento_anexos a JOIN lancamentos l"
+                   " ON l.id = a.lancamento_id WHERE a.id = ?", (aid,)).fetchone()
+    if a is None:
+        abort(404)
+    if not (g.usuario["perfil"] == "admin" or (pode_anexar() and a["enviado_por"] == g.usuario["id"])):
+        flash("Só quem anexou o arquivo (ou o Administrador) pode excluí-lo.", "erro")
+        return voltar_lancamentos(a["invoice_id"])
+    db.execute("DELETE FROM lancamento_anexos WHERE id = ?", (aid,))
+    registrar_evento(a["invoice_id"], "Arquivo excluído do lançamento financeiro", f"{a['tipo'] or 'sem tipo'}: {a['nome']}")
+    db.commit()
+    remover_arquivos([a])
+    flash(f"Arquivo excluído: {a['nome']}.", "ok")
+    return voltar_lancamentos(a["invoice_id"])
+
+
+@app.errorhandler(413)
+def arquivo_grande(_e):
+    flash(f"Arquivo grande demais: o limite é {ANEXO_MAX_MB} MB por arquivo.", "erro")
+    # (não lê o formulário: a requisição grande demais é descartada)
+    return redirect(request.referrer or url_for("lancamentos"))
+
+
 @app.route("/invoices/<int:id>/lancamentos/avisar", methods=["POST"])
 @login_obrigatorio
 def lancamentos_avisar(id):
@@ -2588,9 +2737,17 @@ def lancamentos_avisar(id):
         flash("Nada a lançar no MEGA neste invoice: nenhum e-mail enviado.", "aviso-box")
         return voltar_lancamentos(id)
     linhas = []
+    arquivos = anexos_por_lancamento([l["id"] for l in pendentes])
+    para_anexar = [(caminho_anexo(a), a["nome"]) for l in pendentes for a in arquivos.get(l["id"], [])
+                   if os.path.exists(caminho_anexo(a))]
+    total_bytes = sum(os.path.getsize(c) for c, _n in para_anexar)
+    if total_bytes > 20 * 1024 * 1024:  # o Gmail aceita até 25 MB por e-mail
+        para_anexar = []
     for l in pendentes:
         txt = f"{l['tipo'] or 'Sem tipo'} · " + (fmt_moeda(l["valor"], "BRL") if l["valor"] is not None else "valor não informado")
         txt += f" · pagamento {fmt_data(l['data_pagamento'])}" if l["data_pagamento"] else " · data não informada"
+        if arquivos.get(l["id"]):
+            txt += " · arquivos: " + ", ".join(a["nome"] for a in arquivos[l["id"]])
         if l["alterado_apos_erp"]:
             txt += " · ALTERADO após já ter sido lançado: conferir no MEGA"
         linhas.append(txt)
@@ -2600,8 +2757,13 @@ def lancamentos_avisar(id):
     obs = f"Solicitado por {g.usuario['nome']} (Importação)."
     if msg:
         obs = f"Mensagem: {msg} — {obs}"
+    if para_anexar:
+        obs += f" Os {len(para_anexar)} arquivo(s) citados seguem anexados a este e-mail."
+    elif any(arquivos.values()):
+        obs += " Os arquivos citados são grandes demais para o e-mail: baixe-os na aba Lançamentos Financeiros."
     obs += " Depois de lançar, marque \"Lançado no MEGA\" em cada custo na aba Lançamentos Financeiros do sistema."
-    status, erro = enfileirar_email("lancamentos_mega", r, f"{len(pendentes)} custo(s) a lançar", linhas, obs)
+    status, erro = enfileirar_email("lancamentos_mega", r, f"{len(pendentes)} custo(s) a lançar", linhas, obs,
+                                    anexos=para_anexar)
     registrar_evento(id, "Financeiro avisado dos custos a lançar no MEGA",
                      f"{len(pendentes)} custo(s), {fmt_moeda(total, 'BRL')}" + (f" · {msg}" if msg else ""))
     db.commit()
@@ -2773,7 +2935,7 @@ def texto_simples(html):
     return "\n".join(l.strip() for l in _html.unescape(txt).splitlines() if l.strip())
 
 
-def enfileirar_email(fluxo, r, assunto_extra, linhas, obs=None):
+def enfileirar_email(fluxo, r, assunto_extra, linhas, obs=None, anexos=None):
     """Grava o e-mail na fila (ou como não enviado, explicando o motivo)."""
     titulo = FLUXOS_EMAIL[fluxo][0]
     assunto = f"[Invoices] {titulo}" + (f" · {r['fornecedor']} {r['numero']}" if r is not None else "") + \
@@ -2792,9 +2954,10 @@ def enfileirar_email(fluxo, r, assunto_extra, linhas, obs=None):
     else:
         status, erro = "PENDENTE", None
         g.ha_emails_na_fila = True
-    get_db().execute("INSERT INTO emails (fluxo, invoice_id, assunto, corpo, para, cc, status, erro, criado_em)"
-                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                     (fluxo, r["id"] if r is not None else None, assunto, corpo, para, cc, status, erro, agora()))
+    get_db().execute("INSERT INTO emails (fluxo, invoice_id, assunto, corpo, para, cc, status, erro, criado_em, anexos)"
+                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (fluxo, r["id"] if r is not None else None, assunto, corpo, para, cc, status, erro, agora(),
+                      json.dumps(anexos, ensure_ascii=False) if anexos else None))
     return status, erro
 
 
@@ -3039,7 +3202,7 @@ def conectar_smtp():
     return srv
 
 
-def montar_mensagem(assunto, html, para, cc):
+def montar_mensagem(assunto, html, para, cc, anexos=None):
     msg = EmailMessage()
     msg["Subject"] = assunto
     msg["From"] = formataddr((config("smtp_nome", SMTP_PADRAO["smtp_nome"]), config("smtp_usuario")))
@@ -3048,6 +3211,13 @@ def montar_mensagem(assunto, html, para, cc):
         msg["Cc"] = ", ".join(lista_emails(cc))
     msg.set_content(texto_simples(html))
     msg.add_alternative(html, subtype="html")
+    for caminho, nome in anexos or []:
+        if not os.path.exists(caminho):
+            continue
+        tipo = mimetypes.guess_type(nome)[0] or "application/octet-stream"
+        principal, sub = tipo.split("/", 1)
+        with open(caminho, "rb") as arq:
+            msg.add_attachment(arq.read(), maintype=principal, subtype=sub, filename=nome)
     return msg
 
 
@@ -3070,7 +3240,8 @@ def enviar_fila():
     try:
         for em in fila:
             try:
-                srv.send_message(montar_mensagem(em["assunto"], em["corpo"], em["para"], em["cc"]))
+                srv.send_message(montar_mensagem(em["assunto"], em["corpo"], em["para"], em["cc"],
+                                                 json.loads(em["anexos"]) if em["anexos"] else None))
                 db.execute("UPDATE emails SET status = 'ENVIADO', erro = NULL, enviado_em = ?,"
                            " tentativas = tentativas + 1 WHERE id = ?", (agora(), em["id"]))
                 enviados += 1
