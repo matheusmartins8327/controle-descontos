@@ -2586,7 +2586,7 @@ def gerar_emails(r, antigo, novo):
     if novo["eta_planejado"] and not antigo.get("eta_planejado") and not novo["banco"]:
         enfileirar_email("banco_debito", r, None,
                          [f"ETA planejado cadastrado: {fmt_data(novo['eta_planejado'])}",
-                          "Informe no sistema o banco de débito deste invoice (seção Etapas logísticas → Embarque)."],
+                          "Informe no sistema o banco de débito deste invoice (seção Logística → etapa Embarque)."],
                          "Sem o banco de débito, a etapa de Embarque não é concluída.")
 
     # chegada de invoice que recebeu dedução
