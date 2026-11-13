@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.17"
+VERSAO = "4.18"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2972,6 +2972,11 @@ FLUXOS_EMAIL = {
         "Pedido para o Financeiro informar o banco de débito, quando o ETA real é cadastrado (se o banco ainda "
         "estiver vazio).",
         "financeiro", ""),
+    "duimp_registrada": (
+        "DUIMP registrada: impostos aptos a lançamento no MEGA",
+        "Quando a data de emissão da DUIMP é cadastrada (etapa Desembaraço) — e se ela for corrigida depois. "
+        "Sugestão: Anny em Para e Gabriel (Importação) em Cc.",
+        "financeiro", "importacao"),
     "desconto_segurar": (
         "Desconto cadastrado: segurar valor",
         "Quando um desconto é cadastrado: o valor deve ser segurado no pagamento do invoice. A dedução em "
@@ -3117,6 +3122,7 @@ def estado_previsao(r):
         "nac": r["nacionalizacao"],
         "eta_planejado": r["eta_planejado"],
         "eta_real": r["eta_real"],
+        "duimp": r["data_registro_br"],
         "banco": bool(r["banco_debito"]),
         "chegada": r["data_chegada"],
         "desconto": r["desconto"]["id"] if r["desconto"] else None,
@@ -3210,6 +3216,26 @@ def gerar_emails(r, antigo, novo):
                           "Pendência do Financeiro no sistema Controle de Invoices: preencher o campo "
                           "\"Banco de débito\" na etapa de Embarque (seção Logística do invoice)."],
                          "A etapa de Embarque é concluída quando esse campo estiver preenchido no sistema.")
+
+    # DUIMP registrada: impostos aptos a lançamento no MEGA
+    # (fotografias antigas, sem "duimp", contam como sem mudança: não dispara para o histórico)
+    duimp_antes = antigo.get("duimp", novo.get("duimp"))
+    if novo.get("duimp") and novo["duimp"] != duimp_antes:
+        corrigida = bool(duimp_antes)
+        linhas = [f"DUIMP registrada: data de emissão {fmt_data(novo['duimp'])}"
+                  + (f" (corrigida; antes {fmt_data(duimp_antes)})" if corrigida else "") + ".",
+                  "Os impostos da nacionalização deste invoice estão aptos a lançamento no MEGA."]
+        pend = get_db().execute("SELECT tipo, valor, data_pagamento FROM lancamentos WHERE invoice_id = ?"
+                                " AND lancado_erp = 0 ORDER BY id", (r["id"],)).fetchall()
+        if pend:
+            linhas.append({"secao": f"Custos já apontados pela Importação a lançar no MEGA ({len(pend)})"})
+            linhas += [f"{l['tipo'] or 'Sem tipo'} · "
+                       + (fmt_moeda(l["valor"], "BRL") if l["valor"] is not None else "valor não informado")
+                       + (f" · pagamento {fmt_data(l['data_pagamento'])}" if l["data_pagamento"] else "")
+                       for l in pend]
+        enfileirar_email("duimp_registrada", r, "data corrigida" if corrigida else None, linhas,
+                         "Os valores e arquivos dos impostos ficam na aba Lançamentos Financeiros do sistema; "
+                         "depois de lançar, marque \"Lançado no MEGA\" em cada custo.")
 
     # chegada de invoice que recebeu dedução
     if novo["chegada"] and not antigo.get("chegada") and r["deducoes_recebidas"]:
@@ -3634,7 +3660,9 @@ def emails_acao():
         if not c:
             flash("Não há configuração guardada para restaurar.", "erro")
         else:
-            salvar_config("email_fluxos", json.dumps(c["fluxos"], ensure_ascii=False))
+            # fluxos criados depois da cópia mantêm a configuração atual
+            restaurado = {**config_fluxos(), **c["fluxos"]}
+            salvar_config("email_fluxos", json.dumps(restaurado, ensure_ascii=False))
             db.commit()
             flash(f"Destinatários restaurados para a configuração guardada em {fmt_data(c['guardado_em'])} "
                   f"por {c['por']}.", "ok")
