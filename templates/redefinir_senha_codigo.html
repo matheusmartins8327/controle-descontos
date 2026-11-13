@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block titulo %}Nova senha{% endblock %}
+{% block conteudo %}
+<div class="cartao">
+  <img class="logo-entrada" src="{{ url_for('static', filename='img/logo-quinelato.png') }}" alt="Quinelato">
+  <h1>Criar nova senha</h1>
+  <p class="sub">Digite o código de 6 dígitos que enviamos{% if email %} para <strong>{{ email }}</strong>{% endif %} e escolha a nova senha.
+    O código vale por {{ validade }} minutos.</p>
+  <form method="post" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>E-mail<input name="email" type="email" value="{{ email }}" required {{ '' if email else 'autofocus' }}></label>
+    <label>Código<input name="codigo" class="codigo" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" placeholder="000000" required {{ 'autofocus' if email }}></label>
+    <label>Nova senha<input name="senha" type="password" minlength="8" autocomplete="new-password" required><small>Mínimo de 8 caracteres.</small></label>
+    <label>Confirmar nova senha<input name="senha2" type="password" minlength="8" autocomplete="new-password" required></label>
+    <button class="btn primario">Salvar nova senha</button>
+  </form>
+  <p class="esqueci"><a href="{{ url_for('redefinir_senha', email=email) }}">Não recebi o código / pedir outro</a> · <a href="{{ url_for('login') }}">Voltar para o login</a></p>
+</div>
+{% endblock %}

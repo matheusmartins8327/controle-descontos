@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.18"
+VERSAO = "4.19"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -336,6 +336,16 @@ CREATE TABLE IF NOT EXISTS arquivos (
     enviado_em TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_arquivos_origem ON arquivos(origem, origem_id);
+-- versão 4.19: códigos de redefinição de senha (guardados só como hash)
+CREATE TABLE IF NOT EXISTS senha_codigos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    codigo_hash TEXT NOT NULL,
+    criado_em TEXT NOT NULL,
+    expira_em TEXT NOT NULL,
+    tentativas INTEGER NOT NULL DEFAULT 0,
+    usado_em TEXT
+);
 -- versão 4.0: e-mails automáticos
 CREATE TABLE IF NOT EXISTS notificacoes_estado (
     invoice_id INTEGER PRIMARY KEY,
@@ -3691,6 +3701,114 @@ def email_ver(eid):
     if em is None:
         abort(404)
     return render_template("email_ver.html", em=em, STATUS_EMAIL=STATUS_EMAIL, FLUXOS_EMAIL=FLUXOS_EMAIL)
+
+
+# ---------------------------------------------------------------------------
+# Redefinição de senha pelo próprio usuário (código de 6 dígitos enviado por e-mail)
+# Código em vez de link: os e-mails do sistema não levam links, e filtros como o do Outlook
+# costumam bloquear ou "pré-clicar" links de remetentes externos.
+# ---------------------------------------------------------------------------
+CODIGO_VALIDADE_MIN = 15
+CODIGO_MAX_TENTATIVAS = 5
+CODIGO_MAX_POR_HORA = 3
+
+
+def enviar_email_direto(destino, assunto, html):
+    """Envio imediato e fora da fila (o conteúdo sensível não fica guardado no histórico de e-mails)."""
+    srv = conectar_smtp()
+    try:
+        srv.send_message(montar_mensagem(assunto, html, destino, ""))
+    finally:
+        try:
+            srv.quit()
+        except Exception:
+            pass
+
+
+@app.route("/redefinir-senha", methods=["GET", "POST"])
+def redefinir_senha():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        db = get_db()
+        u = db.execute("SELECT * FROM usuarios WHERE email = ? AND ativo = 1", (email,)).fetchone()
+        if u:
+            uma_hora = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+            recentes = db.execute("SELECT COUNT(*) FROM senha_codigos WHERE usuario_id = ? AND criado_em > ?",
+                                  (u["id"], uma_hora)).fetchone()[0]
+            if recentes >= CODIGO_MAX_POR_HORA:
+                flash("Já foram enviados vários códigos na última hora. Use o último código recebido ou "
+                      "tente novamente mais tarde.", "erro")
+                return redirect(url_for("redefinir_senha_codigo", email=email))
+            if not conta_configurada():
+                flash("O envio de e-mails do sistema não está configurado. Peça ao Administrador para "
+                      "redefinir sua senha.", "erro")
+                return render_template("redefinir_senha.html", email=email)
+            codigo = f"{secrets.randbelow(10 ** 6):06d}"
+            # só o último código vale
+            db.execute("UPDATE senha_codigos SET usado_em = ? WHERE usuario_id = ? AND usado_em IS NULL",
+                       (agora(), u["id"]))
+            expira = (datetime.now() + timedelta(minutes=CODIGO_VALIDADE_MIN)).strftime("%Y-%m-%d %H:%M:%S")
+            db.execute("INSERT INTO senha_codigos (usuario_id, codigo_hash, criado_em, expira_em, tentativas)"
+                       " VALUES (?, ?, ?, ?, 0)", (u["id"], generate_password_hash(codigo), agora(), expira))
+            db.commit()
+            html = corpo_email("Redefinição de senha", None, [
+                f"Olá, {u['nome'].split()[0]}.",
+                f"Seu código para redefinir a senha do sistema Controle de Invoices é: {codigo}",
+                f"O código vale por {CODIGO_VALIDADE_MIN} minutos e só pode ser usado uma vez.",
+            ], "Se você não pediu a redefinição, ignore este e-mail: sua senha atual continua valendo.")
+            try:
+                enviar_email_direto(email, f"[Invoices] Código para redefinir a senha: {codigo}", html)
+                db.execute("INSERT INTO emails (fluxo, assunto, corpo, para, status, criado_em, enviado_em,"
+                           " tentativas) VALUES ('redefinir_senha', ?, ?, ?, 'ENVIADO', ?, ?, 1)",
+                           ("[Invoices] Código para redefinir a senha", "<p>Código de redefinição de senha "
+                            "(não guardado no histórico).</p>", email, agora(), agora()))
+                db.commit()
+            except Exception as e:
+                app.logger.exception("Falha ao enviar o código de redefinição de senha")
+                flash(f"Não foi possível enviar o e-mail agora ({e}). Tente novamente ou peça ao "
+                      "Administrador para redefinir sua senha.", "erro")
+                return render_template("redefinir_senha.html", email=email)
+        # mesma resposta para e-mail cadastrado ou não (não revela quem tem acesso)
+        flash(f"Se o e-mail {email} estiver cadastrado e ativo, você receberá em instantes um código de 6 dígitos "
+              f"(confira também o lixo eletrônico).", "ok")
+        return redirect(url_for("redefinir_senha_codigo", email=email))
+    return render_template("redefinir_senha.html", email=request.args.get("email", ""))
+
+
+@app.route("/redefinir-senha/codigo", methods=["GET", "POST"])
+def redefinir_senha_codigo():
+    email = (request.values.get("email") or "").strip().lower()
+    if request.method == "POST":
+        codigo = re.sub(r"\D", "", request.form.get("codigo", ""))
+        nova, nova2 = request.form.get("senha", ""), request.form.get("senha2", "")
+        db = get_db()
+        u = db.execute("SELECT * FROM usuarios WHERE email = ? AND ativo = 1", (email,)).fetchone()
+        c = db.execute("SELECT * FROM senha_codigos WHERE usuario_id = ? AND usado_em IS NULL"
+                       " ORDER BY id DESC LIMIT 1", (u["id"],)).fetchone() if u else None
+        erro = None
+        if len(nova) < 8:
+            erro = "A nova senha deve ter no mínimo 8 caracteres."
+        elif nova != nova2:
+            erro = "A confirmação não confere com a nova senha."
+        elif c is None or c["expira_em"] < agora():
+            erro = "Código inválido ou expirado. Peça um novo código."
+        elif not check_password_hash(c["codigo_hash"], codigo):
+            tentativas = c["tentativas"] + 1
+            db.execute("UPDATE senha_codigos SET tentativas = ?, usado_em = ? WHERE id = ?",
+                       (tentativas, agora() if tentativas >= CODIGO_MAX_TENTATIVAS else None, c["id"]))
+            db.commit()
+            erro = ("Código incorreto." if tentativas < CODIGO_MAX_TENTATIVAS
+                    else "Código incorreto várias vezes: ele foi cancelado. Peça um novo código.")
+        if erro:
+            flash(erro, "erro")
+            return render_template("redefinir_senha_codigo.html", email=email, validade=CODIGO_VALIDADE_MIN)
+        db.execute("UPDATE usuarios SET senha_hash = ? WHERE id = ?", (generate_password_hash(nova), u["id"]))
+        db.execute("UPDATE senha_codigos SET usado_em = ? WHERE id = ?", (agora(), c["id"]))
+        db.execute("DELETE FROM tentativas_login WHERE email = ?", (email,))
+        db.commit()
+        flash("Senha redefinida. Entre com a nova senha.", "ok")
+        return redirect(url_for("login"))
+    return render_template("redefinir_senha_codigo.html", email=email, validade=CODIGO_VALIDADE_MIN)
 
 
 @app.errorhandler(403)

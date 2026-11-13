@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block titulo %}Redefinir senha{% endblock %}
+{% block conteudo %}
+<div class="cartao">
+  <img class="logo-entrada" src="{{ url_for('static', filename='img/logo-quinelato.png') }}" alt="Quinelato">
+  <h1>Redefinir senha</h1>
+  <p class="sub">Informe o e-mail do seu usuário. Enviaremos um código de 6 dígitos para criar uma nova senha.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>E-mail<input name="email" type="email" value="{{ email }}" required autofocus></label>
+    <button class="btn primario">Enviar código</button>
+  </form>
+  <p class="esqueci"><a href="{{ url_for('redefinir_senha_codigo', email=email) if email else url_for('redefinir_senha_codigo') }}">Já tenho um código</a> · <a href="{{ url_for('login') }}">Voltar para o login</a></p>
+</div>
+{% endblock %}

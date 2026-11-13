@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.18)
+# Controle de Invoices e Descontos (v4.19)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -126,6 +126,12 @@ Para recomeçar com dados reais, o Administrador pode, em **Sistema → Apagar t
 remover todos os invoices e o que depende deles (itens, condições, descontos, deduções, pagamentos e Swifts,
 lançamentos financeiros e arquivos, histórico e e-mails sobre eles). Usuários, configurações, conta de envio,
 destinatários e agendador são mantidos; fornecedores também, a não ser que se marque a opção. Backup do banco antes.
+
+### Esqueci minha senha
+Na tela de login, **Esqueci minha senha**: o usuário informa o e-mail e recebe (pela conta de envio da aba E-mails) um
+**código de 6 dígitos** válido por 15 minutos, que digita junto com a nova senha. Sem links no e-mail; o código só vale
+uma vez, é cancelado após 5 erros, há limite de 3 pedidos por hora e a tela não revela se o e-mail está cadastrado.
+O código não fica guardado no histórico de e-mails. O Administrador continua podendo redefinir senhas em Usuários.
 
 ### Arquivos anexados (padrão do sistema)
 Todo anexo é feito pelo botão **Anexar** (envio do arquivo pelo navegador; vários de uma vez; até 10 MB cada; PDF,
