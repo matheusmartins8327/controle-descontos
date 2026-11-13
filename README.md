@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.12)
+# Controle de Invoices e Descontos (v4.13)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -120,6 +120,12 @@ Menu **Fluxo de pagamentos**: previsão por mês e por moeda de
 - custo estimado de importação (40% do invoice), visível a partir do embarque.
 
 Filtros por período, moeda e fornecedor e **exportação para Excel (CSV)**.
+
+### Apagar todos os invoices (Sistema)
+Para recomeçar com dados reais, o Administrador pode, em **Sistema → Apagar todos os invoices** (digitando APAGAR),
+remover todos os invoices e o que depende deles (itens, condições, descontos, deduções, pagamentos e Swifts,
+lançamentos financeiros e arquivos, histórico e e-mails sobre eles). Usuários, configurações, conta de envio,
+destinatários e agendador são mantidos; fornecedores também, a não ser que se marque a opção. Backup do banco antes.
 
 ### Arquivos anexados (padrão do sistema)
 Todo anexo é feito pelo botão **Anexar** (envio do arquivo pelo navegador; vários de uma vez; até 10 MB cada; PDF,

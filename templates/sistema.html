@@ -31,4 +31,22 @@
   <ul class="historico">{% for b in backups %}<li>{{ b }}</li>{% endfor %}</ul>
   {% else %}<p class="vazio">Nenhum backup ainda. Eles são criados a cada atualização e diariamente no servidor.</p>{% endif %}
 </section>
+<section class="bloco perigo-zona" id="apagar">
+  <h2>Apagar todos os invoices</h2>
+  <p>Remove <strong>todos os invoices</strong> e o que depende deles: itens, condições de pagamento, descontos, revalidações,
+    deduções, pagamentos (com os Swifts), lançamentos financeiros (com os arquivos), histórico dos invoices e os e-mails enviados sobre eles.
+    A numeração recomeça do zero.</p>
+  <p><strong>São mantidos:</strong> usuários, fornecedores (a não ser que marque abaixo), conta de envio de e-mails, destinatários,
+    agendador e demais configurações.</p>
+  <p class="sub">Hoje: {{ contagem_invoices.invoices }} invoice(s), {{ contagem_invoices.descontos }} desconto(s),
+    {{ contagem_invoices.pagamentos }} pagamento(s), {{ contagem_invoices.lancamentos }} lançamento(s) financeiro(s).
+    Um backup do banco é feito automaticamente antes (os arquivos anexados não entram no backup).</p>
+  <form method="post" action="{{ url_for('sistema_apagar_invoices') }}" class="linha-form"
+        onsubmit="return confirm('Apagar TODOS os invoices? Esta ação não pode ser desfeita pela tela.')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="check"><input type="checkbox" name="fornecedores" value="1"> Apagar também os fornecedores cadastrados</label>
+    <label>Digite APAGAR para confirmar<input name="confirmacao" autocomplete="off" placeholder="APAGAR" required></label>
+    <button class="btn perigo">Apagar todos os invoices</button>
+  </form>
+</section>
 {% endblock %}

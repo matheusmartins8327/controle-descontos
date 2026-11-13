@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.12"
+VERSAO = "4.13"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2408,8 +2408,47 @@ def sistema():
     backups = sorted(os.listdir(os.path.join(INSTANCE_DIR, "backups")), reverse=True)[:10] \
         if os.path.isdir(os.path.join(INSTANCE_DIR, "backups")) else []
     uso = get_db().execute("SELECT COUNT(*), COALESCE(SUM(tamanho), 0) FROM arquivos").fetchone()
+    contagem_invoices = {t: get_db().execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+                         for t in ("invoices", "descontos", "pagamentos", "lancamentos")}
     return render_template("sistema.html", usa_git=usa_git, commit=commit, backups=backups,
-                           anexos_qtd=uso[0], anexos_bytes=uso[1])
+                           anexos_qtd=uso[0], anexos_bytes=uso[1], contagem_invoices=contagem_invoices)
+
+
+# Tabelas com dados de invoices (na ordem de exclusão). Usuários, fornecedores, configurações (e-mails,
+# destinatários, agendador) e a conta de envio são mantidos.
+TABELAS_INVOICES = ["revisoes_desconto", "deducoes", "descontos", "pagamentos", "invoice_itens", "condicao_parcelas",
+                    "anexos", "lancamento_anexos", "lancamentos", "eventos", "notificacoes_estado", "invoices"]
+
+
+@app.route("/sistema/apagar-invoices", methods=["POST"])
+@somente_admin
+def sistema_apagar_invoices():
+    """Apaga todos os invoices e o que depende deles (para recomeçar com dados reais). Faz backup antes."""
+    if request.form.get("confirmacao", "").strip().upper() != "APAGAR":
+        flash('Para confirmar, digite APAGAR no campo de confirmação.', "erro")
+        return redirect(url_for("sistema") + "#apagar")
+    db = get_db()
+    backup = backup_banco("-antes-de-apagar-invoices")
+    qtd = db.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
+    arquivos = db.execute("SELECT * FROM arquivos WHERE origem IN ('lancamento', 'pagamento')").fetchall()
+    db.execute("DELETE FROM arquivos WHERE origem IN ('lancamento', 'pagamento')")
+    for t in TABELAS_INVOICES:
+        db.execute(f"DELETE FROM {t}")
+    # histórico de e-mails sobre os invoices apagados (o restante do histórico e a configuração ficam)
+    db.execute("DELETE FROM emails WHERE invoice_id IS NOT NULL OR fluxo IN ('resumo_diario', 'resumo_semanal')")
+    # numeração recomeça do 1
+    db.execute(f"DELETE FROM sqlite_sequence WHERE name IN ({','.join('?' * (len(TABELAS_INVOICES) + 1))})",
+               TABELAS_INVOICES + ["arquivos"])
+    removidos_fornecedores = 0
+    if request.form.get("fornecedores"):
+        removidos_fornecedores = db.execute("DELETE FROM fornecedores").rowcount
+    db.commit()
+    remover_arquivos(arquivos)
+    flash(f"{qtd} invoice(s) apagado(s), com itens, descontos, deduções, pagamentos, lançamentos financeiros, "
+          f"{len(arquivos)} arquivo(s) e histórico." + (f" {removidos_fornecedores} fornecedor(es) apagado(s)."
+                                                       if removidos_fornecedores else " Fornecedores mantidos.")
+          + f" Usuários e configurações mantidos. Backup feito antes: {os.path.basename(backup) if backup else '—'}.", "ok")
+    return redirect(url_for("sistema"))
 
 
 # ---------------------------------------------------------------------------

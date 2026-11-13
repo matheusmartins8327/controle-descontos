@@ -498,3 +498,7 @@ tr.conferir td { background: var(--alerta-claro); }
 .copia-dest h3 { margin: 0 0 .2rem; font-size: .98rem; }
 .copia-dest details { margin: .4rem 0 .6rem; }
 .copia-dest summary { cursor: pointer; color: var(--pri-escuro); }
+
+/* v4.13: zona de perigo */
+.perigo-zona { border-color: #f1b4ae; }
+.perigo-zona h2 { color: #b42318; }
