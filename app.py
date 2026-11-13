@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.13"
+VERSAO = "4.14"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2420,6 +2420,26 @@ TABELAS_INVOICES = ["revisoes_desconto", "deducoes", "descontos", "pagamentos", 
                     "anexos", "lancamento_anexos", "lancamentos", "eventos", "notificacoes_estado", "invoices"]
 
 
+def tabelas_dependentes(db, base):
+    """Tabelas que apontam (chave estrangeira ou coluna invoice_id) para as tabelas de invoices, inclusive
+    tabelas antigas de versões anteriores que ficaram no banco."""
+    todas = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'"
+                                      " AND name NOT LIKE 'sqlite_%'")]
+    alvo = set(base)
+    mudou = True
+    while mudou:
+        mudou = False
+        for t in todas:
+            if t in alvo or t in ("emails", "arquivos", "usuarios", "fornecedores", "configuracoes"):
+                continue
+            refs = {r[2] for r in db.execute(f'PRAGMA foreign_key_list("{t}")')}
+            colunas = {r[1] for r in db.execute(f'PRAGMA table_info("{t}")')}
+            if refs & alvo or "invoice_id" in colunas:
+                alvo.add(t)
+                mudou = True
+    return alvo - set(base)
+
+
 @app.route("/sistema/apagar-invoices", methods=["POST"])
 @somente_admin
 def sistema_apagar_invoices():
@@ -2428,25 +2448,40 @@ def sistema_apagar_invoices():
         flash('Para confirmar, digite APAGAR no campo de confirmação.', "erro")
         return redirect(url_for("sistema") + "#apagar")
     db = get_db()
+    db.commit()  # nenhuma transação aberta antes de desligar a verificação de chaves
     backup = backup_banco("-antes-de-apagar-invoices")
     qtd = db.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
     arquivos = db.execute("SELECT * FROM arquivos WHERE origem IN ('lancamento', 'pagamento')").fetchall()
-    db.execute("DELETE FROM arquivos WHERE origem IN ('lancamento', 'pagamento')")
-    for t in TABELAS_INVOICES:
-        db.execute(f"DELETE FROM {t}")
-    # histórico de e-mails sobre os invoices apagados (o restante do histórico e a configuração ficam)
-    db.execute("DELETE FROM emails WHERE invoice_id IS NOT NULL OR fluxo IN ('resumo_diario', 'resumo_semanal')")
-    # numeração recomeça do 1
-    db.execute(f"DELETE FROM sqlite_sequence WHERE name IN ({','.join('?' * (len(TABELAS_INVOICES) + 1))})",
-               TABELAS_INVOICES + ["arquivos"])
+    extras = sorted(tabelas_dependentes(db, TABELAS_INVOICES))
     removidos_fornecedores = 0
-    if request.form.get("fornecedores"):
-        removidos_fornecedores = db.execute("DELETE FROM fornecedores").rowcount
-    db.commit()
+    db.execute("PRAGMA foreign_keys = OFF")  # apaga tudo de uma vez, sem esbarrar na ordem das ligações
+    try:
+        db.execute("DELETE FROM arquivos WHERE origem IN ('lancamento', 'pagamento')")
+        for t in extras + TABELAS_INVOICES:
+            db.execute(f'DELETE FROM "{t}"')
+        # histórico de e-mails sobre os invoices apagados (o restante do histórico e a configuração ficam)
+        db.execute("DELETE FROM emails WHERE invoice_id IS NOT NULL OR fluxo IN ('resumo_diario', 'resumo_semanal')")
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").fetchone():
+            db.execute(f"DELETE FROM sqlite_sequence WHERE name IN ({','.join('?' * (len(TABELAS_INVOICES) + 1))})",
+                       TABELAS_INVOICES + ["arquivos"])
+        if request.form.get("fornecedores"):
+            removidos_fornecedores = db.execute("DELETE FROM fornecedores").rowcount
+        db.commit()
+    except sqlite3.Error as e:
+        db.rollback()
+        app.logger.exception("Falha ao apagar os invoices")
+        flash(f"Não foi possível apagar os invoices: {e}. Nada foi alterado. Envie esta mensagem ao suporte.", "erro")
+        return redirect(url_for("sistema") + "#apagar")
+    finally:
+        db.execute("PRAGMA foreign_keys = ON")
     remover_arquivos(arquivos)
+    restantes = db.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
+    if restantes:
+        flash(f"Atenção: ainda restam {restantes} invoice(s). Tente novamente ou envie esta mensagem ao suporte.", "erro")
     flash(f"{qtd} invoice(s) apagado(s), com itens, descontos, deduções, pagamentos, lançamentos financeiros, "
           f"{len(arquivos)} arquivo(s) e histórico." + (f" {removidos_fornecedores} fornecedor(es) apagado(s)."
                                                        if removidos_fornecedores else " Fornecedores mantidos.")
+          + (f" Tabelas antigas ligadas aos invoices também limpas: {', '.join(extras)}." if extras else "")
           + f" Usuários e configurações mantidos. Backup feito antes: {os.path.basename(backup) if backup else '—'}.", "ok")
     return redirect(url_for("sistema"))
 
