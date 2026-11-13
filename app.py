@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.16"
+VERSAO = "4.17"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2968,7 +2968,7 @@ FLUXOS_EMAIL = {
         "Janela de pagamento: ETA planejado −1 a +3 dias úteis; com o ETA real, ETA real a +2 dias úteis. "
         "Avisa no cadastro e em cada alteração.", "financeiro", ""),
     "banco_debito": (
-        "Informar banco de débito",
+        "Pendência do Financeiro na etapa de Embarque",
         "Pedido para o Financeiro informar o banco de débito, quando o ETA real é cadastrado (se o banco ainda "
         "estiver vazio).",
         "financeiro", ""),
@@ -3204,10 +3204,12 @@ def gerar_emails(r, antigo, novo):
     # pedido ao Financeiro somente quando o ETA real é cadastrado e o banco ainda está vazio
     # (fotografias antigas, sem "eta_real", contam como sem mudança: não dispara para o histórico)
     if novo.get("eta_real") and not antigo.get("eta_real", novo.get("eta_real")) and not novo["banco"]:
-        enfileirar_email("banco_debito", r, "ETA real cadastrado",
-                         [f"ETA real cadastrado: {fmt_data(novo['eta_real'])}",
-                          "Informe no sistema o banco de débito deste invoice (seção Logística → etapa Embarque)."],
-                         "Sem o banco de débito, a etapa de Embarque não é concluída.")
+        # texto neutro: pedidos do tipo "informe o banco" são confundidos com golpe pelos filtros de e-mail
+        enfileirar_email("banco_debito", r, None,
+                         [f"ETA real cadastrado em {fmt_data(novo['eta_real'])}.",
+                          "Pendência do Financeiro no sistema Controle de Invoices: preencher o campo "
+                          "\"Banco de débito\" na etapa de Embarque (seção Logística do invoice)."],
+                         "A etapa de Embarque é concluída quando esse campo estiver preenchido no sistema.")
 
     # chegada de invoice que recebeu dedução
     if novo["chegada"] and not antigo.get("chegada") and r["deducoes_recebidas"]:
