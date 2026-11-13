@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.20)
+# Controle de Invoices e Descontos (v4.21)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -134,6 +134,10 @@ Enquanto bloqueadas: a pendência é da Engenharia ("Liberar o pagamento ao Fina
 "Bloqueado (Engenharia)" e o Financeiro só consegue registrar pagamento das parcelas antecipadas. Ao liberar, o
 Financeiro recebe o e-mail "Pagamento liberado pela Engenharia de Processos". A liberação pode ser desfeita.
 Os pagamentos abatem primeiro as parcelas antecipadas e depois as após a HAWB.
+
+### Horário
+Todo o sistema usa o **horário de Brasília** (UTC−3), independentemente do fuso do servidor (o PythonAnywhere roda em
+UTC). Na atualização para a v4.21, os horários já gravados num servidor em UTC são convertidos uma única vez.
 
 ### Esqueci minha senha
 Na tela de login, **Esqueci minha senha**: o usuário informa o e-mail e recebe (pela conta de envio da aba E-mails) um

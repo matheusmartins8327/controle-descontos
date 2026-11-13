@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.20"
+VERSAO = "4.21"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -456,14 +456,44 @@ def init_db():
         db.execute("DELETE FROM anexos WHERE tipo IN ('DUIMP', 'BOLETO_ICMS')")
         for antigo, novo in PERFIS_ANTIGOS.items():
             db.execute("UPDATE usuarios SET perfil = ? WHERE perfil = ?", (novo, antigo))
+        corrigir_horarios_utc(db)
+
+
+def corrigir_horarios_utc(db):
+    """Versão 4.21: até aqui os registros usavam o relógio do servidor. Num servidor em UTC (PythonAnywhere),
+    converte uma única vez as datas/horas gravadas (colunas *_em) para o horário de Brasília."""
+    if db.execute("SELECT 1 FROM configuracoes WHERE chave = 'fuso_brasilia'").fetchone():
+        return
+    servidor_em_utc = abs((datetime.now() - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()) < 60
+    if servidor_em_utc:
+        for (tabela,) in db.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+                                    " AND name NOT LIKE 'legacy_%'").fetchall():
+            for col in [c[1] for c in db.execute(f'PRAGMA table_info("{tabela}")') if c[1].endswith("_em")]:
+                db.execute(f'UPDATE "{tabela}" SET "{col}" = strftime(\'%Y-%m-%d %H:%M:%S\', "{col}", \'-3 hours\')'
+                           f' WHERE "{col}" GLOB \'[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]\'')
+        for chave in ("notif_inicio",):
+            db.execute("UPDATE configuracoes SET valor = strftime('%Y-%m-%d %H:%M:%S', valor, '-3 hours')"
+                       " WHERE chave = ? AND valor GLOB '????-??-?? ??:??:??'", (chave,))
+    db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('fuso_brasilia', ?)",
+               ("convertido de UTC" if servidor_em_utc else "servidor já no horário local",))
+
+
+# Todo o sistema usa o horário de Brasília (UTC−3, sem horário de verão), qualquer que seja o fuso do
+# servidor (o PythonAnywhere roda em UTC/GMT 0).
+FUSO_BRASIL = timedelta(hours=-3)
+
+
+def agora_dt():
+    """Data e hora atuais em Brasília (sem fuso no objeto)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None) + FUSO_BRASIL
 
 
 def agora():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return agora_dt().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def hoje():
-    return date.today().isoformat()
+    return agora_dt().date().isoformat()
 
 
 def registrar_evento(invoice_id, acao, obs=None):
@@ -958,7 +988,7 @@ def login():
         email = request.form.get("email", "").strip().lower()
         senha = request.form.get("senha", "")
         db = get_db()
-        limite = (datetime.now() - timedelta(minutes=BLOQUEIO_MINUTOS)).strftime("%Y-%m-%d %H:%M:%S")
+        limite = (agora_dt() - timedelta(minutes=BLOQUEIO_MINUTOS)).strftime("%Y-%m-%d %H:%M:%S")
         falhas = db.execute("SELECT COUNT(*) FROM tentativas_login WHERE email = ? AND criado_em > ?",
                             (email, limite)).fetchone()[0]
         if falhas >= MAX_TENTATIVAS_LOGIN:
@@ -2410,7 +2440,7 @@ def backup_banco(sufixo=""):
         return None
     pasta = os.path.join(INSTANCE_DIR, "backups")
     os.makedirs(pasta, exist_ok=True)
-    destino = os.path.join(pasta, f"descontos-{datetime.now():%Y%m%d-%H%M%S}{sufixo}.db")
+    destino = os.path.join(pasta, f"descontos-{agora_dt():%Y%m%d-%H%M%S}{sufixo}.db")
     with sqlite3.connect(DB_PATH) as origem, sqlite3.connect(destino) as copia:
         origem.backup(copia)
     for antigo in sorted(f for f in os.listdir(pasta) if f.endswith(".db"))[:-30]:
@@ -3112,11 +3142,8 @@ app.jinja_env.globals["STATUS_EMAIL"] = STATUS_EMAIL
 SMTP_PADRAO = {"smtp_host": "smtp.gmail.com", "smtp_porta": "587",
                "smtp_nome": "Controle de Invoices · Quinelato"}
 RE_EMAIL = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
-FUSO_BRASIL = timedelta(hours=-3)  # horário de Brasília (sem horário de verão)
-
-
 def agora_brasil():
-    return datetime.now(timezone.utc).replace(tzinfo=None) + FUSO_BRASIL
+    return agora_dt()
 
 
 def lista_emails(texto):
@@ -3842,7 +3869,7 @@ def redefinir_senha():
         db = get_db()
         u = db.execute("SELECT * FROM usuarios WHERE email = ? AND ativo = 1", (email,)).fetchone()
         if u:
-            uma_hora = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+            uma_hora = (agora_dt() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
             recentes = db.execute("SELECT COUNT(*) FROM senha_codigos WHERE usuario_id = ? AND criado_em > ?",
                                   (u["id"], uma_hora)).fetchone()[0]
             if recentes >= CODIGO_MAX_POR_HORA:
@@ -3857,7 +3884,7 @@ def redefinir_senha():
             # só o último código vale
             db.execute("UPDATE senha_codigos SET usado_em = ? WHERE usuario_id = ? AND usado_em IS NULL",
                        (agora(), u["id"]))
-            expira = (datetime.now() + timedelta(minutes=CODIGO_VALIDADE_MIN)).strftime("%Y-%m-%d %H:%M:%S")
+            expira = (agora_dt() + timedelta(minutes=CODIGO_VALIDADE_MIN)).strftime("%Y-%m-%d %H:%M:%S")
             db.execute("INSERT INTO senha_codigos (usuario_id, codigo_hash, criado_em, expira_em, tentativas)"
                        " VALUES (?, ?, ?, ?, 0)", (u["id"], generate_password_hash(codigo), agora(), expira))
             db.commit()

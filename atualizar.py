@@ -15,7 +15,7 @@ import shutil
 import sys
 import urllib.request
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 
 REPOSITORIO = "matheusmartins8327/controle-descontos"
 RAMO = "main"
@@ -53,7 +53,7 @@ def backup_banco():
         return
     pasta = os.path.join(INSTANCE, "backups")
     os.makedirs(pasta, exist_ok=True)
-    destino = os.path.join(pasta, f"descontos-{datetime.now():%Y%m%d-%H%M%S}.db")
+    destino = os.path.join(pasta, f"descontos-{(datetime.utcnow() - timedelta(hours=3)):%Y%m%d-%H%M%S}.db")
     shutil.copy2(banco, destino)
     antigos = sorted(f for f in os.listdir(pasta) if f.endswith(".db"))
     for f in antigos[:-MAX_BACKUPS]:
