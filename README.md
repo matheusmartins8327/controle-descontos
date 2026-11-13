@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.11)
+# Controle de Invoices e Descontos (v4.12)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -152,7 +152,7 @@ Os dados ficam em `instance\descontos.db`. **Copie a pasta `instance` periodicam
 A versão 3.0 recomeçou os registros do zero. Usuários e fornecedores foram mantidos; os dados da versão 2 (controle só de descontos) ficam preservados no banco com o prefixo `legacy_v2_`.
 
 ## E-mails automáticos (v4.0)
-Configurados pelo Administrador na aba **E-mails** (canto superior, ao lado de Usuários/Sistema): conta Gmail de envio,
+Configurados pelo Administrador na aba **E-mails** (canto superior, ao lado de Usuários/Sistema): conta de envio (servidor SMTP: conta corporativa ou Gmail),
 destinatários (Para/Cc) e ativação de cada fluxo, horário do resumo diário e histórico de tudo que foi enviado.
 
 | E-mail | Quando | Sugestão de destino |
@@ -173,7 +173,8 @@ fluxos; "Restaurar configuração guardada" volta a ela (útil para testes com o
 Funcionamento: a cada alteração salva, o sistema compara a previsibilidade de cada invoice com a última notificada e
 gera os e-mails das diferenças (fila na tabela `emails`, enviados logo após a página responder; até 3 tentativas).
 Ao instalar a v4.0, a situação atual é registrada sem enviar nada sobre o histórico. Dias úteis = segunda a sexta
-(feriados não são considerados). A senha de app do Gmail fica só no banco do servidor (pasta `instance/`).
+(feriados não são considerados). A senha da conta de envio fica só no banco do servidor (pasta `instance/`). Criptografia SSL/TLS (465) ou STARTTLS (587).
+No plano gratuito do PythonAnywhere só é possível enviar pelo Gmail; servidor próprio exige plano pago.
 Os resumos são disparados por um agendador externo gratuito (cron-job.org) que chama, todo dia às 8h de Brasília,
 o endereço secreto exibido na aba E-mails (o passo a passo está na própria aba). Se o agendador falhar, os resumos
 saem no primeiro acesso ao sistema depois das 8h. Cada resumo sai no máximo uma vez por dia.

@@ -3,21 +3,22 @@
 {% block conteudo %}
 <h1>E-mails automáticos</h1>
 <p class="sub">O sistema avisa por e-mail quando muda a previsibilidade de pagamento de um invoice, quando uma data de pagamento é confirmada e
-  nos demais eventos abaixo. Os e-mails são informativos (sem links para o sistema) e saem pela conta Gmail configurada aqui.</p>
+  nos demais eventos abaixo. Os e-mails são informativos (sem links para o sistema) e saem pela conta de envio configurada aqui.</p>
 
 <section class="bloco" id="conta">
-  <h2>1. Conta de envio (Gmail)</h2>
+  <h2>1. Conta de envio</h2>
+  <p class="sub">Servidor que envia os e-mails do sistema (ex.: a conta corporativa da Quinelato ou uma conta Gmail).</p>
   <form method="post" action="{{ url_for('emails_conta') }}" class="grade-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>E-mail da conta Gmail<input name="smtp_usuario" value="{{ smtp.smtp_usuario }}" placeholder="exemplo@gmail.com"></label>
-    <label>Senha de app (16 letras){% if tem_senha %} <small class="ok-txt">· salva</small>{% endif %}
-      <input name="smtp_senha" type="password" autocomplete="new-password" placeholder="{{ 'deixe em branco para manter a atual' if tem_senha else 'xxxx xxxx xxxx xxxx' }}"></label>
+    <label>Servidor SMTP<input name="smtp_host" value="{{ smtp.smtp_host }}" placeholder="ex.: smtp.empresa.com.br" required></label>
+    <label>Porta<input name="smtp_porta" value="{{ smtp.smtp_porta }}" inputmode="numeric" required></label>
+    <label>Criptografia<select name="smtp_seguranca">{% for k, v in SEGURANCA_SMTP.items() %}<option value="{{ k }}" {{ 'selected' if smtp_seguranca == k }}>{{ v }}</option>{% endfor %}</select></label>
+    <label>Usuário<input name="smtp_usuario" value="{{ smtp.smtp_usuario }}" autocomplete="off" placeholder="usuário da conta (normalmente o e-mail)"></label>
+    <label>Senha{% if tem_senha %} <small class="ok-txt">· salva</small>{% endif %}
+      <input name="smtp_senha" type="password" autocomplete="new-password" placeholder="{{ 'deixe em branco para manter a atual' if tem_senha else 'senha da conta de envio' }}"></label>
+    <label>E-mail do remetente <small>(opcional)</small><input name="smtp_remetente" value="{{ smtp.smtp_remetente or '' }}" placeholder="se vazio, usa o usuário"></label>
     <label>Nome do remetente<input name="smtp_nome" value="{{ smtp.smtp_nome }}"></label>
-    <details class="avancado"><summary>Servidor (avançado)</summary>
-      <label>Servidor SMTP<input name="smtp_host" value="{{ smtp.smtp_host }}"></label>
-      <label>Porta<input name="smtp_porta" value="{{ smtp.smtp_porta }}"></label>
-      {% if tem_senha %}<label class="check"><input type="checkbox" name="remover_senha" value="1"> Apagar a senha salva</label>{% endif %}
-    </details>
+    {% if tem_senha %}<label class="check"><input type="checkbox" name="remover_senha" value="1"> Apagar a senha salva</label>{% endif %}
     <div><button class="btn primario">Salvar conta</button></div>
   </form>
   <form method="post" action="{{ url_for('emails_teste') }}" class="linha-form">
@@ -25,7 +26,10 @@
     <label class="cresce">Enviar e-mail de teste para<input name="destino" placeholder="seu.email@quinelato.com.br"></label>
     <button class="btn">Enviar teste</button>
   </form>
-  <p class="sub dica">A senha fica guardada somente no banco de dados do servidor (não vai para o GitHub) e nunca é exibida.</p>
+  <p class="sub dica">A senha fica guardada somente no banco de dados do servidor (não vai para o GitHub) e nunca é exibida.
+    A autenticação é feita com o usuário e a senha acima.
+    {% if pythonanywhere and 'gmail.com' not in (smtp.smtp_host or '') %}<br><strong>Atenção:</strong> no plano gratuito do PythonAnywhere só é permitido enviar pelo Gmail;
+    para outro servidor é preciso um plano pago. O "Enviar teste" mostra se a conexão funciona.{% endif %}</p>
 </section>
 
 <section class="bloco" id="fluxos">

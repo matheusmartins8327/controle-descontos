@@ -21,6 +21,7 @@ import secrets
 import json
 import mimetypes
 import smtplib
+import ssl
 import socket
 import sqlite3
 import subprocess
@@ -45,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.11"
+VERSAO = "4.12"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2809,7 +2810,7 @@ def lancamentos_avisar(id):
     para_anexar = [(caminho_anexo(a), a["nome"]) for l in pendentes for a in arquivos.get(l["id"], [])
                    if os.path.exists(caminho_anexo(a))]
     total_bytes = sum(os.path.getsize(c) for c, _n in para_anexar)
-    if total_bytes > 20 * 1024 * 1024:  # o Gmail aceita até 25 MB por e-mail
+    if total_bytes > 20 * 1024 * 1024:  # limite comum dos servidores de e-mail: ~25 MB
         para_anexar = []
     for l in pendentes:
         txt = f"{l['tipo'] or 'Sem tipo'} · " + (fmt_moeda(l["valor"], "BRL") if l["valor"] is not None else "valor não informado")
@@ -2876,7 +2877,7 @@ def lancamentos_csv():
 # A cada alteração salva no sistema, a "fotografia" de previsibilidade de cada invoice (parcelas,
 # janela de nacionalização, liberações, desconto, chegada...) é comparada com a anterior; as
 # diferenças viram e-mails, na fila da tabela `emails`. O envio acontece logo após a resposta da
-# página (o usuário não espera) pela conta Gmail configurada na aba E-mails.
+# página (o usuário não espera) pela conta de envio configurada na aba E-mails.
 # ---------------------------------------------------------------------------
 FLUXOS_EMAIL = {
     # chave: (título, quando é enviado, setor sugerido em "Para", setor sugerido em "Cc")
@@ -2968,7 +2969,7 @@ def fluxos_para_tela():
 
 
 def conta_configurada():
-    return bool(config("smtp_usuario") and config("smtp_senha"))
+    return bool(config("smtp_host") and (config("smtp_remetente") or config("smtp_usuario")))
 
 
 # ---------- conteúdo dos e-mails ----------
@@ -3018,7 +3019,7 @@ def enfileirar_email(fluxo, r, assunto_extra, linhas, obs=None, anexos=None):
     elif not lista_emails(para):
         status, erro = "NAO_ENVIADO", "Sem destinatário em 'Para'."
     elif not conta_configurada():
-        status, erro = "NAO_ENVIADO", "Conta de envio (Gmail) não configurada."
+        status, erro = "NAO_ENVIADO", "Conta de envio não configurada (aba E-mails)."
     else:
         status, erro = "PENDENTE", None
         g.ha_emails_na_fila = True
@@ -3258,22 +3259,57 @@ def resumos_pendentes_hoje():
 
 
 # ---------- envio ----------
+SEGURANCA_SMTP = {"ssl": "SSL/TLS (porta 465)", "starttls": "STARTTLS (porta 587)", "nenhuma": "Nenhuma"}
+
+
+def seguranca_smtp():
+    padrao = "ssl" if config("smtp_porta", SMTP_PADRAO["smtp_porta"]) == "465" else "starttls"
+    valor = config("smtp_seguranca", padrao)
+    return valor if valor in SEGURANCA_SMTP else padrao
+
+
 def conectar_smtp():
+    """Conecta no servidor de envio configurado na aba E-mails (Outlook/Exchange da empresa, Gmail etc.)."""
     host = config("smtp_host", SMTP_PADRAO["smtp_host"])
     porta = int(config("smtp_porta", SMTP_PADRAO["smtp_porta"]))
-    if porta == 465:
-        srv = smtplib.SMTP_SSL(host, porta, timeout=20)
-    else:
-        srv = smtplib.SMTP(host, porta, timeout=20)
-        srv.starttls()
-    srv.login(config("smtp_usuario"), config("smtp_senha"))
+    seg = seguranca_smtp()
+    try:
+        if seg == "ssl":
+            srv = smtplib.SMTP_SSL(host, porta, timeout=20, context=ssl.create_default_context())
+        else:
+            srv = smtplib.SMTP(host, porta, timeout=20)
+            srv.ehlo()
+            if seg == "starttls":
+                srv.starttls(context=ssl.create_default_context())
+                srv.ehlo()
+    except (OSError, smtplib.SMTPException) as e:
+        raise RuntimeError(explicar_falha_conexao(host, porta, e)) from e
+    if config("smtp_usuario") and config("smtp_senha"):  # servidor que exige autenticação
+        try:
+            srv.login(config("smtp_usuario"), config("smtp_senha"))
+        except smtplib.SMTPAuthenticationError as e:
+            srv.close()
+            raise RuntimeError(f"Usuário ou senha recusados pelo servidor {host}: confira a conta de envio ({e}).") from e
     return srv
+
+
+def em_pythonanywhere():
+    return bool(os.environ.get("PYTHONANYWHERE_DOMAIN") or os.environ.get("PYTHONANYWHERE_SITE"))
+
+
+def explicar_falha_conexao(host, porta, erro):
+    msg = f"Não foi possível conectar em {host}:{porta} ({erro})."
+    if "gmail.com" not in host.lower() and em_pythonanywhere():
+        msg += (" No PythonAnywhere, contas gratuitas só podem enviar e-mails pelo Gmail; para usar o servidor"
+                " da empresa é preciso um plano pago (ou manter o envio pela conta Gmail).")
+    return msg
 
 
 def montar_mensagem(assunto, html, para, cc, anexos=None):
     msg = EmailMessage()
     msg["Subject"] = assunto
-    msg["From"] = formataddr((config("smtp_nome", SMTP_PADRAO["smtp_nome"]), config("smtp_usuario")))
+    remetente = config("smtp_remetente") or config("smtp_usuario")
+    msg["From"] = formataddr((config("smtp_nome", SMTP_PADRAO["smtp_nome"]), remetente))
     msg["To"] = ", ".join(lista_emails(para))
     if lista_emails(cc):
         msg["Cc"] = ", ".join(lista_emails(cc))
@@ -3394,7 +3430,10 @@ def emails_config():
     contagem = {k: n for k, n in get_db().execute("SELECT status, COUNT(*) FROM emails GROUP BY status")}
     return render_template(
         "emails.html", fluxos=fluxos_para_tela(), salvo=config("email_fluxos") is not None,
-        smtp={k: config(k, SMTP_PADRAO.get(k, "")) for k in ("smtp_host", "smtp_porta", "smtp_usuario", "smtp_nome")},
+        smtp={k: config(k, SMTP_PADRAO.get(k, "")) for k in ("smtp_host", "smtp_porta", "smtp_usuario", "smtp_nome",
+                                                               "smtp_remetente")},
+        smtp_seguranca=seguranca_smtp(), SEGURANCA_SMTP=SEGURANCA_SMTP,
+        pythonanywhere=em_pythonanywhere(),
         tem_senha=bool(config("smtp_senha")), agendador_ultimo=config("agendador_ultimo"),
         resumo_ultimo=config("resumo_ultimo"), resumo_semanal_ultimo=config("resumo_semanal_ultimo"), historico=historico, contagem=contagem,
         url_tarefa=re.sub(r"^http://(?=[^/]*pythonanywhere\.com)", "https://",
@@ -3406,24 +3445,36 @@ def emails_config():
 @somente_admin
 def emails_conta():
     f = request.form
-    usuario = f.get("smtp_usuario", "").strip().lower()
-    porta = f.get("smtp_porta", "587").strip()
-    if usuario and not RE_EMAIL.match(usuario):
-        flash("Informe um e-mail válido para a conta de envio.", "erro")
+    usuario = f.get("smtp_usuario", "").strip()
+    remetente = f.get("smtp_remetente", "").strip().lower()
+    host = f.get("smtp_host", "").strip().lower()
+    porta = f.get("smtp_porta", "").strip()
+    seg = f.get("smtp_seguranca") or ("ssl" if porta == "465" else "starttls")
+    if not host:
+        flash("Informe o servidor SMTP.", "erro")
     elif not porta.isdigit():
-        flash("A porta deve ser um número (Gmail: 587).", "erro")
+        flash("A porta deve ser um número (ex.: 465 com SSL, 587 com STARTTLS).", "erro")
+    elif seg not in SEGURANCA_SMTP:
+        flash("Escolha a criptografia.", "erro")
+    elif remetente and not RE_EMAIL.match(remetente):
+        flash("E-mail do remetente inválido.", "erro")
+    elif not remetente and usuario and not RE_EMAIL.match(usuario.lower()):
+        flash("O usuário não é um e-mail: informe também o e-mail do remetente.", "erro")
     else:
         salvar_config("smtp_usuario", usuario)
-        salvar_config("smtp_host", f.get("smtp_host", "").strip() or SMTP_PADRAO["smtp_host"])
+        salvar_config("smtp_remetente", remetente or None)
+        salvar_config("smtp_host", host)
         salvar_config("smtp_porta", porta)
+        salvar_config("smtp_seguranca", seg)
         salvar_config("smtp_nome", f.get("smtp_nome", "").strip() or SMTP_PADRAO["smtp_nome"])
-        senha = f.get("smtp_senha", "").replace(" ", "")
-        if senha:
-            salvar_config("smtp_senha", senha)
+        senha = f.get("smtp_senha", "")
+        if senha.strip():
+            # senha de app do Gmail vem em grupos com espaços; nas demais contas a senha é guardada como digitada
+            salvar_config("smtp_senha", senha.replace(" ", "") if "gmail.com" in host else senha)
         if f.get("remover_senha"):
             salvar_config("smtp_senha", None)
         get_db().commit()
-        flash("Conta de envio salva.", "ok")
+        flash("Conta de envio salva. Use \"Enviar teste\" para conferir.", "ok")
     return redirect(url_for("emails_config") + "#conta")
 
 
@@ -3434,7 +3485,7 @@ def emails_teste():
     if not RE_EMAIL.match(destino):
         flash("Informe um e-mail válido para o teste.", "erro")
     elif not conta_configurada():
-        flash("Configure a conta de envio (e-mail e senha de app) antes do teste.", "erro")
+        flash("Configure a conta de envio (servidor, usuário e senha) antes do teste.", "erro")
     else:
         html = corpo_email("E-mail de teste", None, ["Se você recebeu esta mensagem, a conta de envio está correta."])
         try:
