@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.19"
+VERSAO = "4.20"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -87,7 +87,8 @@ CAMPOS_ETAPA = {
                     ("data_parametrizacao", "Data de parametrização", "data", True),
                     ("cor_canal", "Canal", "canal", True),
                     ("exigencias_anvisa", "Exigências da ANVISA", "texto", False),
-                    ("data_desembaraco", "Data de desembaraço", "data", True)],
+                    ("data_desembaraco", "Data de desembaraço", "data", True),
+                    ("numero_nf", "Número da NF", "linha", True)],
     "CHEGADA": [("data_prog_chegada", "Data programada de chegada", "data", True),
                 ("data_chegada", "Data real de chegada na fábrica", "data", True)],
 }
@@ -405,6 +406,12 @@ def init_db():
             db.execute("ALTER TABLE invoice_itens ADD COLUMN codigo TEXT")
         if "data_parametrizacao" not in {r[1] for r in db.execute("PRAGMA table_info(invoices)")}:
             db.execute("ALTER TABLE invoices ADD COLUMN data_parametrizacao TEXT")
+        # versão 4.20: número da NF (Desembaraço) e liberação do pagamento após a HAWB pela Engenharia
+        colunas_inv = {r[1] for r in db.execute("PRAGMA table_info(invoices)")}
+        for col, tipo in (("numero_nf", "TEXT"), ("pagamento_liberado_em", "TEXT"), ("pagamento_liberado_por", "INTEGER"),
+                          ("pagamento_liberado_obs", "TEXT")):
+            if col not in colunas_inv:
+                db.execute(f"ALTER TABLE invoices ADD COLUMN {col} {tipo}")
         # versão 3.6: itens podem ser salvos sem quantidade/preço (cadastro incompleto)
         if any(c[1] in ("quantidade", "valor_unit") and c[3] for c in db.execute("PRAGMA table_info(invoice_itens)")):
             db.executescript("""
@@ -612,7 +619,10 @@ def calcular_parcelas(r):
                          "valor": round(V * c["percentual"] / 100, 2), "vencimento": vencimento_parcela(r, c)})
     if parcelas:  # ajuste de centavos na última parcela
         parcelas[-1]["valor"] = round(V - sum(p["valor"] for p in parcelas[:-1]), 2)
-    ordem = sorted(range(len(parcelas)), key=lambda i: (parcelas[i]["vencimento"] is None,
+    # ordem dos pagamentos: primeiro as parcelas antecipadas, depois as após a HAWB por vencimento
+    # (as após a HAWB dependem da liberação da Engenharia; o valor segurado sai delas, as últimas)
+    ordem = sorted(range(len(parcelas)), key=lambda i: (parcelas[i]["tipo"] != "ANTECIPADO",
+                                                        parcelas[i]["vencimento"] is None,
                                                         parcelas[i]["vencimento"] or "", i))
     for p in parcelas:
         p["devido"] = p["valor"]
@@ -776,6 +786,15 @@ def calcular(inv):
     r["swift_arquivos"] = arquivos_de("pagamento", [p["id"] for p in r["pagamentos"]])
     r["swifts_pendentes"] = sum(1 for p in r["pagamentos"] if not p["swift_url"] and not r["swift_arquivos"].get(p["id"]))
     r["parcelas"] = calcular_parcelas(r)
+    # parcelas após a HAWB ficam bloqueadas até a Engenharia de Processos liberar o pagamento ao Financeiro
+    r["pagamento_liberado"] = bool(r["pagamento_liberado_em"])
+    for p in r["parcelas"]:
+        p["bloqueado"] = p["tipo"] == "PRAZO" and not r["pagamento_liberado"]
+    r["tem_parcela_prazo"] = any(p["tipo"] == "PRAZO" for p in r["parcelas"])
+    r["principal_bloqueado"] = round(sum(p["pendente"] for p in r["parcelas"] if p["bloqueado"]), 2)
+    r["principal_liberado_pendente"] = max(round(r["principal_pendente"] - r["principal_bloqueado"], 2), 0) \
+        if r["parcelas"] else r["principal_pendente"]
+    r["duimp_arquivos"] = arquivos_de("duimp", [iid]).get(iid, [])
     pendentes = [p for p in r["parcelas"] if p["pendente"] > TOLERANCIA]
     # próximo vencimento em aberto (sem data: parcela a prazo de invoice sem data da HAWB)
     r["vencimento"] = pendentes[0]["vencimento"] if pendentes else None
@@ -1038,6 +1057,10 @@ def listar_pendencias(invoices, perfil=None):
                         None, p["pendente"])
                     continue
                 vencido = p["vencimento"] < hoje()
+                if p["bloqueado"]:  # aprovação da Engenharia de Processos antes do pagamento
+                    add(r, "Liberar o pagamento ao Financeiro" + rotulo + (" (já vencido)" if vencido else ""),
+                        "admin", p["vencimento"], p["pendente"], alerta=vencido or p["vencimento"] <= lim_7)
+                    continue
                 add(r, ("Pagamento vencido" if vencido else "Pagar invoice") + rotulo, "financeiro", p["vencimento"],
                     p["pendente"], alerta=vencido or p["vencimento"] <= lim_7)
         if fin:
@@ -1125,8 +1148,10 @@ def itens_fluxo(invoices):
                 tipo += " (saldo)"
             if not p["vencimento"]:
                 tipo += " · aguardando data da HAWB"
+            if p["bloqueado"]:
+                tipo += " · bloqueado: aguardando liberação da Engenharia de Processos"
             itens.append(dict(base, categoria="PAGAMENTO", tipo=tipo, data=p["vencimento"], estimado=False,
-                              valor=p["pendente"]))
+                              valor=p["pendente"], bloqueado=p["bloqueado"]))
         for p in r["parcelas_liberacao"]:
             if p["pendente"] <= TOLERANCIA:
                 continue
@@ -1147,7 +1172,9 @@ def itens_fluxo(invoices):
             itens.append(dict(base, categoria="CUSTO", tipo=tipo, data=jan["ini"] if jan else None, estimado=True,
                               valor=round(r["itens_total"] * CUSTO_IMPORTACAO_ESTIMADO, 2)))
     for it in itens:
-        if it["data"] and it["data"] < hj and it["categoria"] != "CUSTO":
+        if it.get("bloqueado"):
+            it["situacao"] = "Bloqueado (Engenharia)"
+        elif it["data"] and it["data"] < hj and it["categoria"] != "CUSTO":
             it["situacao"] = "Vencido" if it["categoria"] == "PAGAMENTO" or not it["estimado"] else "Disponível"
         elif it["categoria"] == "LIBERACAO" and not it["data"]:
             it["situacao"] = "Aguardando chegada" if "chegada" in it["tipo"] else "Aguardando dedução"
@@ -2069,7 +2096,7 @@ def pagamento_novo(id):
     data_pg = data_valida(f.get("data_pagamento"))
     arquivos_swift = [a for a in request.files.getlist("swift_arquivo") if a and a.filename]
     banco = f.get("banco", "").strip() or r["banco_debito"]
-    limite = {"PRINCIPAL": r["principal_pendente"], "LIBERACAO": r["liberacao_disponivel"]}.get(tipo)
+    limite = {"PRINCIPAL": r["principal_liberado_pendente"], "LIBERACAO": r["liberacao_disponivel"]}.get(tipo)
     erro = None
     if r["cancelado_em"]:
         erro = "Invoice cancelado."
@@ -2082,6 +2109,9 @@ def pagamento_novo(id):
     elif valor > limite + TOLERANCIA:
         erro = (f"O valor é maior que o disponível para {TIPOS_PAGAMENTO[tipo].lower()} "
                 f"({fmt_moeda(limite, r['moeda'])}).")
+        if tipo == "PRINCIPAL" and r["principal_bloqueado"] > TOLERANCIA:
+            erro += (f" As parcelas após a HAWB ({fmt_moeda(r['principal_bloqueado'], r['moeda'])}) aguardam a "
+                     "liberação do pagamento pela Engenharia de Processos.")
     if erro:
         flash(erro, "erro")
         return volta
@@ -2146,7 +2176,7 @@ def pagamento_editar(pid):
     obs = f.get("obs", "").strip() or None
     # limite: o que ainda pode ser pago desse tipo, devolvendo o valor atual deste pagamento
     if p["tipo"] == "PRINCIPAL":
-        limite = r["principal_pendente"] + p["valor"]
+        limite = r["principal_liberado_pendente"] + p["valor"]
     else:
         limite = r["liberacao_disponivel"] + p["valor"]
     erro = None
@@ -2461,12 +2491,12 @@ def sistema_apagar_invoices():
     db.commit()  # nenhuma transação aberta antes de desligar a verificação de chaves
     backup = backup_banco("-antes-de-apagar-invoices")
     qtd = db.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
-    arquivos = db.execute("SELECT * FROM arquivos WHERE origem IN ('lancamento', 'pagamento')").fetchall()
+    arquivos = db.execute("SELECT * FROM arquivos WHERE origem IN ('lancamento', 'pagamento', 'duimp')").fetchall()
     extras = sorted(tabelas_dependentes(db, TABELAS_INVOICES))
     removidos_fornecedores = 0
     db.execute("PRAGMA foreign_keys = OFF")  # apaga tudo de uma vez, sem esbarrar na ordem das ligações
     try:
-        db.execute("DELETE FROM arquivos WHERE origem IN ('lancamento', 'pagamento')")
+        db.execute("DELETE FROM arquivos WHERE origem IN ('lancamento', 'pagamento', 'duimp')")
         for t in extras + TABELAS_INVOICES:
             db.execute(f'DELETE FROM "{t}"')
         # histórico de e-mails sobre os invoices apagados (o restante do histórico e a configuração ficam)
@@ -2705,7 +2735,7 @@ def lancamento_erp(lid):
 # ---------- arquivos anexados (padrão do sistema para qualquer anexo) ----------
 # Os arquivos são enviados pelo navegador e ficam no servidor (pasta ARQUIVOS_DIR, fora do GitHub).
 # origem: 'lancamento' (custos da aba Lançamentos Financeiros) | 'pagamento' (Swift de cada pagamento)
-ORIGENS_ARQUIVO = {"lancamento": "lançamento financeiro", "pagamento": "pagamento (Swift)"}
+ORIGENS_ARQUIVO = {"lancamento": "lançamento financeiro", "pagamento": "pagamento (Swift)", "duimp": "DUIMP"}
 
 
 def arquivos_de(origem, ids=None):
@@ -2799,6 +2829,8 @@ def info_origem(a):
         if l is None:
             return None, "", url_for("lancamentos")
         return l["invoice_id"], l["tipo"] or "sem tipo", None
+    if a["origem"] == "duimp":
+        return a["origem_id"], "DUIMP", url_for("invoice_detalhe", id=a["origem_id"]) + "#etapa-DESEMBARACO"
     p = db.execute("SELECT invoice_id, data_pagamento FROM pagamentos WHERE id = ?", (a["origem_id"],)).fetchone()
     if p is None:
         return None, "", url_for("painel")
@@ -2830,6 +2862,60 @@ def lancamento_anexar(lid):
     return voltar_lancamentos(l["invoice_id"])
 
 
+@app.route("/invoices/<int:id>/duimp", methods=["POST"])
+@login_obrigatorio
+def duimp_anexar(id):
+    """A Importação anexa o arquivo da DUIMP (etapa Desembaraço)."""
+    if not pode("importacao"):
+        abort(403)
+    r = carregar_invoice(id)
+    arquivos = [f for f in request.files.getlist("arquivo") if f and f.filename]
+    if not arquivos:
+        flash("Escolha o arquivo da DUIMP.", "erro")
+    else:
+        salvos, erros = salvar_arquivos("duimp", id, arquivos)
+        if salvos:
+            registrar_evento(id, "DUIMP anexada", ", ".join(salvos))
+            get_db().commit()
+            flash("DUIMP anexada: " + ", ".join(salvos) + ".", "ok")
+        for e in erros:
+            flash(e, "erro")
+    return redirect(url_for("invoice_detalhe", id=r["id"]) + "#etapa-DESEMBARACO")
+
+
+@app.route("/invoices/<int:id>/liberar-pagamento", methods=["POST"])
+@somente_admin
+def pagamento_liberar(id):
+    """A Engenharia de Processos libera ao Financeiro o pagamento das parcelas após a HAWB."""
+    r = carregar_invoice(id)
+    if r["pagamento_liberado"]:
+        flash("O pagamento deste invoice já está liberado.", "erro")
+    elif not r["tem_parcela_prazo"]:
+        flash("Este invoice não tem parcela após a HAWB para liberar.", "erro")
+    else:
+        obs = " ".join(request.form.get("obs", "").split())[:300] or None
+        get_db().execute("UPDATE invoices SET pagamento_liberado_em = ?, pagamento_liberado_por = ?,"
+                         " pagamento_liberado_obs = ? WHERE id = ?", (agora(), g.usuario["id"], obs, id))
+        registrar_evento(id, "Pagamento após a HAWB liberado ao Financeiro (Engenharia de Processos)", obs)
+        get_db().commit()
+        flash("Pagamento liberado. O Financeiro será avisado por e-mail.", "ok")
+    return redirect(url_for("invoice_detalhe", id=id) + "#pagamentos")
+
+
+@app.route("/invoices/<int:id>/bloquear-pagamento", methods=["POST"])
+@somente_admin
+def pagamento_bloquear(id):
+    """Desfaz a liberação (o pagamento após a HAWB volta a ficar bloqueado)."""
+    r = carregar_invoice(id)
+    if r["pagamento_liberado"]:
+        get_db().execute("UPDATE invoices SET pagamento_liberado_em = NULL, pagamento_liberado_por = NULL,"
+                         " pagamento_liberado_obs = NULL WHERE id = ?", (id,))
+        registrar_evento(id, "Liberação do pagamento desfeita (Engenharia de Processos)")
+        get_db().commit()
+        flash("Liberação desfeita: o pagamento após a HAWB voltou a ficar bloqueado.", "ok")
+    return redirect(url_for("invoice_detalhe", id=id) + "#pagamentos")
+
+
 @app.route("/arquivos/<int:aid>")
 @login_obrigatorio
 def arquivo_baixar(aid):
@@ -2853,11 +2939,14 @@ def arquivo_excluir(aid):
         else (lambda: redirect(volta_url))
     if a["origem"] == "pagamento":
         permitido = pode("financeiro")
+    elif a["origem"] == "duimp":
+        permitido = pode("importacao")
     else:
         permitido = g.usuario["perfil"] == "admin" or (pode_anexar() and a["enviado_por"] == g.usuario["id"])
     if not permitido:
-        flash("Só quem anexou o arquivo (ou o Administrador) pode excluí-lo." if a["origem"] == "lancamento"
-              else "Só o Financeiro pode excluir o Swift.", "erro")
+        flash({"lancamento": "Só quem anexou o arquivo (ou o Administrador) pode excluí-lo.",
+               "duimp": "Só a Importação pode excluir a DUIMP."}.get(a["origem"], "Só o Financeiro pode excluir o Swift."),
+              "erro")
         return voltar()
     db.execute("DELETE FROM arquivos WHERE id = ?", (aid,))
     if invoice_id:
@@ -2969,6 +3058,10 @@ FLUXOS_EMAIL = {
         "Pagamento programado",
         "Parcela antecipada (data de assinatura + 5 dias úteis) e parcelas após a HAWB, assim que a data de "
         "vencimento e o valor ficam definidos.", "financeiro", ""),
+    "pagamento_liberado": (
+        "Pagamento liberado pela Engenharia de Processos",
+        "Quando a Engenharia de Processos libera ao Financeiro o pagamento das parcelas após a HAWB "
+        "(que ficam bloqueadas até essa liberação, mesmo vencidas).", "financeiro", ""),
     "pagamento_alterado": (
         "Pagamento alterado",
         "Mudança na data de vencimento ou no valor de uma parcela já programada (ex.: HAWB corrigida, itens, "
@@ -3132,6 +3225,7 @@ def estado_previsao(r):
         "nac": r["nacionalizacao"],
         "eta_planejado": r["eta_planejado"],
         "eta_real": r["eta_real"],
+        "liberado": r["pagamento_liberado"],
         "duimp": r["data_registro_br"],
         "banco": bool(r["banco_debito"]),
         "chegada": r["data_chegada"],
@@ -3174,7 +3268,8 @@ def gerar_emails(r, antigo, novo):
         a_definida = a and a["venc"] and a["valor"] > TOLERANCIA
         if definida and not a_definida:
             programadas.append(f"{descrever_parcela(r, p)}: vencimento {fmt_data(n['venc'])} · "
-                               f"valor a pagar {fmt_moeda(n['valor'], m)}")
+                               f"valor a pagar {fmt_moeda(n['valor'], m)}"
+                               + (" · bloqueado até a liberação da Engenharia de Processos" if p["bloqueado"] else ""))
         elif a_definida and not definida:
             alteradas.append(f"Parcela {n['texto']}: vencimento {fmt_data(a['venc'])} e valor "
                              f"{fmt_moeda(a['valor'], m)} deixaram de valer (aguardando nova definição)")
@@ -3226,6 +3321,21 @@ def gerar_emails(r, antigo, novo):
                           "Pendência do Financeiro no sistema Controle de Invoices: preencher o campo "
                           "\"Banco de débito\" na etapa de Embarque (seção Logística do invoice)."],
                          "A etapa de Embarque é concluída quando esse campo estiver preenchido no sistema.")
+
+    # pagamento após a HAWB liberado pela Engenharia de Processos
+    # (fotografias antigas, sem "liberado", contam como sem mudança)
+    if novo.get("liberado") and not antigo.get("liberado", novo.get("liberado")) and r["tem_parcela_prazo"]:
+        linhas = [f"{descrever_parcela(r, p)}: vencimento "
+                  + (fmt_data(p["vencimento"]) if p["vencimento"] else "a definir (aguardando HAWB)")
+                  + f" · valor a pagar {fmt_moeda(p['pendente'], m)}"
+                  for p in r["parcelas"] if p["tipo"] == "PRAZO" and p["pendente"] > TOLERANCIA]
+        quem = get_db().execute("SELECT nome FROM usuarios WHERE id = ?", (r["pagamento_liberado_por"],)).fetchone()
+        obs = (f"Liberado por {quem['nome'] if quem else 'Engenharia de Processos'} em "
+               f"{fmt_data(r['pagamento_liberado_em'])}.")
+        if r["pagamento_liberado_obs"]:
+            obs += f" Observação: {r['pagamento_liberado_obs']}"
+        obs += " O pagamento já pode ser realizado e registrado no sistema."
+        enfileirar_email("pagamento_liberado", r, None, linhas or ["Parcelas após a HAWB liberadas para pagamento."], obs)
 
     # DUIMP registrada: impostos aptos a lançamento no MEGA
     # (fotografias antigas, sem "duimp", contam como sem mudança: não dispara para o histórico)

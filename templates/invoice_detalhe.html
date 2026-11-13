@@ -151,13 +151,23 @@
           {% if tipo == 'data' %}<input type="date" name="{{ campo }}" value="{{ r[campo] or '' }}">
           {% elif tipo == 'canal' %}{% set cc = CORES_CANAL.get(r[campo]) %}<select name="{{ campo }}" class="sel-canal" onchange="var o=this.options[this.selectedIndex];this.style.background=o.style.background;this.style.color=o.style.color"{% if cc %} style="background:{{ cc[0] }};color:{{ cc[1] }}"{% endif %}>
             <option value="" style="background:#fff;color:#212529">—</option>{% for c, cor in CORES_CANAL.items() %}<option value="{{ c }}" {{ 'selected' if r[campo] == c }} style="background:{{ cor[0] }};color:{{ cor[1] }}">{{ c }}</option>{% endfor %}</select>
+          {% elif tipo == 'linha' %}<input name="{{ campo }}" value="{{ r[campo] or '' }}" autocomplete="off">
           {% else %}<textarea name="{{ campo }}" rows="2">{{ r[campo] or '' }}</textarea>{% endif %}
           </label>
+          {% if campo == 'data_registro_br' %}
+          <div class="campo-arquivo arquivos"><span class="rotulo-arq">DUIMP (arquivo)</span>
+            {% for a in r.duimp_arquivos %}<div class="arq"><a href="{{ url_for('arquivo_baixar', aid=a.id) }}" target="_blank" rel="noopener" title="{{ a.nome }} · {{ a.tamanho|tamanho }} · {{ a.usuario or '—' }} em {{ a.enviado_em|data }}"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2.5H6a2 2 0 00-2 2v15a2 2 0 002 2h12a2 2 0 002-2V8.5z"/><path d="M14 2.5v6h6"/></svg><span>{{ a.nome }}</span></a>
+            <button class="arq-x" form="del-arq-{{ a.id }}" title="Excluir arquivo" onclick="return confirm('Excluir a DUIMP anexada?')">✕</button></div>{% endfor %}
+            <label class="btn-anexar" title="Anexar o arquivo da DUIMP (até {{ ANEXO_MAX_MB }} MB)"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9"/></svg>
+              {{ 'Anexar DUIMP' if not r.duimp_arquivos else 'Anexar outro' }}<input type="file" name="arquivo" form="f-duimp-{{ r.id }}" multiple onchange="this.form.classList.add('enviando'); this.form.submit()"></label>
+          </div>
+          {% endif %}
         {% endfor %}
         <button class="btn pequeno">Salvar</button>
       </form>
       {% else %}
-      <dl>{% for campo, rotulo, tipo, obrig in CAMPOS_ETAPA[e] %}<dt>{{ rotulo }}</dt><dd>{{ r[campo]|data if tipo == 'data' else (r[campo] or '—') }}</dd>{% endfor %}</dl>
+      <dl>{% for campo, rotulo, tipo, obrig in CAMPOS_ETAPA[e] %}<dt>{{ rotulo }}</dt><dd>{{ r[campo]|data if tipo == 'data' else (r[campo] or '—') }}</dd>
+        {% if campo == 'data_registro_br' %}<dt>DUIMP (arquivo)</dt><dd class="arquivos">{% for a in r.duimp_arquivos %}<div class="arq"><a href="{{ url_for('arquivo_baixar', aid=a.id) }}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2.5H6a2 2 0 00-2 2v15a2 2 0 002 2h12a2 2 0 002-2V8.5z"/><path d="M14 2.5v6h6"/></svg><span>{{ a.nome }}</span></a></div>{% endfor %}{% if not r.duimp_arquivos %}—{% endif %}</dd>{% endif %}{% endfor %}</dl>
       {% endif %}
       {% if e == 'EMBARQUE' %}
         <div class="banco">
@@ -173,6 +183,12 @@
     </div>
   {% endfor %}
   </div>
+  {% if imp %}{# formulários do anexo da DUIMP (fora do formulário da etapa) #}
+  <form id="f-duimp-{{ r.id }}" method="post" action="{{ url_for('duimp_anexar', id=r.id) }}" enctype="multipart/form-data" class="form-anexar oculto">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+  {% for a in r.duimp_arquivos %}<form id="del-arq-{{ a.id }}" method="post" action="{{ url_for('arquivo_excluir', aid=a.id) }}" class="oculto">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>{% endfor %}
+  {% endif %}
 </section>
 
 {# ---------- inspeção e desconto (Engenharia de Processos) ---------- #}
@@ -288,17 +304,36 @@
   </table>
   </div>
   {% endif %}
+  {% if r.tem_parcela_prazo %}
+  <div class="liberacao-pg {{ 'liberado' if r.pagamento_liberado else 'bloqueado' }}">
+    {% if r.pagamento_liberado %}
+      <div><strong>✓ Pagamento após a HAWB liberado ao Financeiro</strong>
+        <small class="bloco-linha">por {{ nomes.get(r.pagamento_liberado_por, 'Engenharia de Processos') }} em {{ r.pagamento_liberado_em|data }}{% if r.pagamento_liberado_obs %} · {{ r.pagamento_liberado_obs }}{% endif %}</small></div>
+      {% if admin %}<form method="post" action="{{ url_for('pagamento_bloquear', id=r.id) }}" onsubmit="return confirm('Desfazer a liberação? O pagamento após a HAWB volta a ficar bloqueado para o Financeiro.')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn pequeno link">Desfazer liberação</button></form>{% endif %}
+    {% else %}
+      <div><strong>🔒 Pagamento após a HAWB bloqueado</strong>
+        <small class="bloco-linha">As parcelas após a HAWB{% if r.principal_bloqueado > 0.005 %} ({{ r.principal_bloqueado|moeda(m) }}){% endif %} só podem ser pagas pelo Financeiro depois da liberação da Engenharia de Processos, mesmo vencidas.</small></div>
+      {% if admin and ativo %}<form method="post" action="{{ url_for('pagamento_liberar', id=r.id) }}" class="linha-mini"
+            onsubmit="return confirm('Liberar ao Financeiro o pagamento das parcelas após a HAWB? O Financeiro será avisado por e-mail.')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input name="obs" maxlength="300" placeholder="Observação (opcional)">
+        <button class="btn primario pequeno">Liberar pagamento ao Financeiro</button></form>{% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
   <h3>Parcelas da condição de pagamento</h3>
   <div class="rolagem">
   <table>
-    <thead><tr><th>Parcela</th><th>Vencimento</th><th class="num">Valor</th><th class="num">Segurado</th><th class="num">Pago</th><th class="num">Pendente</th></tr></thead>
+    <thead><tr><th>Parcela</th><th>Vencimento</th><th class="num">Valor</th><th class="num">Segurado</th><th class="num">Pago</th><th class="num">Pendente</th><th>Pagamento</th></tr></thead>
     <tbody>
     {% for pc in r.parcelas %}
       <tr class="{{ 'linha-alerta' if pc.pendente > 0.005 and pc.vencimento and pc.vencimento < hoje }}">
         <td>{{ pc.texto }}</td>
         <td>{{ pc.vencimento|data if pc.vencimento else 'Aguardando data da HAWB' }}</td>
         <td class="num">{{ pc.valor|moeda(m) }}</td><td class="num">{{ (pc.valor - pc.devido)|moeda(m) if pc.valor - pc.devido > 0.005 else '—' }}</td>
-        <td class="num">{{ pc.pago|moeda(m) }}</td><td class="num"><strong>{{ pc.pendente|moeda(m) }}</strong></td></tr>
+        <td class="num">{{ pc.pago|moeda(m) }}</td><td class="num"><strong>{{ pc.pendente|moeda(m) }}</strong></td>
+        <td>{% if pc.pendente <= 0.005 %}<small>Pago</small>{% elif pc.bloqueado %}<span class="ciencia c-pendente">Bloqueado</span>{% else %}<small>Liberado</small>{% endif %}</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -348,14 +383,14 @@
   </table>
   </div>
   {% endif %}
-  {% if fin and (r.principal_pendente > 0.005 or r.liberacao_disponivel > 0.005) %}
+  {% if fin and (r.principal_liberado_pendente > 0.005 or r.liberacao_disponivel > 0.005) %}
   <form method="post" action="{{ url_for('pagamento_novo', id=r.id) }}" class="form-pagamento-novo" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <h3>Registrar pagamento</h3>
     <div class="grade">
       <label>Tipo *
         <select name="tipo" id="tipo-pagamento">
-          {% if r.principal_pendente > 0.005 %}<option value="PRINCIPAL" data-valor="{{ r.principal_pendente|num }}">Pagamento do invoice (pendente {{ r.principal_pendente|moeda(m) }})</option>{% endif %}
+          {% if r.principal_liberado_pendente > 0.005 %}<option value="PRINCIPAL" data-valor="{{ r.principal_liberado_pendente|num }}">Pagamento do invoice (liberado para pagar {{ r.principal_liberado_pendente|moeda(m) }})</option>{% endif %}
           {% if r.liberacao_disponivel > 0.005 %}<option value="LIBERACAO" data-valor="{{ r.liberacao_disponivel|num }}">Liberação do segurado (disponível {{ r.liberacao_disponivel|moeda(m) }})</option>{% endif %}
         </select></label>
       <label>Data do pagamento *<input type="date" name="data_pagamento" value="{{ hoje }}" required></label>

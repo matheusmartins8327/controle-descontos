@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.19)
+# Controle de Invoices e Descontos (v4.20)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -88,7 +88,7 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 | 1 | Criação do invoice | Importação | Fornecedor, nº, moeda, **data de assinatura**, **condição de pagamento** (uma ou mais parcelas), agente de carga, despachante, grupo de consolidação, coleta programada e itens (código, descrição, quantidade e preço original), digitados ou **carregados de uma planilha Excel**. Aparece a **janela de descontos aprovados** do fornecedor (mesma moeda) para deduzir um ou mais, total ou parcialmente; o **valor final** é calculado após as deduções |
 | 2 | Coleta | Importação | Data da HAWB e data real de coleta |
 | 3 | Embarque | Importação / Financeiro | ETD e ETA planejados (obrigatórios para salvar), ETD e ETA reais; **banco de débito** (Financeiro, obrigatório para concluir a etapa) |
-| 4 | Desembaraço | Importação | Data de emissão da DUIMP → data de parametrização, canal (Verde ou Amarelo), exigências da ANVISA e data de desembaraço. DUIMP e boleto do ICMS seguem por e-mail, fora do sistema (não são anexados nem guardados) |
+| 4 | Desembaraço | Importação | Data de emissão da DUIMP (e o arquivo da DUIMP, opcional) → data de parametrização, canal (Verde ou Amarelo), exigências da ANVISA, data de desembaraço e **número da NF**. DUIMP e boleto do ICMS seguem por e-mail, fora do sistema (não são anexados nem guardados) |
 | 5 | Transporte | Importação | Data programada de chegada (obrigatória) e data real de chegada na fábrica |
 | 6 | Inspeção | Engenharia (administrador) | Fim da inspeção e se há desconto; se sim: valor, data do relatório e aprovação do fornecedor (Enviado → Aprovado) |
 | 7 | Pagamento | Financeiro | Pagamento de cada parcela (integral, ou parcial quando há valor segurado), com Swift |
@@ -126,6 +126,14 @@ Para recomeçar com dados reais, o Administrador pode, em **Sistema → Apagar t
 remover todos os invoices e o que depende deles (itens, condições, descontos, deduções, pagamentos e Swifts,
 lançamentos financeiros e arquivos, histórico e e-mails sobre eles). Usuários, configurações, conta de envio,
 destinatários e agendador são mantidos; fornecedores também, a não ser que se marque a opção. Backup do banco antes.
+
+### Liberação do pagamento após a HAWB (Engenharia de Processos)
+As parcelas "X dias após a HAWB" ficam **bloqueadas** para o Financeiro, mesmo vencidas, até a Engenharia de Processos
+(Administrador) clicar em **Liberar pagamento ao Financeiro** na seção Pagamentos do invoice (com observação opcional).
+Enquanto bloqueadas: a pendência é da Engenharia ("Liberar o pagamento ao Financeiro"), o Fluxo de pagamentos mostra
+"Bloqueado (Engenharia)" e o Financeiro só consegue registrar pagamento das parcelas antecipadas. Ao liberar, o
+Financeiro recebe o e-mail "Pagamento liberado pela Engenharia de Processos". A liberação pode ser desfeita.
+Os pagamentos abatem primeiro as parcelas antecipadas e depois as após a HAWB.
 
 ### Esqueci minha senha
 Na tela de login, **Esqueci minha senha**: o usuário informa o e-mail e recebe (pela conta de envio da aba E-mails) um
@@ -172,6 +180,7 @@ destinatários (Para/Cc) e ativação de cada fluxo, horário do resumo diário 
 | Pagamento programado | Parcela antecipada (assinatura + 5 dias úteis) ou parcela após a HAWB fica com data e valor definidos | Financeiro |
 | Pagamento alterado | Muda a data ou o valor de uma parcela já programada (HAWB corrigida, itens, dedução…) ou o invoice é cancelado | Financeiro |
 | Impostos de nacionalização | ETA planejado cadastrado/alterado (pagar entre ETA −1 e +3 dias úteis) e ETA real (ETA real a +2 dias úteis) | Financeiro |
+| Pagamento liberado pela Engenharia de Processos | Engenharia libera o pagamento das parcelas após a HAWB | Financeiro |
 | Pendência do Financeiro na etapa de Embarque (banco de débito) | ETA real cadastrado e banco ainda vazio | Financeiro |
 | DUIMP registrada: impostos aptos a lançamento no MEGA | Data de emissão da DUIMP cadastrada (ou corrigida) | Anny (Financeiro), Cc Gabriel (Importação) |
 | Desconto cadastrado: segurar valor | Desconto registrado na inspeção (a dedução em outro invoice só fica disponível após a aprovação) | Financeiro, Cc Importação |

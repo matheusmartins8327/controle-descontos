@@ -507,3 +507,16 @@ tr.conferir td { background: var(--alerta-claro); }
 .esqueci { text-align: center; margin: 1rem 0 0; font-size: .88rem; }
 .esqueci a { color: var(--pri-escuro); }
 input.codigo { font-size: 1.4rem; letter-spacing: .35em; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* v4.20: DUIMP anexada, liberação do pagamento após a HAWB */
+form.oculto { display: none; }
+.campo-arquivo { margin: -.2rem 0 .7rem; display: flex; flex-direction: column; gap: .25rem; align-items: flex-start; }
+.rotulo-arq { font-size: .82rem; color: var(--suave); }
+.liberacao-pg { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;
+  border-radius: 10px; padding: .7rem .9rem; margin: .4rem 0 1rem; }
+.liberacao-pg.bloqueado { background: var(--alerta-claro); color: var(--alerta); border: 1px solid #f6d2a8; }
+.liberacao-pg.liberado { background: var(--ok-claro); color: var(--ok); border: 1px solid #b7e2c6; }
+.liberacao-pg small { color: inherit; opacity: .9; }
+.liberacao-pg form { margin: 0; display: flex; gap: .4rem; align-items: center; }
+.liberacao-pg input[name=obs] { min-width: 220px; }
+.liberacao-pg .btn { white-space: nowrap; }
