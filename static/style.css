@@ -492,3 +492,9 @@ tr.conferir td { background: var(--alerta-claro); }
 .form-anexar.enviando .btn-anexar::after { content: " enviando…"; }
 .dica-arq { color: var(--suave); font-size: .75rem; }
 .filtros input[name=q] { flex: 0 1 240px; min-width: 160px; }
+
+/* v4.11: cópia de segurança dos destinatários */
+.copia-dest { margin-top: 1.4rem; padding-top: 1rem; border-top: 1px solid var(--borda); }
+.copia-dest h3 { margin: 0 0 .2rem; font-size: .98rem; }
+.copia-dest details { margin: .4rem 0 .6rem; }
+.copia-dest summary { cursor: pointer; color: var(--pri-escuro); }

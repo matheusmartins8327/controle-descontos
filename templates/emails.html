@@ -53,6 +53,26 @@
     <p class="sub dica">Separe vários e-mails por vírgula. Pode usar qualquer endereço (inclusive de quem não tem usuário no sistema).</p>
     <button class="btn primario">Salvar destinatários</button>
   </form>
+  <div class="copia-dest">
+    <h3>Cópia de segurança dos destinatários</h3>
+    <p class="sub">Antes de trocar os destinatários para um teste, guarde a configuração atual; depois, restaure-a com um clique.</p>
+    {% if copia %}
+    <details>
+      <summary>Configuração guardada em <strong>{{ copia.guardado_em|data }}</strong> por {{ copia.por }} (ver)</summary>
+      <div class="rolagem"><table>
+        <thead><tr><th>E-mail</th><th>Ativo</th><th>Para</th><th>Cc</th></tr></thead>
+        <tbody>{% for l in copia.linhas %}<tr><td>{{ l.titulo }}</td><td>{{ 'Sim' if l.ativo else 'Não' }}</td><td><small>{{ l.para or '—' }}</small></td><td><small>{{ l.cc or '—' }}</small></td></tr>{% endfor %}</tbody>
+      </table></div>
+    </details>
+    {% else %}<p class="vazio">Nenhuma configuração guardada.</p>{% endif %}
+    <form method="post" action="{{ url_for('emails_acao') }}" class="linha-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn" name="acao" value="guardar_destinatarios" {{ 'disabled' if not salvo }}
+        {% if copia %}onclick="return confirm('Já existe uma configuração guardada. Substituí-la pela configuração atual?')"{% endif %}>Guardar configuração atual</button>
+      {% if copia %}<button class="btn primario" name="acao" value="restaurar_destinatarios"
+        onclick="return confirm('Restaurar os destinatários guardados em {{ copia.guardado_em|data }}? A configuração atual será substituída.')">Restaurar configuração guardada</button>{% endif %}
+    </form>
+  </div>
 </section>
 
 <section class="bloco" id="diario">

@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.10)
+# Controle de Invoices e Descontos (v4.11)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -166,6 +166,9 @@ destinatários (Para/Cc) e ativação de cada fluxo, horário do resumo diário 
 | Chegada de invoice com dedução | Chegada real na fábrica de invoice que recebeu dedução de outro invoice | Engenharia de Processos |
 | Resumo semanal | Toda segunda-feira às 8h (Brasília): todas as pendências do Financeiro (vencidos, semana, próximos, sem data) | Financeiro |
 | Pendências vencidas ou que vencem hoje | Todos os dias às 8h (Brasília), só se houver algo vencido ou vencendo no dia | Financeiro |
+
+**Cópia de segurança dos destinatários:** na aba E-mails, "Guardar configuração atual" salva Para/Cc/ativo de todos os
+fluxos; "Restaurar configuração guardada" volta a ela (útil para testes com outros destinatários).
 
 Funcionamento: a cada alteração salva, o sistema compara a previsibilidade de cada invoice com a última notificada e
 gera os e-mails das diferenças (fila na tabela `emails`, enviados logo após a página responder; até 3 tentativas).

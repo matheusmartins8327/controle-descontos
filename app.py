@@ -45,7 +45,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.10"
+VERSAO = "4.11"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -3399,7 +3399,7 @@ def emails_config():
         resumo_ultimo=config("resumo_ultimo"), resumo_semanal_ultimo=config("resumo_semanal_ultimo"), historico=historico, contagem=contagem,
         url_tarefa=re.sub(r"^http://(?=[^/]*pythonanywhere\.com)", "https://",
                           url_for("tarefa_diaria_url", chave=config("tarefa_chave"), _external=True)),
-        FLUXOS_EMAIL=FLUXOS_EMAIL, STATUS_EMAIL=STATUS_EMAIL)
+        FLUXOS_EMAIL=FLUXOS_EMAIL, STATUS_EMAIL=STATUS_EMAIL, copia=copia_destinatarios())
 
 
 @app.route("/emails/conta", methods=["POST"])
@@ -3487,9 +3487,42 @@ def emails_acao():
         salvar_config("tarefa_chave", secrets.token_urlsafe(24))
         db.commit()
         flash("Novo endereço gerado: atualize-o no agendador externo.", "ok")
+    elif acao == "guardar_destinatarios":
+        atual = config("email_fluxos")
+        if atual is None:
+            flash("Ainda não há destinatários salvos para guardar.", "erro")
+        else:
+            salvar_config("email_fluxos_copia", json.dumps(
+                {"guardado_em": agora(), "por": g.usuario["nome"], "fluxos": json.loads(atual),
+                 "resumo_hora": config("resumo_hora")}, ensure_ascii=False))
+            db.commit()
+            flash("Configuração atual dos destinatários guardada. Para voltar a ela, use \"Restaurar\".", "ok")
+        return redirect(url_for("emails_config") + "#fluxos")
+    elif acao == "restaurar_destinatarios":
+        c = copia_destinatarios()
+        if not c:
+            flash("Não há configuração guardada para restaurar.", "erro")
+        else:
+            salvar_config("email_fluxos", json.dumps(c["fluxos"], ensure_ascii=False))
+            db.commit()
+            flash(f"Destinatários restaurados para a configuração guardada em {fmt_data(c['guardado_em'])} "
+                  f"por {c['por']}.", "ok")
+        return redirect(url_for("emails_config") + "#fluxos")
     elif acao == "enviar_fila":
         flash(f"E-mails enviados agora: {enviar_fila()}.", "ok")
     return redirect(url_for("emails_config") + "#historico")
+
+
+def copia_destinatarios():
+    """Cópia guardada dos destinatários (para testes: guardar antes, restaurar depois)."""
+    try:
+        c = json.loads(config("email_fluxos_copia") or "null")
+    except ValueError:
+        return None
+    if not c:
+        return None
+    c["linhas"] = [{"titulo": FLUXOS_EMAIL[k][0], **v} for k, v in c["fluxos"].items() if k in FLUXOS_EMAIL]
+    return c
 
 
 @app.route("/emails/<int:eid>")
