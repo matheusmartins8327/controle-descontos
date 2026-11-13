@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.14)
+# Controle de Invoices e Descontos (v4.15)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -166,7 +166,7 @@ destinatários (Para/Cc) e ativação de cada fluxo, horário do resumo diário 
 | Pagamento programado | Parcela antecipada (assinatura + 5 dias úteis) ou parcela após a HAWB fica com data e valor definidos | Financeiro |
 | Pagamento alterado | Muda a data ou o valor de uma parcela já programada (HAWB corrigida, itens, dedução…) ou o invoice é cancelado | Financeiro |
 | Impostos de nacionalização | ETA planejado cadastrado/alterado (pagar entre ETA −1 e +3 dias úteis) e ETA real (ETA real a +2 dias úteis) | Financeiro |
-| Informar banco de débito | ETA planejado cadastrado e banco ainda vazio | Financeiro |
+| Informar banco de débito | ETA planejado ou ETA real cadastrado e banco ainda vazio | Financeiro |
 | Desconto cadastrado: segurar valor | Desconto registrado na inspeção (a dedução em outro invoice só fica disponível após a aprovação) | Financeiro, Cc Importação |
 | Valor segurado liberado | Invoice com a dedução chega à fábrica (pagar até chegada + 5 dias úteis) ou revalidação para baixo | Financeiro |
 | Chegada de invoice com dedução | Chegada real na fábrica de invoice que recebeu dedução de outro invoice | Engenharia de Processos |

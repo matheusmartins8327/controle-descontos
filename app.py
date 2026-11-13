@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.14"
+VERSAO = "4.15"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2969,7 +2969,8 @@ FLUXOS_EMAIL = {
         "Avisa no cadastro e em cada alteração.", "financeiro", ""),
     "banco_debito": (
         "Informar banco de débito",
-        "Pedido para o Financeiro informar o banco de débito, quando o ETA planejado é cadastrado.",
+        "Pedido para o Financeiro informar o banco de débito, quando o ETA planejado e quando o ETA real são "
+        "cadastrados (se o banco ainda estiver vazio).",
         "financeiro", ""),
     "desconto_segurar": (
         "Desconto cadastrado: segurar valor",
@@ -3115,6 +3116,7 @@ def estado_previsao(r):
                                      "quitada": p["pendente"] <= TOLERANCIA} for p in r["parcelas"]},
         "nac": r["nacionalizacao"],
         "eta_planejado": r["eta_planejado"],
+        "eta_real": r["eta_real"],
         "banco": bool(r["banco_debito"]),
         "chegada": r["data_chegada"],
         "desconto": r["desconto"]["id"] if r["desconto"] else None,
@@ -3199,10 +3201,18 @@ def gerar_emails(r, antigo, novo):
         enfileirar_email("nacionalizacao", r, extra, linhas)
 
     # banco de débito
-    if novo["eta_planejado"] and not antigo.get("eta_planejado") and not novo["banco"]:
-        enfileirar_email("banco_debito", r, None,
-                         [f"ETA planejado cadastrado: {fmt_data(novo['eta_planejado'])}",
-                          "Informe no sistema o banco de débito deste invoice (seção Logística → etapa Embarque)."],
+    # pedido ao Financeiro quando o ETA planejado ou o ETA real é cadastrado e o banco ainda está vazio
+    # (fotografias antigas, sem "eta_real", contam como sem mudança: não dispara para o histórico)
+    novo_eta_plan = novo["eta_planejado"] and not antigo.get("eta_planejado")
+    novo_eta_real = novo.get("eta_real") and not antigo.get("eta_real", novo.get("eta_real"))
+    if (novo_eta_plan or novo_eta_real) and not novo["banco"]:
+        linhas = []
+        if novo_eta_plan:
+            linhas.append(f"ETA planejado cadastrado: {fmt_data(novo['eta_planejado'])}")
+        if novo_eta_real:
+            linhas.append(f"ETA real cadastrado: {fmt_data(novo['eta_real'])}")
+        linhas.append("Informe no sistema o banco de débito deste invoice (seção Logística → etapa Embarque).")
+        enfileirar_email("banco_debito", r, "ETA real cadastrado" if novo_eta_real else None, linhas,
                          "Sem o banco de débito, a etapa de Embarque não é concluída.")
 
     # chegada de invoice que recebeu dedução
