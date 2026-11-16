@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.21"
+VERSAO = "4.22"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -409,9 +409,12 @@ def init_db():
         # versão 4.20: número da NF (Desembaraço) e liberação do pagamento após a HAWB pela Engenharia
         colunas_inv = {r[1] for r in db.execute("PRAGMA table_info(invoices)")}
         for col, tipo in (("numero_nf", "TEXT"), ("pagamento_liberado_em", "TEXT"), ("pagamento_liberado_por", "INTEGER"),
-                          ("pagamento_liberado_obs", "TEXT")):
+                          ("pagamento_liberado_obs", "TEXT"), ("historico", "INTEGER NOT NULL DEFAULT 0")):
             if col not in colunas_inv:
                 db.execute(f"ALTER TABLE invoices ADD COLUMN {col} {tipo}")
+        # versão 4.22: invoices/pagamentos lançados pela carga de histórico (dados do passado)
+        if "historico" not in {r[1] for r in db.execute("PRAGMA table_info(pagamentos)")}:
+            db.execute("ALTER TABLE pagamentos ADD COLUMN historico INTEGER NOT NULL DEFAULT 0")
         # versão 3.6: itens podem ser salvos sem quantidade/preço (cadastro incompleto)
         if any(c[1] in ("quantidade", "valor_unit") and c[3] for c in db.execute("PRAGMA table_info(invoice_itens)")):
             db.executescript("""
@@ -814,7 +817,8 @@ def calcular(inv):
     r["nacionalizacao"] = janela_nacionalizacao(r)
     # Swift: arquivo anexado ao pagamento (pagamentos antigos podem ter só o link do OneDrive, que continua valendo)
     r["swift_arquivos"] = arquivos_de("pagamento", [p["id"] for p in r["pagamentos"]])
-    r["swifts_pendentes"] = sum(1 for p in r["pagamentos"] if not p["swift_url"] and not r["swift_arquivos"].get(p["id"]))
+    r["swifts_pendentes"] = sum(1 for p in r["pagamentos"] if not p["swift_url"] and not r["swift_arquivos"].get(p["id"])
+                                and not p["historico"])
     r["parcelas"] = calcular_parcelas(r)
     # parcelas após a HAWB ficam bloqueadas até a Engenharia de Processos liberar o pagamento ao Financeiro
     r["pagamento_liberado"] = bool(r["pagamento_liberado_em"])
@@ -1066,7 +1070,7 @@ def listar_pendencias(invoices, perfil=None):
             if falta:
                 add(r, f"{TITULO_ETAPA[sit]}: falta " + ", ".join(falta), "importacao",
                     r["data_prog_chegada"] if sit == "CHEGADA" else None)
-        opcionais = opcionais_faltando(r)
+        opcionais = [] if r["historico"] else opcionais_faltando(r)
         if imp and opcionais:
             add(r, "Informações não obrigatórias a preencher: " + ", ".join(opcionais), "importacao")
         if adm and sit == "INSPECAO":
@@ -1384,6 +1388,8 @@ def opcionais_faltando(r):
 
 def etapa_faltando(r, etapa):
     """Informações obrigatórias de uma etapa logística que ainda faltam."""
+    if r["historico"]:  # processo do passado (carga de histórico): a logística não é controlada
+        return []
     falta = [rot for campo, rot, _t, obrig in CAMPOS_ETAPA[etapa] if obrig and not r[campo]]
     if etapa == "EMBARQUE" and not r["banco_debito"]:
         falta.append("Banco de débito (Financeiro)")
@@ -3946,6 +3952,185 @@ def redefinir_senha_codigo():
         flash("Senha redefinida. Entre com a nova senha.", "ok")
         return redirect(url_for("login"))
     return render_template("redefinir_senha_codigo.html", email=email, validade=CODIGO_VALIDADE_MIN)
+
+
+# ===========================================================================
+# CARGA DE HISTÓRICO (TEMPORÁRIA)
+# Cadastro simplificado de processos do passado para deixar o sistema em dia. Para remover depois:
+# apagar este bloco, o template carga_historico.html e o link "Carga de histórico" do base.html.
+# Os invoices já carregados continuam válidos (coluna invoices.historico / pagamentos.historico).
+# ===========================================================================
+@app.route("/carga-historico", methods=["GET", "POST"])
+@somente_admin
+def carga_historico():
+    db = get_db()
+    form = request.form if request.method == "POST" else {}
+    if request.method == "POST":
+        erros, dados = ler_carga_historico(request.form)
+        if not erros:
+            iid = gravar_carga_historico(dados)
+            flash(f"Invoice {dados['numero']} ({dados['fornecedor']}) carregado do histórico.", "ok")
+            return redirect(url_for("carga_historico") + f"#h-{iid}")
+        for e in erros:
+            flash(e, "erro")
+    carregados = [calcular(inv) for inv in db.execute(
+        SQL_INVOICE + " WHERE i.historico = 1 ORDER BY i.id DESC").fetchall()]
+    fornecedores = db.execute("SELECT nome FROM fornecedores ORDER BY nome").fetchall()
+    return render_template("carga_historico.html", carregados=carregados, fornecedores=fornecedores, f=form,
+                           STATUS_DESCONTO=STATUS_DESCONTO)
+
+
+def ler_carga_historico(f):
+    erros = []
+    d = {"fornecedor": " ".join(f.get("fornecedor", "").split()), "numero": f.get("numero", "").strip(),
+         "moeda": f.get("moeda", ""), "data_assinatura": data_valida(f.get("data_assinatura")),
+         "data_hawb": data_valida(f.get("data_hawb")), "valor": parse_num(f.get("valor")),
+         "obs": f.get("obs", "").strip() or None}
+    if not d["fornecedor"]:
+        erros.append("Informe o fornecedor.")
+    if not d["numero"]:
+        erros.append("Informe o número do invoice.")
+    if d["moeda"] not in MOEDAS:
+        erros.append("Selecione a moeda.")
+    if not d["data_assinatura"]:
+        erros.append("Informe a data de assinatura.")
+    if f.get("data_hawb") and not d["data_hawb"]:
+        erros.append("Data da HAWB inválida.")
+    if d["valor"] is None or d["valor"] <= 0:
+        erros.append("Informe o valor total do invoice.")
+    if not erros:
+        fid = obter_fornecedor(d["fornecedor"], criar=False)
+        if fid and get_db().execute("SELECT 1 FROM invoices WHERE fornecedor_id = ? AND numero = ?",
+                                    (fid, d["numero"])).fetchone():
+            erros.append(f"O invoice {d['numero']} de {d['fornecedor']} já existe no sistema.")
+    # condição de pagamento
+    cond = []
+    for pct, tipo, dias in zip(f.getlist("cond_pct"), f.getlist("cond_tipo"), f.getlist("cond_dias") +
+                               [""] * len(f.getlist("cond_pct"))):
+        p = parse_num(pct)
+        if p is None:
+            continue
+        if tipo not in CONDICOES or p <= 0 or p > 100:
+            erros.append("Condição de pagamento: percentual ou tipo inválido.")
+            continue
+        if tipo == "PRAZO" and not dias.strip().isdigit():
+            erros.append(f"Condição de pagamento: informe os dias após a HAWB da parcela de {fmt_qtd(p)}%.")
+            continue
+        cond.append({"percentual": p, "tipo": tipo, "dias": int(dias) if tipo == "PRAZO" else None})
+    if not cond:
+        erros.append("Informe a condição de pagamento.")
+    elif abs(sum(c["percentual"] for c in cond) - 100) > 0.01:
+        erros.append("A condição de pagamento precisa somar 100%.")
+    d["condicao"] = cond
+    # desconto
+    desc_txt = f.get("desconto", "").strip()
+    d["desconto"] = parse_num(desc_txt) if desc_txt else None
+    d["desconto_status"] = f.get("desconto_status", "APROVADO")
+    seg_txt = f.get("segurado", "").strip()
+    d["segurado"] = parse_num(seg_txt) if seg_txt else d["desconto"]
+    if desc_txt and (d["desconto"] is None or d["desconto"] <= 0):
+        erros.append("Valor do desconto inválido (deixe vazio se não houve desconto).")
+    elif d["desconto"]:
+        if d["desconto_status"] not in STATUS_DESCONTO:
+            erros.append("Selecione o status do desconto.")
+        if d["segurado"] is None or d["segurado"] < 0:
+            erros.append("Valor segurado inválido.")
+        elif d["valor"] and d["segurado"] > d["valor"] + TOLERANCIA:
+            erros.append("O valor segurado não pode ser maior que o valor do invoice.")
+    else:
+        d["segurado"] = 0
+    # pagamentos já realizados
+    pags = []
+    for data_p, tipo, valor, banco in zip(f.getlist("pg_data"), f.getlist("pg_tipo"), f.getlist("pg_valor"),
+                                          f.getlist("pg_banco")):
+        if not (data_p or valor.strip()):
+            continue
+        v, dt = parse_num(valor), data_valida(data_p)
+        if not dt or v is None or v <= 0 or tipo not in TIPOS_PAGAMENTO:
+            erros.append("Pagamentos: informe data, tipo e valor de cada pagamento.")
+            continue
+        pags.append({"data": dt, "tipo": tipo, "valor": round(v, 2), "banco": banco.strip() or None})
+    principal = sum(p["valor"] for p in pags if p["tipo"] == "PRINCIPAL")
+    liberado = sum(p["valor"] for p in pags if p["tipo"] == "LIBERACAO")
+    if d["valor"] and principal > d["valor"] - (d["segurado"] or 0) + TOLERANCIA:
+        erros.append(f"Os pagamentos do invoice ({fmt_num(principal)}) passam do valor a pagar "
+                     f"({fmt_num(d['valor'] - (d['segurado'] or 0))} = valor total − valor segurado).")
+    if liberado > (d["segurado"] or 0) + TOLERANCIA:
+        erros.append("As liberações do segurado passam do valor segurado.")
+    d["pagamentos"] = pags
+    return erros, d
+
+
+def gravar_carga_historico(d):
+    db = get_db()
+    fid = obter_fornecedor(d["fornecedor"])
+    unica = d["condicao"][0] if len(d["condicao"]) == 1 else None
+    data_insp = d["data_hawb"] or d["data_assinatura"]
+    iid = db.execute(
+        "INSERT INTO invoices (fornecedor_id, numero, moeda, data_assinatura, condicao_tipo, condicao_dias, data_hawb,"
+        " data_fim_inspecao, tem_desconto, obs, historico, pagamento_liberado_em, pagamento_liberado_por,"
+        " pagamento_liberado_obs, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
+        (fid, d["numero"], d["moeda"], d["data_assinatura"], unica["tipo"] if unica else "MISTA",
+         unica["dias"] if unica else None, d["data_hawb"], data_insp, 1 if d["desconto"] else 0, d["obs"],
+         agora(), g.usuario["id"], "Carga de histórico", g.usuario["id"], agora())).lastrowid
+    salvar_condicao(iid, d["condicao"])
+    db.execute("INSERT INTO invoice_itens (invoice_id, codigo, item, quantidade, valor_unit_original, valor_unit)"
+               " VALUES (?, 'HIST', 'Valor total do invoice (carga de histórico)', 1, ?, ?)", (iid, d["valor"], d["valor"]))
+    if d["desconto"]:
+        aprovado = d["desconto_status"] == "APROVADO"
+        db.execute("INSERT INTO descontos (invoice_id, valor_inicial, valor_final, valor_segurado, data_relatorio, status,"
+                   " aprovado_em, aprovado_por, obs, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                   (iid, d["desconto"], d["desconto"], round(d["segurado"], 2), data_insp, d["desconto_status"],
+                    agora() if aprovado else None, g.usuario["id"] if aprovado else None, "Carga de histórico",
+                    g.usuario["id"], agora()))
+    for p in d["pagamentos"]:
+        db.execute("INSERT INTO pagamentos (invoice_id, tipo, valor, data_pagamento, banco, obs, registrado_por,"
+                   " registrado_em, historico) VALUES (?, ?, ?, ?, ?, 'Carga de histórico', ?, ?, 1)",
+                   (iid, p["tipo"], p["valor"], p["data"], p["banco"], g.usuario["id"], agora()))
+    registrar_evento(iid, "Invoice cadastrado pela carga de histórico",
+                     f"valor {fmt_moeda(d['valor'], d['moeda'])}"
+                     + (f" · desconto {fmt_moeda(d['desconto'], d['moeda'])} ({STATUS_DESCONTO[d['desconto_status']]})"
+                        if d["desconto"] else " · sem desconto") + f" · {len(d['pagamentos'])} pagamento(s)")
+    # registra a situação atual para as notificações: a carga não gera e-mails
+    if config("notif_inicio") is None:
+        salvar_config("notif_inicio", agora())
+    estado = json.dumps(estado_previsao(carregar_invoice(iid)), sort_keys=True)
+    db.execute("INSERT INTO notificacoes_estado (invoice_id, estado, atualizado_em) VALUES (?, ?, ?)"
+               " ON CONFLICT(invoice_id) DO UPDATE SET estado = excluded.estado, atualizado_em = excluded.atualizado_em",
+               (iid, estado, agora()))
+    db.commit()
+    return iid
+
+
+@app.route("/carga-historico/<int:id>/excluir", methods=["POST"])
+@somente_admin
+def carga_historico_excluir(id):
+    """Remove um invoice carregado por engano (só os da carga de histórico, sem deduções ligadas)."""
+    db = get_db()
+    inv = db.execute("SELECT * FROM invoices WHERE id = ? AND historico = 1", (id,)).fetchone()
+    if inv is None:
+        abort(404)
+    ligado = db.execute("SELECT COUNT(*) FROM deducoes x LEFT JOIN descontos d ON d.id = x.desconto_id"
+                        " WHERE x.invoice_id = ? OR d.invoice_id = ?", (id, id)).fetchone()[0]
+    if ligado:
+        flash("Este invoice tem deduções ligadas a outros invoices: remova as deduções antes de excluí-lo.", "erro")
+        return redirect(url_for("carga_historico"))
+    arquivos = db.execute("SELECT * FROM arquivos WHERE (origem = 'duimp' AND origem_id = ?) OR (origem = 'pagamento'"
+                          " AND origem_id IN (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento'"
+                          " AND origem_id IN (SELECT id FROM lancamentos WHERE invoice_id = ?))", (id, id, id)).fetchall()
+    for a in arquivos:
+        db.execute("DELETE FROM arquivos WHERE id = ?", (a["id"],))
+    db.execute("DELETE FROM revisoes_desconto WHERE desconto_id IN (SELECT id FROM descontos WHERE invoice_id = ?)", (id,))
+    for t in ("descontos", "pagamentos", "invoice_itens", "condicao_parcelas", "lancamentos", "eventos",
+              "notificacoes_estado", "anexos"):
+        db.execute(f"DELETE FROM {t} WHERE invoice_id = ?", (id,))
+    db.execute("DELETE FROM emails WHERE invoice_id = ?", (id,))
+    db.execute("DELETE FROM invoices WHERE id = ?", (id,))
+    db.commit()
+    remover_arquivos(arquivos)
+    flash(f"Invoice {inv['numero']} excluído da carga de histórico.", "ok")
+    return redirect(url_for("carga_historico"))
+# ======================= fim da CARGA DE HISTÓRICO =========================
 
 
 @app.errorhandler(403)

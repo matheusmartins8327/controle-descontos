@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block titulo %}Carga de histórico{% endblock %}
+{% block conteudo %}
+<h1>Carga de histórico</h1>
+<p class="sub">Cadastro simplificado dos processos do passado, para deixar o sistema em dia. Ferramenta <strong>temporária</strong>,
+  só do Administrador: depois da carga ela será removida e fica apenas o processo normal.
+  O invoice entra marcado como <span class="etiqueta historico">Histórico</span>: a logística não é cobrada, o valor total vira um item único,
+  a parcela após a HAWB já entra liberada, os pagamentos informados não pedem Swift e nenhum e-mail é enviado.
+  A partir daí ele segue normalmente (pagamentos que faltam, dedução do desconto, liberação do segurado).</p>
+
+{% macro lv(nome, i, padrao='') %}{{ f.getlist(nome)[i] if f and f.getlist(nome)|length > i else padrao }}{% endmacro %}
+<form method="post" class="bloco form-carga" id="form-carga">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h2>Invoice</h2>
+  <div class="grade">
+    <label>Fornecedor *<input name="fornecedor" list="lista-forn" value="{{ f.get('fornecedor', '') }}" required autocomplete="off">
+      <datalist id="lista-forn">{% for x in fornecedores %}<option value="{{ x.nome }}">{% endfor %}</datalist></label>
+    <label>Nº do invoice *<input name="numero" value="{{ f.get('numero', '') }}" required></label>
+    <label>Moeda *<select name="moeda" required><option value="">Selecione…</option>{% for k, s in MOEDAS.items() %}<option value="{{ k }}" {{ 'selected' if f.get('moeda') == k }}>{{ k }} ({{ s }})</option>{% endfor %}</select></label>
+    <label>Data de assinatura *<input type="date" name="data_assinatura" value="{{ f.get('data_assinatura', '') }}" required></label>
+    <label>Data da HAWB<input type="date" name="data_hawb" value="{{ f.get('data_hawb', '') }}"><small>Necessária para o vencimento das parcelas após a HAWB.</small></label>
+    <label>Valor total do invoice *<input name="valor" inputmode="decimal" value="{{ f.get('valor', '') }}" placeholder="0,00" required></label>
+  </div>
+
+  <h2>Condição de pagamento *</h2>
+  <table class="condicao"><thead><tr><th class="num">Percentual</th><th>Tipo</th><th class="num">Dias após a HAWB</th><th></th></tr></thead>
+    <tbody id="carga-cond">
+    {% set n = (f.getlist('cond_pct')|length) if f else 1 %}
+    {% for i in range(n if n else 1) %}
+      <tr><td><input name="cond_pct" class="num" inputmode="decimal" value="{{ lv('cond_pct', i, '100') }}"> %</td>
+        <td><select name="cond_tipo">{% for k, v in CONDICOES.items() %}<option value="{{ k }}" {{ 'selected' if lv('cond_tipo', i, 'PRAZO') == k }}>{{ v }}</option>{% endfor %}</select></td>
+        <td><input name="cond_dias" class="num" inputmode="numeric" value="{{ lv('cond_dias', i) }}"></td>
+        <td><button type="button" class="btn pequeno link remover">✕</button></td></tr>
+    {% endfor %}
+    </tbody></table>
+  <button type="button" class="btn pequeno" data-add="carga-cond">+ Parcela</button>
+
+  <h2>Desconto</h2>
+  <div class="grade">
+    <label>Valor do desconto<input name="desconto" inputmode="decimal" value="{{ f.get('desconto', '') }}" placeholder="vazio = sem desconto"></label>
+    <label>Status do desconto<select name="desconto_status">{% for k, v in STATUS_DESCONTO.items() %}<option value="{{ k }}" {{ 'selected' if f.get('desconto_status', 'APROVADO') == k }}>{{ v }}</option>{% endfor %}</select></label>
+    <label>Valor segurado<input name="segurado" inputmode="decimal" value="{{ f.get('segurado', '') }}" placeholder="vazio = igual ao desconto">
+      <small>Parte do invoice retida no pagamento até a dedução (0 se o invoice foi pago inteiro).</small></label>
+  </div>
+
+  <h2>Pagamentos já realizados</h2>
+  <table class="condicao"><thead><tr><th>Data</th><th>Tipo</th><th class="num">Valor</th><th>Banco</th><th></th></tr></thead>
+    <tbody id="carga-pg">
+    {% set npg = (f.getlist('pg_data')|length) if f else 1 %}
+    {% for i in range(npg if npg else 1) %}
+      <tr><td><input type="date" name="pg_data" value="{{ lv('pg_data', i) }}"></td>
+        <td><select name="pg_tipo">{% for k, v in TIPOS_PAGAMENTO.items() %}<option value="{{ k }}" {{ 'selected' if lv('pg_tipo', i, 'PRINCIPAL') == k }}>{{ v }}</option>{% endfor %}</select></td>
+        <td><input name="pg_valor" class="num" inputmode="decimal" value="{{ lv('pg_valor', i) }}" placeholder="0,00"></td>
+        <td><input name="pg_banco" value="{{ lv('pg_banco', i) }}" placeholder="opcional"></td>
+        <td><button type="button" class="btn pequeno link remover">✕</button></td></tr>
+    {% endfor %}
+    </tbody></table>
+  <button type="button" class="btn pequeno" data-add="carga-pg">+ Pagamento</button>
+
+  <label class="largo obs-carga">Observação<input name="obs" value="{{ f.get('obs', '') }}" placeholder="Opcional"></label>
+  <button class="btn primario">Cadastrar invoice do histórico</button>
+</form>
+
+<section class="bloco">
+  <h2>Invoices carregados <span class="cont">{{ carregados|length }}</span></h2>
+  {% if carregados %}
+  <div class="rolagem"><table>
+    <thead><tr><th>Fornecedor</th><th>Invoice</th><th class="num">Valor</th><th>Condição</th><th>Desconto</th><th class="num">Pago</th><th>Situação</th><th></th></tr></thead>
+    <tbody>
+    {% for r in carregados %}
+      <tr id="h-{{ r.id }}"><td>{{ r.fornecedor }}</td><td><a href="{{ url_for('invoice_detalhe', id=r.id) }}">{{ r.numero }}</a></td>
+        <td class="num">{{ r.itens_total|moeda(r.moeda) }}</td><td><small>{{ condicao_texto(r) }}</small></td>
+        <td>{% if r.desconto %}{{ r.desconto.valor_final|moeda(r.moeda) }}<small class="bloco-linha">{{ STATUS_DESCONTO[r.desconto.status] }}</small>{% else %}—{% endif %}</td>
+        <td class="num">{{ (r.principal_pago + r.liberado)|moeda(r.moeda) }}</td>
+        <td>{% with sit=r.situacao %}{% include "_situacao.html" %}{% endwith %}</td>
+        <td><form method="post" action="{{ url_for('carga_historico_excluir', id=r.id) }}" onsubmit="return confirm('Excluir o invoice {{ r.numero }} carregado do histórico?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn pequeno link">Excluir</button></form></td></tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% else %}<p class="vazio">Nenhum invoice carregado ainda.</p>{% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  const form = document.getElementById('form-carga');
+  function ajustar() {
+    form.querySelectorAll('#carga-cond tr').forEach(tr => {
+      const prazo = tr.querySelector('[name=cond_tipo]').value === 'PRAZO', dias = tr.querySelector('[name=cond_dias]');
+      dias.readOnly = !prazo; dias.classList.toggle('inativo', !prazo); if (!prazo) dias.value = '';
+    });
+  }
+  form.addEventListener('change', ajustar);
+  form.addEventListener('click', e => {
+    if (e.target.classList.contains('remover')) {
+      const corpo = e.target.closest('tbody');
+      if (corpo.rows.length > 1) e.target.closest('tr').remove();
+      else e.target.closest('tr').querySelectorAll('input').forEach(i => i.value = '');
+      ajustar();
+    }
+    const alvo = e.target.dataset.add;
+    if (alvo) {
+      const corpo = document.getElementById(alvo), tr = corpo.rows[0].cloneNode(true);
+      tr.querySelectorAll('input').forEach(i => i.value = '');
+      corpo.appendChild(tr); ajustar();
+    }
+  });
+  ajustar();
+</script>
+{% endblock %}

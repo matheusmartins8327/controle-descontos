@@ -30,6 +30,7 @@
         <a href="{{ url_for('usuarios') }}" class="{{ 'ativo' if request.endpoint in ('usuarios', 'usuario_form') }}">Usuários</a>
         <a href="{{ url_for('emails_config') }}" class="{{ 'ativo' if request.endpoint in ('emails_config', 'email_ver') }}">E-mails automáticos</a>
         <a href="{{ url_for('sistema') }}" class="{{ 'ativo' if request.endpoint == 'sistema' }}">Sistema</a>
+        <a href="{{ url_for('carga_historico') }}" class="{{ 'ativo' if request.endpoint == 'carga_historico' }}">Carga de histórico</a>
         {% endif %}
         <span class="conta-grupo">Conta</span>
         <a href="{{ url_for('minha_senha') }}" class="{{ 'ativo' if request.endpoint == 'minha_senha' }}">Alterar senha</a>

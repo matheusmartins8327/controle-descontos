@@ -520,3 +520,10 @@ form.oculto { display: none; }
 .liberacao-pg form { margin: 0; display: flex; gap: .4rem; align-items: center; }
 .liberacao-pg input[name=obs] { min-width: 220px; }
 .liberacao-pg .btn { white-space: nowrap; }
+
+/* v4.22: carga de histórico (temporária) */
+.etiqueta.historico { background: #eef0f5; color: #4a5168; font-size: .74rem; padding: .1rem .55rem; border-radius: 99px; font-weight: 600; }
+.form-carga h2 { margin-top: 1.2rem; }
+.form-carga h2:first-of-type { margin-top: 0; }
+.form-carga table.condicao { margin-bottom: .4rem; }
+.obs-carga { display: block; margin: 1rem 0; }

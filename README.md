@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.21)
+# Controle de Invoices e Descontos (v4.22)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -134,6 +134,14 @@ Enquanto bloqueadas: a pendência é da Engenharia ("Liberar o pagamento ao Fina
 "Bloqueado (Engenharia)" e o Financeiro só consegue registrar pagamento das parcelas antecipadas. Ao liberar, o
 Financeiro recebe o e-mail "Pagamento liberado pela Engenharia de Processos". A liberação pode ser desfeita.
 Os pagamentos abatem primeiro as parcelas antecipadas e depois as após a HAWB.
+
+### Carga de histórico (temporária)
+Menu da conta → **Carga de histórico** (só Administrador): cadastra processos do passado de uma vez (fornecedor, nº,
+moeda, assinatura, HAWB, valor total, condição de pagamento, desconto e status, valor segurado e pagamentos realizados).
+O invoice fica marcado como "Histórico": a logística não é cobrada, o valor total vira um item único, a parcela após a
+HAWB entra liberada, os pagamentos informados não pedem Swift e a carga não envia e-mails. Depois ele segue o fluxo
+normal. **Para remover a ferramenta:** apagar o bloco "CARGA DE HISTÓRICO" do app.py, o template carga_historico.html e
+o link no base.html (os invoices carregados continuam válidos).
 
 ### Horário
 Todo o sistema usa o **horário de Brasília** (UTC−3), independentemente do fuso do servidor (o PythonAnywhere roda em

@@ -11,7 +11,7 @@
   <div>
     <a class="voltar" href="{{ url_for('painel') }}">← Painel</a>
     <h1>{{ r.fornecedor }} · Invoice {{ r.numero }}</h1>
-    {% with sit=r.situacao %}{% include "_situacao.html" %}{% endwith %}
+    {% with sit=r.situacao %}{% include "_situacao.html" %}{% endwith %}{% if r.historico %} <span class="etiqueta historico">Histórico</span>{% endif %}
     <small class="sub">{{ m }} · {{ condicao_texto(r) }} · assinado em {{ r.data_assinatura|data }}</small>
   </div>
   <div class="valor-destaque">
@@ -358,7 +358,8 @@
           </div>
           {% endfor %}
           {% if p.swift_url %}<div class="arq"><a href="{{ p.swift_url }}" target="_blank" rel="noopener" title="Link do OneDrive registrado antes da versão 4.10">↗ <span>Swift (link antigo)</span></a></div>{% endif %}
-          {% if not p.swift_url and not r.swift_arquivos.get(p.id) %}<span class="ciencia c-pendente">Pendente</span>{% endif %}
+          {% if p.historico and not r.swift_arquivos.get(p.id) %}<small>Histórico (sem Swift)</small>
+          {% elif not p.swift_url and not r.swift_arquivos.get(p.id) %}<span class="ciencia c-pendente">Pendente</span>{% endif %}
           {% if fin %}
           <form method="post" action="{{ url_for('pagamento_swift', pid=p.id) }}" enctype="multipart/form-data" class="form-anexar">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
