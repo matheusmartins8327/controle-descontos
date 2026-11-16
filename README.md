@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.23)
+# Controle de Invoices e Descontos (v4.24)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -93,6 +93,8 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 | 6 | Inspeção | Engenharia (administrador) | Fim da inspeção e se há desconto; se sim: valor, data do relatório e aprovação do fornecedor (Enviado → Aprovado) |
 | 7 | Pagamento | Financeiro | Pagamento de cada parcela (integral, ou parcial quando há valor segurado), com Swift |
 | 8 | Dedução e liberação | Importação / Financeiro | O desconto é deduzido em próximo(s) invoice(s); quando eles chegam, o Financeiro libera o valor segurado, com Swift |
+
+**Filtros no painel:** as tabelas de Pendências e de Invoices têm filtro em cada coluna (lista ou texto) e ordenação ao clicar no título da coluna.
 
 **Salvar sempre funciona**: no cadastro basta fornecedor e nº do invoice; nas etapas logísticas, qualquer informação pode ser salva a qualquer momento, **desde que o cadastro esteja completo** (a etapa 2, Coleta, só começa com todas as informações obrigatórias do cadastro). A etapa só é concluída (e o processo só avança) quando todas as informações obrigatórias (*) estão preenchidas. O painel mostra as **pendências de todos os setores** (as do setor de quem está logado no topo, as dos outros setores abaixo; cada setor só preenche a sua parte) com o que falta em cada etapa e também as informações não obrigatórias ainda vazias (exceto Exigências da ANVISA e Grupo de consolidação), até serem preenchidas.
 

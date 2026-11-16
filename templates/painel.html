@@ -28,8 +28,8 @@
 <section class="bloco destaque">
   <h2>Pendências <span class="cont">{{ pendencias|length }}</span></h2>
   <div class="rolagem">
-  <table>
-    <thead><tr><th>Fornecedor</th><th>Invoice</th><th>O que fazer</th><th>Setor</th><th>Data</th><th class="num">Valor</th><th></th></tr></thead>
+  <table class="tabela-filtro" data-rotulo="pendências">
+    <thead><tr><th data-filtro="lista">Fornecedor</th><th data-filtro="texto">Invoice</th><th data-filtro="texto">O que fazer</th><th data-filtro="lista">Setor</th><th data-filtro="texto" data-tipo="data">Data</th><th class="num" data-filtro="lista" data-tipo="numero">Valor</th><th data-filtro="nenhum"></th></tr></thead>
     {% for grupo, titulo in [(minhas, 'Minhas pendências · ' ~ SETORES.get(g.usuario.perfil, '')), (outras, 'Pendências de outros setores' if minhas or g.usuario.perfil in SETORES else 'Pendências dos setores')] if grupo %}
     <tbody class="grupo-pend {{ 'outras' if grupo is sameas outras }}">
       <tr class="titulo-grupo"><th colspan="7">{{ titulo }} <span class="cont">{{ grupo|length }}</span></th></tr>
@@ -39,8 +39,8 @@
         <td>{{ p.r.numero }}</td>
         <td>{{ p.acao }}</td>
         <td><small>{{ SETORES[p.quem] }}</small></td>
-        <td>{{ p.data|data if p.data else '—' }}</td>
-        <td class="num">{{ p.valor|moeda(p.r.moeda) if p.valor is not none else '—' }}</td>
+        <td data-ordem="{{ p.data or '' }}">{{ p.data|data if p.data else '—' }}</td>
+        <td class="num" data-ordem="{{ p.valor if p.valor is not none else '' }}" data-filtro="{{ p.r.moeda if p.valor is not none else '—' }}">{{ p.valor|moeda(p.r.moeda) if p.valor is not none else '—' }}</td>
         <td><a class="btn pequeno {{ 'primario' if p.minha }}" href="{{ url_for('invoice_detalhe', id=p.r.id) }}">Abrir</a></td>
       </tr>
     {% endfor %}
@@ -61,33 +61,26 @@
       <option value="LOGISTICA" {{ 'selected' if filtro_sit == 'LOGISTICA' }}>Em logística</option>
       {% for k, v in SITUACOES.items() %}<option value="{{ k }}" {{ 'selected' if filtro_sit == k }}>{{ v[0] }}</option>{% endfor %}
     </select>
-    <select name="fornecedor">
-      <option value="">Todos os fornecedores</option>
-      {% for f in fornecedores %}<option value="{{ f.id }}" {{ 'selected' if filtro_forn == f.id|string }}>{{ f.nome }}</option>{% endfor %}
-    </select>
-    <select name="moeda">
-      <option value="">Todas as moedas</option>
-      {% for k in MOEDAS %}<option {{ 'selected' if filtro_moeda == k }}>{{ k }}</option>{% endfor %}
-    </select>
-    <input name="q" value="{{ busca }}" placeholder="Buscar invoice ou fornecedor">
     <button class="btn">Filtrar</button>
     {% if filtro_sit or filtro_forn or filtro_moeda or busca %}<a class="btn link" href="{{ url_for('painel') }}">Limpar</a>{% endif %}
+    <small class="dica-filtros">Use também os filtros de cada coluna da tabela e clique no título para ordenar.</small>
   </form>
   {% if invoices %}
   <div class="rolagem">
-  <table>
-    <thead><tr><th>Fornecedor</th><th>Invoice</th><th class="num">Valor</th><th>Condição</th><th>Vencimento</th><th>Previsão de chegada</th><th>Desconto</th><th>Situação</th></tr></thead>
+  <table class="tabela-filtro" data-rotulo="invoices">
+    <thead><tr><th data-filtro="lista">Fornecedor</th><th data-filtro="texto">Invoice</th><th class="num" data-filtro="lista" data-tipo="numero">Valor</th><th data-filtro="lista">Condição</th><th data-filtro="texto" data-tipo="data">Vencimento</th><th data-filtro="texto" data-tipo="data">Previsão de chegada</th><th data-filtro="lista">Desconto</th><th data-filtro="lista">Situação</th></tr></thead>
     <tbody>
     {% for r in invoices %}
       <tr class="clicavel" onclick="location='{{ url_for('invoice_detalhe', id=r.id) }}'">
         <td>{{ r.fornecedor }}</td>
         <td><a href="{{ url_for('invoice_detalhe', id=r.id) }}">{{ r.numero }}</a></td>
-        <td class="num">{{ r.itens_total|moeda(r.moeda) }}</td>
+        <td class="num" data-ordem="{{ r.itens_total }}" data-filtro="{{ r.moeda }}">{{ r.itens_total|moeda(r.moeda) }}</td>
         <td><small>{{ condicao_texto(r) }}</small></td>
-        <td>{% if r.vencimento %}{{ r.vencimento|data }}{% if r.vencimento_estimado %} <small>(est.)</small>{% endif %}{% else %}—{% endif %}</td>
-        <td>{{ (r.data_chegada or r.data_prog_chegada or r.eta_real or r.eta_planejado)|data }}</td>
-        <td>{% if r.desconto %}{{ r.desconto.valor_final|moeda(r.moeda) }}<small class="bloco-linha">{{ STATUS_DESCONTO[r.desconto.status] }}</small>{% elif r.tem_desconto == 0 %}<small>Sem desconto</small>{% else %}—{% endif %}</td>
-        <td>{% with sit=r.situacao %}{% include "_situacao.html" %}{% endwith %}</td>
+        <td data-ordem="{{ r.vencimento or '' }}">{% if r.vencimento %}{{ r.vencimento|data }}{% if r.vencimento_estimado %} <small>(est.)</small>{% endif %}{% else %}—{% endif %}</td>
+        {% set chegada = r.data_chegada or r.data_prog_chegada or r.eta_real or r.eta_planejado %}
+        <td data-ordem="{{ chegada or '' }}">{{ chegada|data }}</td>
+        <td data-ordem="{{ r.desconto.valor_final if r.desconto else '' }}" data-filtro="{{ STATUS_DESCONTO[r.desconto.status] if r.desconto else ('Sem desconto' if r.tem_desconto == 0 else 'Não inspecionado') }}">{% if r.desconto %}{{ r.desconto.valor_final|moeda(r.moeda) }}<small class="bloco-linha">{{ STATUS_DESCONTO[r.desconto.status] }}</small>{% elif r.tem_desconto == 0 %}<small>Sem desconto</small>{% else %}—{% endif %}</td>
+        <td data-filtro="{{ SITUACOES[r.situacao][0] if r.situacao in SITUACOES else r.situacao }}">{% with sit=r.situacao %}{% include "_situacao.html" %}{% endwith %}</td>
       </tr>
     {% endfor %}
     </tbody>

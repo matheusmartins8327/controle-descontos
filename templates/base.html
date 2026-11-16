@@ -67,6 +67,7 @@
     document.addEventListener('keydown', e => { if (e.key === 'Escape') conta.open = false; });
   })();
 </script>
+<script src="{{ url_for('static', filename='filtros.js') }}?v={{ VERSAO }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -527,3 +527,16 @@ form.oculto { display: none; }
 .form-carga h2:first-of-type { margin-top: 0; }
 .form-carga table.condicao { margin-bottom: .4rem; }
 .obs-carga { display: block; margin: 1rem 0; }
+
+/* v4.24: filtros e ordenação por coluna */
+tr.linha-filtros th { padding: .25rem .35rem .45rem; background: #f7f9fe; text-transform: none; letter-spacing: 0; }
+tr.linha-filtros select, tr.linha-filtros input { width: 100%; min-width: 80px; font: inherit; font-size: .8rem; padding: .25rem .35rem;
+  border: 1px solid var(--borda); border-radius: 6px; background: #fff; }
+th.ordenavel { cursor: pointer; user-select: none; white-space: nowrap; }
+th.ordenavel:hover { color: var(--pri-escuro); }
+th.ordenavel::after { content: " ↕"; opacity: .35; font-size: .8em; }
+th.ordenavel.asc::after { content: " ↑"; opacity: 1; }
+th.ordenavel.desc::after { content: " ↓"; opacity: 1; }
+.filtro-info { display: none; align-items: center; gap: .6rem; font-size: .85rem; color: var(--pri-escuro); margin: .2rem 0 .5rem; }
+.filtro-info.ativo { display: flex; }
+.dica-filtros { color: var(--suave); align-self: center; }
