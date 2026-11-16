@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block titulo %}Prévia da importação{% endblock %}
+{% block conteudo %}
+<p><a href="{{ url_for('carga_historico') }}">← Carga de histórico</a></p>
+<h1>Prévia da importação</h1>
+<p class="sub">Arquivo <strong>{{ arquivo }}</strong>: {{ previa|length }} linha(s) lida(s), <strong>{{ validas }} pronta(s) para cadastrar</strong>
+  {% if previa|length - validas %}e <strong class="erro-texto">{{ previa|length - validas }} com problema</strong> (não serão cadastradas){% endif %}.
+  Nada foi gravado ainda. Confira e clique em confirmar.</p>
+<p class="sub dica">O valor pago (coluna J) entra como um pagamento do invoice. A planilha não traz a data do pagamento: usamos o
+  vencimento (antecipado = assinatura + {{ PRAZO_ANTECIPADO_DIAS }} dias úteis; após a HAWB = HAWB + dias), limitado a hoje. Ela pode ser corrigida depois na tela do invoice.</p>
+
+<form method="post" action="{{ url_for('carga_historico_importar') }}" class="linha-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% if validas %}<button class="btn primario" name="acao" value="confirmar" onclick="return confirm('Cadastrar {{ validas }} invoice(s) do histórico?')">Confirmar importação de {{ validas }} invoice(s)</button>{% endif %}
+  <button class="btn" name="acao" value="cancelar">Cancelar</button>
+</form>
+
+<section class="bloco">
+<div class="rolagem"><table>
+  <thead><tr><th>Linha</th><th>Fornecedor</th><th>Invoice</th><th>Moeda</th><th>Assinatura</th><th>HAWB</th><th class="num">Total</th><th>Condição</th><th class="num">Valor pago</th><th>Data do pagamento</th><th>Situação</th></tr></thead>
+  <tbody>
+  {% for p in previa %}
+    <tr class="{{ 'linha-alerta' if p.erros }}">
+      <td>{{ p.linha }}</td><td>{{ p.fornecedor }}</td><td>{{ p.numero }}</td><td>{{ p.moeda }}</td>
+      <td>{{ p.assinatura|data }}</td><td>{{ p.hawb|data if p.hawb else '—' }}</td>
+      <td class="num">{{ p.valor|num if p.valor is not none else '—' }}</td><td><small>{{ p.condicao }}</small></td>
+      <td class="num">{{ p.pago|num if p.pago else '—' }}</td><td>{{ p.data_pg|data if p.data_pg else '—' }}</td>
+      <td>{% if p.erros %}<small class="erro-texto">{{ p.erros|join(' ') }}</small>{% else %}<small class="ok-txt">OK</small>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

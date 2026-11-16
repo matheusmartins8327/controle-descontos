@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.22"
+VERSAO = "4.23"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -62,7 +62,7 @@ SETORES = {"importacao": "Importação", "admin": "Engenharia de Processos", "fi
 # perfis de versões anteriores -> perfis atuais (aplicado automaticamente ao iniciar)
 PERFIS_ANTIGOS = {"qualidade": "consulta", "compras": "importacao", "recebimento": "importacao"}
 
-MOEDAS = {"USD": "US$", "EUR": "€", "BRL": "R$"}
+MOEDAS = {"USD": "US$", "EUR": "€", "CHF": "CHF", "BRL": "R$"}
 # Condição de pagamento: uma ou mais parcelas (ex.: 25% antecipado + 75% 60 dias após a HAWB)
 CONDICOES = {"ANTECIPADO": "Antecipado", "PRAZO": "Após a HAWB"}
 PRAZO_ANTECIPADO_DIAS = 5          # pagamento antecipado: data de assinatura + 5 dias úteis
@@ -4130,6 +4130,152 @@ def carga_historico_excluir(id):
     remover_arquivos(arquivos)
     flash(f"Invoice {inv['numero']} excluído da carga de histórico.", "ok")
     return redirect(url_for("carga_historico"))
+# ---- importação da planilha de histórico (parte da CARGA DE HISTÓRICO, também temporária) ----
+from werkzeug.datastructures import MultiDict  # noqa: E402
+# Colunas: A Fornecedor | B Invoice | C Moeda | D Data de assinatura | E HAWB | F Total Invoice |
+#          G % adiantamento | H % depois de HAWB | I X dias depois de HAWB | J Valor pago (demais colunas ignoradas)
+MOEDAS_PLANILHA = {"dolar": "USD", "dólar": "USD", "usd": "USD", "us$": "USD", "euro": "EUR", "eur": "EUR",
+                   "€": "EUR", "chf": "CHF", "franco suico": "CHF", "franco suíço": "CHF", "real": "BRL",
+                   "brl": "BRL", "r$": "BRL"}
+
+
+def _data_planilha(v):
+    if isinstance(v, datetime):
+        return v.strftime("%Y-%m-%d")
+    if isinstance(v, date):
+        return v.isoformat()
+    txt = str(v or "").strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d.%m.%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(txt, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return txt
+
+
+def _pct_planilha(v):
+    n = v if isinstance(v, (int, float)) else parse_num(v)
+    if n is None:
+        return 0.0
+    return round(n * 100, 4) if abs(n) <= 1 else round(n, 4)  # 0,25 (formato %) ou 25
+
+
+def linhas_planilha_historico(arquivo):
+    """Converte cada linha da planilha num formulário equivalente ao da Carga de histórico."""
+    import openpyxl
+    wb = openpyxl.load_workbook(arquivo, data_only=True, read_only=True)
+    ws = wb.worksheets[0]
+    linhas = []
+    for n, row in enumerate(ws.iter_rows(values_only=True), 1):
+        row = list(row) + [None] * 10
+        if n == 1 or not any(row[:6]):
+            continue
+        if str(row[0] or "").strip().lower() == "fornecedor":
+            continue
+        forn, numero, moeda, assin, hawb, total, adiant, prazo, dias, pago = row[:10]
+        moeda_cod = MOEDAS_PLANILHA.get(str(moeda or "").strip().lower(), str(moeda or "").strip().upper())
+        p_adi, p_prz = _pct_planilha(adiant), _pct_planilha(prazo)
+        dias_txt = str(int(dias)) if isinstance(dias, (int, float)) else str(dias or "").strip()
+        cond_pct, cond_tipo, cond_dias = [], [], []
+        if p_adi > 0.0001:
+            cond_pct.append(fmt_qtd(p_adi)); cond_tipo.append("ANTECIPADO"); cond_dias.append("")
+        if p_prz > 0.0001:
+            cond_pct.append(fmt_qtd(p_prz)); cond_tipo.append("PRAZO"); cond_dias.append(dias_txt)
+        valor = total if isinstance(total, (int, float)) else parse_num(total)
+        pago_v = pago if isinstance(pago, (int, float)) else (parse_num(pago) or 0)
+        pago_v = round(pago_v or 0, 2)
+        d_assin, d_hawb = _data_planilha(assin), _data_planilha(hawb) if hawb else ""
+        form = {"fornecedor": [str(forn or "").strip()], "numero": [str(numero or "").strip()],
+                "moeda": [moeda_cod], "data_assinatura": [d_assin], "data_hawb": [d_hawb],
+                "valor": [fmt_num(valor) if isinstance(valor, (int, float)) else ""],
+                "cond_pct": cond_pct, "cond_tipo": cond_tipo, "cond_dias": cond_dias,
+                "desconto": [""], "desconto_status": ["APROVADO"], "segurado": [""],
+                "pg_data": [], "pg_tipo": [], "pg_valor": [], "pg_banco": [],
+                "obs": ["Importado da planilha de histórico"]}
+        data_pg = None
+        if pago_v > TOLERANCIA:
+            data_pg = data_pagamento_estimada(d_assin, d_hawb, p_adi, valor, pago_v, dias_txt)
+            form.update(pg_data=[data_pg], pg_tipo=["PRINCIPAL"], pg_valor=[fmt_num(pago_v)], pg_banco=[""])
+            form["obs"] = ["Importado da planilha de histórico; data do pagamento estimada pelo vencimento"]
+        linhas.append({"linha": n, "form": form, "pago": pago_v, "data_pg": data_pg})
+    wb.close()
+    return linhas
+
+
+def data_pagamento_estimada(d_assin, d_hawb, p_adi, valor, pago, dias):
+    """A planilha não traz a data do pagamento: usa o vencimento (antecipado: assinatura + 5 dias úteis;
+    após a HAWB: HAWB + dias), limitado a hoje."""
+    try:
+        if p_adi > 0 and valor and pago <= valor * p_adi / 100 + TOLERANCIA:
+            venc = somar_dias_uteis(d_assin, PRAZO_ANTECIPADO_DIAS)
+        elif d_hawb and str(dias).isdigit():
+            venc = somar_dias(d_hawb, int(dias))
+        else:
+            venc = d_assin
+    except ValueError:
+        venc = None
+    venc = venc or hoje()
+    return min(venc, hoje())
+
+
+@app.route("/carga-historico/importar", methods=["POST"])
+@somente_admin
+def carga_historico_importar():
+    db = get_db()
+    acao = request.form.get("acao", "previa")
+    if acao == "cancelar":
+        salvar_config("carga_importacao", None)
+        db.commit()
+        flash("Importação cancelada.", "ok")
+        return redirect(url_for("carga_historico"))
+    if acao == "confirmar":
+        pendente = json.loads(config("carga_importacao") or "null")
+        if not pendente:
+            flash("Nenhuma importação pendente. Envie a planilha de novo.", "erro")
+            return redirect(url_for("carga_historico"))
+        criados, falhas = 0, []
+        for item in pendente["linhas"]:
+            erros, dados = ler_carga_historico(MultiDict([(k, v) for k, vs in item["form"].items() for v in vs]))
+            if erros:
+                falhas.append(f"Linha {item['linha']}: {erros[0]}")
+                continue
+            gravar_carga_historico(dados)
+            criados += 1
+        salvar_config("carga_importacao", None)
+        db.commit()
+        flash(f"Importação concluída: {criados} invoice(s) cadastrado(s) pela carga de histórico.", "ok")
+        for f in falhas[:20]:
+            flash(f, "erro")
+        return redirect(url_for("carga_historico"))
+    # prévia
+    arq = request.files.get("planilha")
+    if not arq or not arq.filename.lower().endswith((".xlsx", ".xlsm")):
+        flash("Escolha a planilha Excel (.xlsx).", "erro")
+        return redirect(url_for("carga_historico"))
+    try:
+        linhas = linhas_planilha_historico(io.BytesIO(arq.read()))
+    except Exception as e:
+        flash(f"Não foi possível ler a planilha: {e}", "erro")
+        return redirect(url_for("carga_historico"))
+    previa, validas = [], []
+    for item in linhas:
+        erros, dados = ler_carga_historico(MultiDict([(k, v) for k, vs in item["form"].items() for v in vs]))
+        f = item["form"]
+        previa.append({"linha": item["linha"], "fornecedor": f["fornecedor"][0], "numero": f["numero"][0],
+                       "moeda": f["moeda"][0], "assinatura": f["data_assinatura"][0], "hawb": f["data_hawb"][0],
+                       "valor": dados.get("valor"), "condicao": " + ".join(
+                           (f"{p}% antecipado" if t == "ANTECIPADO" else f"{p}% {dd} dias após a HAWB")
+                           for p, t, dd in zip(f["cond_pct"], f["cond_tipo"], f["cond_dias"])) or "—",
+                       "pago": item["pago"], "data_pg": item["data_pg"], "erros": erros})
+        if not erros:
+            validas.append(item)
+    salvar_config("carga_importacao", json.dumps({"linhas": validas, "arquivo": arq.filename,
+                                                  "em": agora()}, ensure_ascii=False))
+    db.commit()
+    return render_template("carga_historico_previa.html", previa=previa, validas=len(validas),
+                           arquivo=arq.filename)
+
+
 # ======================= fim da CARGA DE HISTÓRICO =========================
 
 

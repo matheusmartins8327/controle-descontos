@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.22)
+# Controle de Invoices e Descontos (v4.23)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -142,6 +142,10 @@ O invoice fica marcado como "Histórico": a logística não é cobrada, o valor 
 HAWB entra liberada, os pagamentos informados não pedem Swift e a carga não envia e-mails. Depois ele segue o fluxo
 normal. **Para remover a ferramenta:** apagar o bloco "CARGA DE HISTÓRICO" do app.py, o template carga_historico.html e
 o link no base.html (os invoices carregados continuam válidos).
+**Importar planilha** (na mesma tela): Excel com as colunas A Fornecedor, B Invoice, C Moeda (Dólar/Euro/CHF/Real),
+D Data de assinatura, E HAWB, F Total, G % adiantamento, H % depois de HAWB, I dias depois de HAWB e J Valor pago.
+Mostra uma prévia (com os erros de cada linha) e só grava ao confirmar. O valor pago vira um pagamento com data
+estimada pelo vencimento (limitada a hoje). Moedas aceitas no sistema: USD, EUR, CHF e BRL.
 
 ### Horário
 Todo o sistema usa o **horário de Brasília** (UTC−3), independentemente do fuso do servidor (o PythonAnywhere roda em

@@ -8,6 +8,18 @@
   a parcela após a HAWB já entra liberada, os pagamentos informados não pedem Swift e nenhum e-mail é enviado.
   A partir daí ele segue normalmente (pagamentos que faltam, dedução do desconto, liberação do segurado).</p>
 
+<section class="bloco importar-planilha">
+  <h2>Importar planilha</h2>
+  <p class="sub">Cadastra vários invoices de uma vez a partir do Excel, com as colunas: A Fornecedor · B Invoice · C Moeda (Dólar, Euro, CHF, Real) ·
+    D Data de assinatura · E HAWB · F Total Invoice · G % adiantamento · H % depois de HAWB · I X dias depois de HAWB · J Valor pago.
+    As demais colunas são ignoradas. Antes de gravar, o sistema mostra uma prévia para você confirmar.</p>
+  <form method="post" action="{{ url_for('carga_historico_importar') }}" enctype="multipart/form-data" class="linha-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="cresce">Planilha (.xlsx)<input type="file" name="planilha" accept=".xlsx,.xlsm" required></label>
+    <button class="btn primario" name="acao" value="previa">Ver prévia</button>
+  </form>
+</section>
+
 {% macro lv(nome, i, padrao='') %}{{ f.getlist(nome)[i] if f and f.getlist(nome)|length > i else padrao }}{% endmacro %}
 <form method="post" class="bloco form-carga" id="form-carga">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
