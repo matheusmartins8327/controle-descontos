@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.26)
+# Controle de Invoices e Descontos (v4.27)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -171,14 +171,16 @@ Em **Fornecedores → Configurar**, a Importação cadastra para cada fornecedor
 - **Lembretes**: aparecem numa janela ao escolher o fornecedor na criação do invoice. **OK** dá o lembrete como visto (não
   aparece mais; fica no histórico com quem e quando); **Me lembre no próximo invoice** fecha e ele volta na próxima criação.
 
-### Arquivos anexados (padrão do sistema)
-Todo anexo é feito pelo botão **Anexar** (envio do arquivo pelo navegador; vários de uma vez; até 10 MB cada; PDF,
-imagens, Excel, Word, XML, ZIP…), nunca por link. Os arquivos ficam no servidor, na pasta `instance/arquivos`
-(fora do GitHub); qualquer usuário logado abre/baixa. A página **Sistema** mostra quantos são e o espaço ocupado.
-- **Swift** de cada pagamento: anexado pelo Financeiro ao registrar o pagamento ou depois, na tabela de pagamentos.
-  Pagamentos antigos com link do OneDrive continuam válidos ("Swift (link antigo)").
-- **Lançamentos Financeiros**: arquivos de cada custo (ver abaixo).
-DUIMP e boleto do ICMS seguem por e-mail, fora do sistema.
+### Documentos: caminho na pasta da rede da empresa (padrão desde a v4.27)
+Todo documento (Swift de cada pagamento, DUIMP, documentos dos lançamentos financeiros) é cadastrado pelo **caminho do
+arquivo na pasta compartilhada** (`\\servidor\pasta\arquivo.pdf` ou `Z:\pasta\arquivo.pdf`), com botão **Copiar** para
+colar no Explorador de Arquivos (navegadores não abrem caminhos da rede a partir de um site). Arquivos enviados em versões
+anteriores continuam disponíveis para abrir.
+- **Arquivo sumiu** (renomeado, movido, apagado): o documento fica "não encontrado" e vira **pendência do setor que cadastra**
+  (Swift → Financeiro; DUIMP e lançamentos → Importação), até o caminho ser corrigido.
+- **Detecção:** (1) qualquer usuário clica em **Não encontrado**; (2) **verificação automática diária** pelo próprio servidor,
+  junto com o agendador das 8h (e o botão em Sistema). Ela só funciona com o servidor **dentro da rede**, enxergando a pasta
+  (servidor Windows: caminhos direto; Linux: mapeamento em Sistema). Fora da rede, apenas informa "sem acesso" e não altera nada.
 
 ### Correções
 Quem lança cada informação pode corrigi-la: a Importação corrige dados, itens, condição, etapas e deduções; o Financeiro corrige pagamentos, Swifts e banco de débito; o Administrador corrige a inspeção (o valor do desconto, pela revalidação). Toda correção fica no histórico com o valor anterior e o novo.

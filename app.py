@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.26"
+VERSAO = "4.27"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -365,6 +365,21 @@ CREATE TABLE IF NOT EXISTS fornecedor_lembretes (
     ok_por INTEGER REFERENCES usuarios(id),  -- quem deu OK (o lembrete deixa de aparecer)
     ok_em TEXT
 );
+-- versão 4.27: documentos = caminho do arquivo na pasta compartilhada da empresa (rede interna)
+CREATE TABLE IF NOT EXISTS documentos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    origem TEXT NOT NULL,                 -- lancamento | pagamento (Swift) | duimp
+    origem_id INTEGER NOT NULL,
+    caminho TEXT NOT NULL,                -- caminho do arquivo na rede (servidor/compartilhamento ou unidade Z:)
+    status TEXT NOT NULL DEFAULT 'NAO_VERIFICADO',  -- NAO_VERIFICADO | OK | NAO_ENCONTRADO
+    cadastrado_por INTEGER REFERENCES usuarios(id),
+    cadastrado_em TEXT NOT NULL,
+    verificado_em TEXT,
+    problema_em TEXT,
+    problema_por INTEGER REFERENCES usuarios(id),  -- vazio = verificação automática
+    problema_obs TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_documentos_origem ON documentos(origem, origem_id);
 -- versão 4.0: e-mails automáticos
 CREATE TABLE IF NOT EXISTS notificacoes_estado (
     invoice_id INTEGER PRIMARY KEY,
@@ -835,8 +850,9 @@ def calcular(inv):
     r["nacionalizacao"] = janela_nacionalizacao(r)
     # Swift: arquivo anexado ao pagamento (pagamentos antigos podem ter só o link do OneDrive, que continua valendo)
     r["swift_arquivos"] = arquivos_de("pagamento", [p["id"] for p in r["pagamentos"]])
+    r["swift_docs"] = documentos_de("pagamento", [p["id"] for p in r["pagamentos"]])
     r["swifts_pendentes"] = sum(1 for p in r["pagamentos"] if not p["swift_url"] and not r["swift_arquivos"].get(p["id"])
-                                and not p["historico"])
+                                and not r["swift_docs"].get(p["id"]) and not p["historico"])
     r["parcelas"] = calcular_parcelas(r)
     # parcelas após a HAWB ficam bloqueadas até a Engenharia de Processos liberar o pagamento ao Financeiro
     r["pagamento_liberado"] = bool(r["pagamento_liberado_em"])
@@ -847,6 +863,14 @@ def calcular(inv):
     r["principal_liberado_pendente"] = max(round(r["principal_pendente"] - r["principal_bloqueado"], 2), 0) \
         if r["parcelas"] else r["principal_pendente"]
     r["duimp_arquivos"] = arquivos_de("duimp", [iid]).get(iid, [])
+    r["duimp_docs"] = documentos_de("duimp", [iid]).get(iid, [])
+    # documentos cujo arquivo não foi encontrado na pasta da rede (pendência do setor que cadastra)
+    r["docs_quebrados"] = db.execute(
+        "SELECT d.* FROM documentos d WHERE d.status = 'NAO_ENCONTRADO' AND ("
+        " (d.origem = 'duimp' AND d.origem_id = ?) OR"
+        " (d.origem = 'pagamento' AND d.origem_id IN (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR"
+        " (d.origem = 'lancamento' AND d.origem_id IN (SELECT id FROM lancamentos WHERE invoice_id = ?)))",
+        (iid, iid, iid)).fetchall()
     pendentes = [p for p in r["parcelas"] if p["pendente"] > TOLERANCIA]
     # próximo vencimento em aberto (sem data: parcela a prazo de invoice sem data da HAWB)
     r["vencimento"] = pendentes[0]["vencimento"] if pendentes else None
@@ -1124,7 +1148,10 @@ def listar_pendencias(invoices, perfil=None):
                     + (f" (invoice {p['invoice']} chegou)" if p["invoice"] else " (revalidação)"), "financeiro",
                     p["vencimento"], p["pendente"], alerta=vencido or p["vencimento"] <= lim_7)
         if fin and r["swifts_pendentes"]:
-            add(r, f"Anexar Swift ({r['swifts_pendentes']} pagamento(s))", "financeiro")
+            add(r, f"Cadastrar o caminho do Swift ({r['swifts_pendentes']} pagamento(s))", "financeiro")
+        for doc in r["docs_quebrados"]:
+            add(r, f"Arquivo não encontrado na pasta da rede ({NOME_DOCUMENTO[doc['origem']]}): corrigir o caminho "
+                   f"{doc['caminho']}", SETOR_DOCUMENTO[doc["origem"]], alerta=True)
         if fin and not r["banco_debito"] and (r["etd_planejado"] or r["etd_real"]):
             add(r, "Informar o banco de débito", "financeiro")
     for p in pend:
@@ -2149,6 +2176,7 @@ def pagamento_novo(id):
     valor = parse_num(f.get("valor"))
     data_pg = data_valida(f.get("data_pagamento"))
     arquivos_swift = [a for a in request.files.getlist("swift_arquivo") if a and a.filename]
+    caminho_swift = normalizar_caminho(f.get("swift_caminho"))
     banco = f.get("banco", "").strip() or r["banco_debito"]
     limite = {"PRINCIPAL": r["principal_liberado_pendente"], "LIBERACAO": r["liberacao_disponivel"]}.get(tipo)
     erro = None
@@ -2166,6 +2194,9 @@ def pagamento_novo(id):
         if tipo == "PRINCIPAL" and r["principal_bloqueado"] > TOLERANCIA:
             erro += (f" As parcelas após a HAWB ({fmt_moeda(r['principal_bloqueado'], r['moeda'])}) aguardam a "
                      "liberação do pagamento pela Engenharia de Processos.")
+    elif caminho_swift and not RE_CAMINHO_REDE.match(caminho_swift):
+        erro = ("Caminho do Swift inválido: use o caminho completo na pasta da rede, por exemplo "
+                "\\\\servidor\\Financeiro\\Swift\\arquivo.pdf (ou deixe em branco e cadastre depois).")
     if erro:
         flash(erro, "erro")
         return volta
@@ -2176,11 +2207,15 @@ def pagamento_novo(id):
                      (id, tipo, valor, data_pg, banco, f.get("obs", "").strip() or None, g.usuario["id"],
                       agora())).lastrowid
     salvos, erros = salvar_arquivos("pagamento", pid, arquivos_swift)
+    if caminho_swift:
+        db.execute("INSERT INTO documentos (origem, origem_id, caminho, status, cadastrado_por, cadastrado_em)"
+                   " VALUES ('pagamento', ?, ?, 'NAO_VERIFICADO', ?, ?)", (pid, caminho_swift, g.usuario["id"], agora()))
+        salvos.append(caminho_swift)
     registrar_evento(id, f"{TIPOS_PAGAMENTO[tipo]}: {fmt_moeda(valor, r['moeda'])} em {fmt_data(data_pg)}",
-                     (f"Swift anexado: {', '.join(salvos)}" if salvos else "Swift pendente")
+                     (f"Swift: {', '.join(salvos)}" if salvos else "Swift pendente")
                      + (f" · banco: {banco}" if banco else ""))
     db.commit()
-    flash("Pagamento registrado." + ("" if salvos else " O Swift ficou pendente: anexe o arquivo na tabela de pagamentos."), "ok")
+    flash("Pagamento registrado." + ("" if salvos else " O Swift ficou pendente: cadastre o caminho na tabela de pagamentos."), "ok")
     for e in erros:
         flash(e, "erro")
     return volta
@@ -2314,6 +2349,9 @@ def excluir_invoice(iid):
         " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
         " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid)).fetchall()
     db.execute("DELETE FROM arquivos WHERE (origem = 'duimp' AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
+               " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
+               " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid))
+    db.execute("DELETE FROM documentos WHERE (origem = 'duimp' AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
                " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
                " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid))
     db.execute("DELETE FROM deducoes WHERE invoice_id = ? OR desconto_id IN (SELECT id FROM descontos WHERE invoice_id = ?)",
@@ -2669,7 +2707,11 @@ def sistema():
     contagem_invoices = {t: get_db().execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
                          for t in ("invoices", "descontos", "pagamentos", "lancamentos")}
     return render_template("sistema.html", usa_git=usa_git, commit=commit, backups=backups,
-                           anexos_qtd=uso[0], anexos_bytes=uso[1], contagem_invoices=contagem_invoices)
+                           anexos_qtd=uso[0], anexos_bytes=uso[1], contagem_invoices=contagem_invoices,
+                           rede_mapeamentos=config("rede_mapeamentos", ""),
+                           rede_ultima=json.loads(config("rede_ultima_verificacao") or "null"),
+                           docs_contagem={k: n for k, n in get_db().execute(
+                               "SELECT status, COUNT(*) FROM documentos GROUP BY status")})
 
 
 # Tabelas com dados de invoices (na ordem de exclusão). Usuários, fornecedores, configurações (e-mails,
@@ -2715,6 +2757,7 @@ def sistema_apagar_invoices():
     db.execute("PRAGMA foreign_keys = OFF")  # apaga tudo de uma vez, sem esbarrar na ordem das ligações
     try:
         db.execute("DELETE FROM arquivos WHERE origem IN ('lancamento', 'pagamento', 'duimp')")
+        db.execute("DELETE FROM documentos")
         for t in extras + TABELAS_INVOICES:
             db.execute(f'DELETE FROM "{t}"')
         # histórico de e-mails sobre os invoices apagados (o restante do histórico e a configuração ficam)
@@ -2805,6 +2848,7 @@ def paineis_lancamentos(args):
                         " ORDER BY l.data_pagamento IS NULL, l.data_pagamento, l.id"):
         lancs.setdefault(l["invoice_id"], []).append(l)
     anexos = anexos_por_lancamento()
+    docs = documentos_de("lancamento", [l["id"] for lista in lancs.values() for l in lista])
     avisos = {}
     for e in db.execute("SELECT invoice_id, criado_em, status FROM emails WHERE fluxo = 'lancamentos_mega'"
                         " ORDER BY id"):
@@ -2823,7 +2867,7 @@ def paineis_lancamentos(args):
         pendentes = [l for l in lista if not l["lancado_erp"]]
         if filtro == "pendentes_erp" and not pendentes:
             continue
-        paineis.append({"inv": inv, "lancamentos": lista, "pendentes_erp": len(pendentes), "anexos": anexos,
+        paineis.append({"inv": inv, "lancamentos": lista, "pendentes_erp": len(pendentes), "anexos": anexos, "docs": docs,
                         "ultimo_aviso": avisos.get(inv["id"]),
                         "total_pendente": round(sum(l["valor"] for l in pendentes if l["valor"] is not None), 2),
                         "total": round(sum(l["valor"] for l in lista if l["valor"] is not None), 2)})
@@ -3198,6 +3242,7 @@ def lancamentos_avisar(id):
         return voltar_lancamentos(id)
     linhas = []
     arquivos = anexos_por_lancamento([l["id"] for l in pendentes])
+    caminhos = documentos_de("lancamento", [l["id"] for l in pendentes])
     para_anexar = [(caminho_anexo(a), a["nome"]) for l in pendentes for a in arquivos.get(l["id"], [])
                    if os.path.exists(caminho_anexo(a))]
     total_bytes = sum(os.path.getsize(c) for c, _n in para_anexar)
@@ -3208,6 +3253,8 @@ def lancamentos_avisar(id):
         txt += f" · pagamento {fmt_data(l['data_pagamento'])}" if l["data_pagamento"] else " · data não informada"
         if arquivos.get(l["id"]):
             txt += " · arquivos: " + ", ".join(a["nome"] for a in arquivos[l["id"]])
+        if caminhos.get(l["id"]):
+            txt += " · documentos na rede: " + " ; ".join(d["caminho"] for d in caminhos[l["id"]])
         if l["alterado_apos_erp"]:
             txt += " · ALTERADO após já ter sido lançado: conferir no MEGA"
         linhas.append(txt)
@@ -3818,6 +3865,7 @@ def tarefa_diaria():
     """Para tarefa agendada (deploy/tarefa_diaria.sh): resumos + fila."""
     with app.app_context():
         msg = " ".join(executar_resumos(pelo_agendador=True))
+        msg += " " + texto_verificacao(verificar_documentos())
         n = enviar_fila()
         return f"{msg} E-mails enviados agora: {n}."
 
@@ -3854,6 +3902,7 @@ def tarefa_diaria_url(chave):
     if not certa or not secrets.compare_digest(certa, chave):
         abort(404)
     msg = " ".join(executar_resumos(pelo_agendador=True))
+    msg += " " + texto_verificacao(verificar_documentos())
     n = enviar_fila()
     return Response(f"OK · {msg} E-mails enviados agora: {n}.", mimetype="text/plain")
 
@@ -4447,6 +4496,213 @@ def carga_historico_importar():
 
 
 # ======================= fim da CARGA DE HISTÓRICO =========================
+
+
+# ---------------------------------------------------------------------------
+# Documentos na pasta compartilhada da empresa (padrão desde a v4.27)
+# Cada documento é o CAMINHO do arquivo na rede (\\servidor\pasta\arquivo.pdf ou Z:\pasta\arquivo.pdf).
+# Se o arquivo some (renomeado, movido, apagado), o documento fica "não encontrado" e vira pendência do setor
+# que o cadastra. Detecção: (1) qualquer usuário marca "Não encontrado"; (2) verificação automática diária pelo
+# próprio servidor, que só roda quando o servidor enxerga a pasta da rede (configuração em Sistema).
+# ---------------------------------------------------------------------------
+SETOR_DOCUMENTO = {"lancamento": "importacao", "pagamento": "financeiro", "duimp": "importacao"}
+NOME_DOCUMENTO = {"lancamento": "documento do lançamento financeiro", "pagamento": "Swift", "duimp": "DUIMP"}
+RE_CAMINHO_REDE = re.compile(r"^(\\\\[^\\/:*?\"<>|]+\\[^\\/:*?\"<>|]+.*|[A-Za-z]:\\.+)$")
+
+
+def normalizar_caminho(txt):
+    c = (txt or "").strip().strip('"').strip()
+    c = c.replace("/", "\\")
+    if c.lower().startswith("file:"):
+        c = c[5:].lstrip("\\")
+        c = "\\\\" + c if not re.match(r"^[A-Za-z]:", c) else c
+    return c
+
+
+def documentos_de(origem, ids):
+    ids = list(ids)
+    if not ids:
+        return {}
+    mapa = {}
+    for d in get_db().execute(
+            "SELECT d.*, u.nome AS autor, p.nome AS quem_problema FROM documentos d"
+            " LEFT JOIN usuarios u ON u.id = d.cadastrado_por LEFT JOIN usuarios p ON p.id = d.problema_por"
+            f" WHERE d.origem = ? AND d.origem_id IN ({','.join('?' * len(ids))}) ORDER BY d.id", [origem] + ids):
+        mapa.setdefault(d["origem_id"], []).append(d)
+    return mapa
+
+
+def pode_cadastrar_documento(origem):
+    if origem == "pagamento":
+        return pode("financeiro")
+    if origem == "duimp":
+        return pode("importacao")
+    return pode_anexar()
+
+
+def invoice_do_documento(origem, origem_id):
+    db = get_db()
+    if origem == "duimp":
+        return origem_id
+    tabela = "pagamentos" if origem == "pagamento" else "lancamentos"
+    r = db.execute(f"SELECT invoice_id FROM {tabela} WHERE id = ?", (origem_id,)).fetchone()
+    return r["invoice_id"] if r else None
+
+
+def voltar_seguro(padrao):
+    v = request.form.get("voltar") or ""
+    return v if v.startswith("/") and not v.startswith("//") else padrao
+
+
+@app.route("/documentos/novo", methods=["POST"])
+@login_obrigatorio
+def documento_novo():
+    origem, origem_id = request.form.get("origem"), request.form.get("origem_id", type=int)
+    if origem not in SETOR_DOCUMENTO or not origem_id:
+        abort(400)
+    if not pode_cadastrar_documento(origem):
+        abort(403)
+    iid = invoice_do_documento(origem, origem_id)
+    if not iid:
+        abort(404)
+    volta = voltar_seguro(url_for("invoice_detalhe", id=iid))
+    caminho = normalizar_caminho(request.form.get("caminho"))
+    if not RE_CAMINHO_REDE.match(caminho):
+        flash("Informe o caminho completo do arquivo na pasta da rede, por exemplo "
+              "\\\\servidor\\Importacao\\2026\\Swift 123.pdf ou Z:\\Importacao\\2026\\Swift 123.pdf.", "erro")
+        return redirect(volta)
+    db = get_db()
+    db.execute("INSERT INTO documentos (origem, origem_id, caminho, status, cadastrado_por, cadastrado_em)"
+               " VALUES (?, ?, ?, 'NAO_VERIFICADO', ?, ?)", (origem, origem_id, caminho, g.usuario["id"], agora()))
+    registrar_evento(iid, f"Caminho cadastrado ({NOME_DOCUMENTO[origem]})", caminho)
+    db.commit()
+    flash("Caminho do documento cadastrado.", "ok")
+    return redirect(volta)
+
+
+@app.route("/documentos/<int:did>/<acao>", methods=["POST"])
+@login_obrigatorio
+def documento_acao(did, acao):
+    db = get_db()
+    d = db.execute("SELECT * FROM documentos WHERE id = ?", (did,)).fetchone()
+    if d is None:
+        abort(404)
+    iid = invoice_do_documento(d["origem"], d["origem_id"])
+    volta = voltar_seguro(url_for("invoice_detalhe", id=iid) if iid else url_for("painel"))
+    nome = NOME_DOCUMENTO.get(d["origem"], "documento")
+    if acao == "nao-encontrado":  # qualquer usuário pode avisar que o arquivo sumiu
+        obs = " ".join(request.form.get("obs", "").split())[:300] or None
+        db.execute("UPDATE documentos SET status = 'NAO_ENCONTRADO', problema_em = ?, problema_por = ?, problema_obs = ?"
+                   " WHERE id = ?", (agora(), g.usuario["id"], obs, did))
+        if iid:
+            registrar_evento(iid, f"Caminho não encontrado ({nome})", d["caminho"] + (f" · {obs}" if obs else ""))
+        db.commit()
+        flash(f"Registrado: o arquivo não foi encontrado. A pendência foi para {SETORES[SETOR_DOCUMENTO[d['origem']]]}.",
+              "ok")
+        return redirect(volta)
+    if not pode_cadastrar_documento(d["origem"]):
+        abort(403)
+    if acao == "editar":
+        caminho = normalizar_caminho(request.form.get("caminho"))
+        if not RE_CAMINHO_REDE.match(caminho):
+            flash("Caminho inválido: use \\\\servidor\\pasta\\arquivo ou Z:\\pasta\\arquivo.", "erro")
+            return redirect(volta)
+        db.execute("UPDATE documentos SET caminho = ?, status = 'NAO_VERIFICADO', problema_em = NULL, problema_por = NULL,"
+                   " problema_obs = NULL, verificado_em = NULL WHERE id = ?", (caminho, did))
+        if iid:
+            registrar_evento(iid, f"Caminho corrigido ({nome})", f"{d['caminho']} → {caminho}")
+        db.commit()
+        flash("Caminho corrigido.", "ok")
+    elif acao == "excluir":
+        db.execute("DELETE FROM documentos WHERE id = ?", (did,))
+        if iid:
+            registrar_evento(iid, f"Caminho excluído ({nome})", d["caminho"])
+        db.commit()
+        flash("Caminho excluído.", "ok")
+    else:
+        abort(404)
+    return redirect(volta)
+
+
+# ---------- verificação automática (só quando o servidor enxerga a pasta da rede) ----------
+def mapeamentos_rede():
+    """Linhas 'prefixo no Windows = caminho no servidor' (Sistema). Ex.: Z:\\ = /mnt/rede/  ou  \\\\srv01\\dados = /mnt/dados"""
+    pares = []
+    for linha in (config("rede_mapeamentos") or "").splitlines():
+        if "=" in linha:
+            a, b = linha.split("=", 1)
+            if a.strip() and b.strip():
+                pares.append((a.strip(), b.strip()))
+    return pares
+
+
+def caminho_no_servidor(caminho):
+    for prefixo, destino in sorted(mapeamentos_rede(), key=lambda p: -len(p[0])):
+        if caminho.lower().startswith(prefixo.lower()):
+            resto = caminho[len(prefixo):].lstrip("\\")
+            if os.sep == "/":
+                resto = resto.replace("\\", "/")
+            return os.path.join(destino, resto), destino
+    if os.name == "nt":  # servidor Windows dentro da rede: usa o caminho direto
+        raiz = "\\\\" + "\\".join(caminho.lstrip("\\").split("\\")[:2]) if caminho.startswith("\\\\") else caminho[:3]
+        return caminho, raiz
+    return None, None
+
+
+def verificar_documentos():
+    """Confere cada caminho cadastrado. Documentos cuja pasta-raiz o servidor não alcança não são alterados."""
+    db = get_db()
+    res = {"ok": 0, "nao_encontrado": 0, "sem_acesso": 0}
+    acessivel = {}
+    for d in db.execute("SELECT * FROM documentos").fetchall():
+        local, raiz = caminho_no_servidor(d["caminho"])
+        if not local:
+            res["sem_acesso"] += 1
+            continue
+        if raiz not in acessivel:
+            acessivel[raiz] = os.path.isdir(raiz)
+        if not acessivel[raiz]:
+            res["sem_acesso"] += 1
+            continue
+        if os.path.exists(local):
+            db.execute("UPDATE documentos SET status = 'OK', verificado_em = ?, problema_em = NULL, problema_por = NULL,"
+                       " problema_obs = NULL WHERE id = ?", (agora(), d["id"]))
+            res["ok"] += 1
+        else:
+            if d["status"] != "NAO_ENCONTRADO":
+                db.execute("UPDATE documentos SET status = 'NAO_ENCONTRADO', verificado_em = ?, problema_em = ?,"
+                           " problema_por = NULL, problema_obs = 'Verificação automática' WHERE id = ?",
+                           (agora(), agora(), d["id"]))
+                iid = invoice_do_documento(d["origem"], d["origem_id"])
+                if iid:
+                    registrar_evento(iid, f"Caminho não encontrado na verificação automática "
+                                          f"({NOME_DOCUMENTO.get(d['origem'], 'documento')})", d["caminho"])
+            else:
+                db.execute("UPDATE documentos SET verificado_em = ? WHERE id = ?", (agora(), d["id"]))
+            res["nao_encontrado"] += 1
+    salvar_config("rede_ultima_verificacao", json.dumps({"em": agora(), **res}))
+    db.commit()
+    return res
+
+
+def texto_verificacao(res):
+    if res["ok"] + res["nao_encontrado"] == 0:
+        return (f"Verificação de caminhos: o servidor não tem acesso à pasta da rede ({res['sem_acesso']} documento(s) "
+                "não verificado(s)).")
+    return (f"Verificação de caminhos: {res['ok']} encontrado(s), {res['nao_encontrado']} não encontrado(s)"
+            + (f", {res['sem_acesso']} sem acesso." if res["sem_acesso"] else "."))
+
+
+@app.route("/sistema/rede", methods=["POST"])
+@somente_admin
+def sistema_rede():
+    if request.form.get("acao") == "verificar":
+        flash(texto_verificacao(verificar_documentos()), "ok")
+    else:
+        salvar_config("rede_mapeamentos", request.form.get("mapeamentos", "").strip() or None)
+        get_db().commit()
+        flash("Mapeamento da pasta da rede salvo.", "ok")
+    return redirect(url_for("sistema") + "#rede")
 
 
 @app.errorhandler(403)

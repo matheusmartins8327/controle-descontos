@@ -68,6 +68,16 @@
   })();
 </script>
 <script src="{{ url_for('static', filename='filtros.js') }}?v={{ VERSAO }}"></script>
+<script>
+  // copiar caminho de documento (os navegadores não abrem caminhos da rede a partir de um site)
+  document.addEventListener('click', e => {
+    const b = e.target.closest('[data-copiar]'); if (!b) return;
+    const txt = b.dataset.copiar;
+    const ok = () => { b.textContent = 'Copiado!'; b.classList.add('copiado'); setTimeout(() => { b.textContent = 'Copiar'; b.classList.remove('copiado'); }, 1800); };
+    if (navigator.clipboard) navigator.clipboard.writeText(txt).then(ok, () => prompt('Copie o caminho:', txt));
+    else prompt('Copie o caminho:', txt);
+  });
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

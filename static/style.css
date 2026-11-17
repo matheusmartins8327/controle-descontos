@@ -567,3 +567,32 @@ th.ordenavel.desc::after { content: " ↓"; opacity: 1; }
 .excluir-invoice summary { cursor: pointer; color: #b42318; font-weight: 600; }
 .excluir-invoice p { font-size: .9rem; }
 .excluir-invoice ul { margin: .3rem 0 0 1.1rem; }
+
+/* v4.27: documentos = caminho na pasta da rede */
+.docs { display: flex; flex-direction: column; gap: .3rem; font-size: .82rem; min-width: 220px; }
+.doc { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .35rem; padding: .25rem .4rem; border-radius: 8px; background: #f3f6fc; border: 1px solid #dfe6f5; }
+.doc.doc-nao_encontrado { background: #fdecec; border-color: #f4b8b2; }
+.doc.doc-ok .doc-status { color: var(--ok); }
+.doc.doc-nao_encontrado .doc-status { color: #b42318; }
+.doc-status { font-weight: 700; width: 1em; text-align: center; color: var(--suave); }
+.doc-caminho { flex: 1 1 140px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .78rem; background: none; }
+.doc .btn.pequeno.link { padding: .05rem .3rem; font-size: .76rem; }
+.doc-editar { display: inline-flex; }
+.doc-editar[open] { flex-basis: 100%; flex-wrap: wrap; gap: .3rem; }
+.doc-editar summary { list-style: none; } .doc-editar summary::-webkit-details-marker { display: none; }
+.doc-editar input { flex: 1 1 220px; font-size: .8rem; }
+.doc-problema { flex-basis: 100%; color: #b42318; }
+.doc-novo { display: flex; gap: .3rem; }
+.doc-novo input { flex: 1; min-width: 0; font-size: .8rem; padding: .25rem .4rem; }
+.perigo-txt { color: #b42318 !important; }
+.copiado { color: var(--ok) !important; }
+.bloco#rede textarea { width: 100%; font-family: monospace; font-size: .85rem; }
+.etapa-card .docs { min-width: 0; }
+.etapa-card .doc { flex-wrap: wrap; }
+.etapa-card .doc-caminho { flex: 1 1 100%; order: 2; }
+.etapa-card .doc-status { order: 1; }
+.etapa-card .doc > .btn, .etapa-card .doc > details { order: 3; }
+.etapa-card .doc-problema { order: 4; }
+.etapa-card dd, .etapa-card .campo-arquivo { min-width: 0; max-width: 100%; }
+.etapa-card .doc { max-width: 100%; box-sizing: border-box; }
+.etapa-card .doc-caminho { white-space: normal; word-break: break-all; overflow: visible; }

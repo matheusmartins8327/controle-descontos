@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_documentos.html" import docs, docs_forms %}
 {% block titulo %}Lançamentos Financeiros{% endblock %}
 {% block conteudo %}
 <h1>Lançamentos Financeiros</h1>
@@ -69,7 +70,7 @@
     <div class="rolagem">
     <table class="tabela-lanc">
       <colgroup><col class="c-tipo"><col class="c-valor"><col class="c-data"><col class="c-arq"><col class="c-quem"><col class="c-erp">{% if editar %}<col class="c-acoes">{% endif %}</colgroup>
-      <thead><tr><th>Tipo de pagamento</th><th class="num">Valor (R$)</th><th>Data do pagamento</th><th>Arquivos</th><th>Apontado por</th><th>Lançado no MEGA</th>{% if editar %}<th></th>{% endif %}</tr></thead>
+      <thead><tr><th>Tipo de pagamento</th><th class="num">Valor (R$)</th><th>Data do pagamento</th><th>Documentos (caminho na rede)</th><th>Apontado por</th><th>Lançado no MEGA</th>{% if editar %}<th></th>{% endif %}</tr></thead>
       <tbody>
       {% for l in p.lancamentos %}
         <tr class="{{ 'lancado' if l.lancado_erp }} {{ 'conferir' if l.alterado_apos_erp and not l.lancado_erp }}">
@@ -94,14 +95,7 @@
                 <button class="arq-x" title="Excluir arquivo">✕</button></form>{% endif %}
             </div>
             {% endfor %}
-            {% if pode_anexar %}
-            <form method="post" action="{{ url_for('lancamento_anexar', lid=l.id) }}" enctype="multipart/form-data" class="form-anexar">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
-              <label class="btn-anexar" title="Anexar arquivo (até {{ ANEXO_MAX_MB }} MB)">
-                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9"/></svg>
-                Anexar<input type="file" name="arquivo" multiple onchange="this.form.classList.add('enviando'); this.form.submit()"></label>
-            </form>
-            {% elif not p.anexos.get(l.id) %}<small>—</small>{% endif %}
+            {{ docs(p.docs.get(l.id, []), 'lancamento', l.id, pode_anexar, voltar ~ ('&' if '?' in voltar else '?') ~ 'aberto=' ~ inv.id ~ '#inv-' ~ inv.id, '\\\\servidor\\Importacao\\Guias\\arquivo.pdf') }}
           </td>
           <td><small>{{ l.usuario or '—' }} · {{ (l.atualizado_em or l.criado_em)|data }}</small></td>
           <td>
@@ -147,6 +141,7 @@
         <th>{% if p.pendentes_erp %}<small>a lançar: {{ p.total_pendente|moeda('BRL') }}</small>{% endif %}</th>{% if editar %}<th></th>{% endif %}</tr></tfoot>{% endif %}
     </table>
     </div>
+    {% for l in p.lancamentos %}{{ docs_forms(p.docs.get(l.id, []), 'lancamento', l.id, pode_anexar, voltar ~ ('&' if '?' in voltar else '?') ~ 'aberto=' ~ inv.id ~ '#inv-' ~ inv.id) }}{% endfor %}
   </div>
 </details>
 {% else %}

@@ -1,0 +1,46 @@
+{# Documentos = caminho do arquivo na pasta da rede da empresa.
+   docs(): lista + campo para cadastrar (usa atributos form=, então pode ficar dentro de outro formulário);
+   docs_forms(): os formulários ocultos correspondentes (colocar FORA de qualquer outro formulário). #}
+{% macro docs(lista, origem, origem_id, pode_cad, voltar, placeholder='\\\\servidor\\pasta\\arquivo.pdf') %}
+<div class="docs">
+  {% for d in lista %}
+  <div class="doc doc-{{ d.status|lower }}">
+    <span class="doc-status" title="{{ {'OK': 'Encontrado na última verificação', 'NAO_ENCONTRADO': 'Arquivo não encontrado', 'NAO_VERIFICADO': 'Ainda não verificado'}[d.status] }}">{{ {'OK': '✓', 'NAO_ENCONTRADO': '⚠', 'NAO_VERIFICADO': '•'}[d.status] }}</span>
+    <code class="doc-caminho" title="{{ d.caminho }}">{{ d.caminho }}</code>
+    <button type="button" class="btn pequeno link" data-copiar="{{ d.caminho }}" title="Copiar o caminho para colar no Explorador de Arquivos">Copiar</button>
+    {% if d.status != 'NAO_ENCONTRADO' %}<button class="btn pequeno link" form="doc-nf-{{ d.id }}" title="Avisar que o arquivo não está neste caminho">Não encontrado</button>{% endif %}
+    {% if pode_cad %}
+    <details class="doc-editar"><summary class="btn pequeno link">Corrigir</summary>
+      <input name="caminho" form="doc-ed-{{ d.id }}" value="{{ d.caminho }}" required>
+      <button class="btn pequeno" form="doc-ed-{{ d.id }}">Salvar</button>
+      <button class="btn pequeno link perigo-txt" form="doc-ex-{{ d.id }}">Excluir</button>
+    </details>
+    {% endif %}
+    {% if d.status == 'NAO_ENCONTRADO' %}<small class="doc-problema">Não encontrado{% if d.quem_problema %} por {{ d.quem_problema }}{% else %} na verificação automática{% endif %} em {{ d.problema_em|data }}{% if d.problema_obs and d.quem_problema %} · {{ d.problema_obs }}{% endif %}{% if pode_cad %} — corrija o caminho{% endif %}</small>{% endif %}
+  </div>
+  {% endfor %}
+  {% if pode_cad %}
+  <div class="doc-novo">
+    <input name="caminho" form="doc-novo-{{ origem }}-{{ origem_id }}" placeholder="{{ placeholder }}" autocomplete="off">
+    <button class="btn pequeno" form="doc-novo-{{ origem }}-{{ origem_id }}">{{ 'Cadastrar caminho' if not lista else '+ Caminho' }}</button>
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro docs_forms(lista, origem, origem_id, pode_cad, voltar) %}
+<form id="doc-novo-{{ origem }}-{{ origem_id }}" method="post" action="{{ url_for('documento_novo') }}" class="oculto">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
+  <input type="hidden" name="origem" value="{{ origem }}"><input type="hidden" name="origem_id" value="{{ origem_id }}"></form>
+{% for d in lista %}
+<form id="doc-nf-{{ d.id }}" method="post" action="{{ url_for('documento_acao', did=d.id, acao='nao-encontrado') }}" class="oculto"
+      onsubmit="var o = prompt('Avisar que o arquivo não foi encontrado neste caminho? A pendência irá para o setor responsável.\\n\\nObservação (opcional):', ''); if (o === null) return false; this.obs.value = o; return true;">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}"><input type="hidden" name="obs"></form>
+{% if pode_cad %}
+<form id="doc-ed-{{ d.id }}" method="post" action="{{ url_for('documento_acao', did=d.id, acao='editar') }}" class="oculto">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}"></form>
+<form id="doc-ex-{{ d.id }}" method="post" action="{{ url_for('documento_acao', did=d.id, acao='excluir') }}" class="oculto" onsubmit="return confirm('Excluir este caminho?')">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}"></form>
+{% endif %}
+{% endfor %}
+{% endmacro %}
