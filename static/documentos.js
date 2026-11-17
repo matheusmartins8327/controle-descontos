@@ -29,14 +29,18 @@
         <small>O navegador não informa a pasta do arquivo escolhido: confira se é a pasta onde ele está salvo na rede (ela fica lembrada para a próxima vez).</small></label>
       <label>Caminho completo que será salvo<input name="completo" value="${esc(juntar(pasta, nome))}" autocomplete="off">
         <small>Dica: no Explorador de Arquivos, segure Shift, clique com o botão direito no arquivo → <em>Copiar como caminho</em> e cole aqui.</small></label>
+      <div class="caminho-previa" data-previa></div>
       <p class="erro-texto" data-erro hidden>Use o caminho completo na rede: \\\\servidor\\pasta\\arquivo.pdf ou Z:\\pasta\\arquivo.pdf.</p>
       <div class="botoes"><button type="button" class="btn" data-acao="cancelar">Cancelar</button>
         <button type="button" class="btn primario" data-acao="confirmar">Confirmar</button></div></div>`;
     document.body.appendChild(fundo);
     const inPasta = fundo.querySelector('[name=pasta]'), inComp = fundo.querySelector('[name=completo]');
+    const previa = fundo.querySelector('[data-previa]');
+    const atualizarPrevia = () => { previa.textContent = inComp.value; };
     let editouCompleto = false;
-    inPasta.addEventListener('input', () => { if (!editouCompleto) inComp.value = juntar(inPasta.value.trim().replace(/^"|"$/g, ''), nome); });
-    inComp.addEventListener('input', () => { editouCompleto = true; });
+    inPasta.addEventListener('input', () => { if (!editouCompleto) inComp.value = juntar(inPasta.value.trim().replace(/^"|"$/g, ''), nome); atualizarPrevia(); });
+    inComp.addEventListener('input', () => { editouCompleto = true; atualizarPrevia(); });
+    atualizarPrevia();
     (arquivo ? inPasta : inComp).focus();
     const fechar = () => fundo.remove();
     fundo.addEventListener('keydown', e => { if (e.key === 'Escape') fechar(); });

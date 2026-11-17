@@ -606,3 +606,14 @@ th.ordenavel.desc::after { content: " ↓"; opacity: 1; }
 .pastas-padrao { margin-bottom: 1rem; }
 .pastas-padrao h3 { margin: .5rem 0 .2rem; font-size: .95rem; }
 .campo-com-botao { display: flex; gap: .4rem; } .campo-com-botao input { flex: 1; }
+
+/* v4.29: pendências vencidas (vermelho) x próximas (amarelo); prévia do caminho */
+tr.linha-atencao td { background: #fff8e1; }
+tr.linha-atencao td:first-child { box-shadow: inset 3px 0 0 #e0a100; }
+.legenda { display: inline-flex; align-items: center; gap: .35rem; margin-left: .6rem; }
+.legenda .cor { display: inline-block; width: .8rem; height: .8rem; border-radius: 3px; margin-left: .4rem; }
+.legenda .cor.vermelho { background: #fdecec; border: 1px solid #e8a39b; }
+.legenda .cor.amarelo { background: #fff8e1; border: 1px solid #e0c060; }
+.caminho-previa { margin-top: .5rem; padding: .4rem .6rem; background: #f3f6fc; border-radius: 6px; font-family: ui-monospace, Consolas, monospace;
+  font-size: .8rem; word-break: break-all; color: var(--marinho); }
+.caminho-previa:empty { display: none; }

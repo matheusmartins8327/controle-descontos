@@ -34,7 +34,7 @@
     <tbody class="grupo-pend {{ 'outras' if grupo is sameas outras }}">
       <tr class="titulo-grupo"><th colspan="7">{{ titulo }} <span class="cont">{{ grupo|length }}</span></th></tr>
     {% for p in grupo %}
-      <tr class="{{ 'linha-alerta' if p.alerta }}">
+      <tr class="{{ 'linha-alerta' if p.alerta }}{{ 'linha-atencao' if p.atencao }}">
         <td>{{ p.r.fornecedor }}</td>
         <td>{{ p.r.numero }}</td>
         <td>{{ p.acao }}</td>
@@ -48,7 +48,8 @@
     {% endfor %}
   </table>
   </div>
-  <p class="sub dica">Todos os setores veem todas as pendências; cada setor só preenche as informações da sua parte.</p>
+  <p class="sub dica">Todos os setores veem todas as pendências; cada setor só preenche as informações da sua parte.
+    <span class="legenda"><span class="cor vermelho"></span> vencido <span class="cor amarelo"></span> vence em até 7 dias ou precisa de correção</span></p>
 </section>
 {% endif %}
 

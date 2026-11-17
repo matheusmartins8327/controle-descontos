@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.28"
+VERSAO = "4.29"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -71,7 +71,7 @@ NACIONALIZACAO_REAL = (0, 2)        # com o ETA real: ETA real a +2 dias úteis
 PRAZO_LIBERACAO_DIAS_UTEIS = 5     # liberação do segurado: chegada real do invoice deduzido + 5 dias úteis
 CUSTO_IMPORTACAO_ESTIMADO = 0.40   # visibilidade do Financeiro a partir do embarque
 # canal de parametrização: opção -> (cor de fundo pastel, cor do texto)
-CORES_CANAL = {"Verde": ("#d4f0dc", "#1d5a31"), "Amarelo": ("#fff3c4", "#6b5200")}
+CORES_CANAL = {"Verde": ("#d4f0dc", "#1d5a31"), "Amarelo": ("#fff3c4", "#6b5200"), "Vermelho": ("#fbd5d5", "#8a1c1c")}
 STATUS_DESCONTO = {"ENVIADO": "Enviado ao fornecedor", "APROVADO": "Aprovado pelo fornecedor"}
 TIPOS_PAGAMENTO = {"PRINCIPAL": "Pagamento do invoice", "LIBERACAO": "Liberação do valor segurado"}
 
@@ -1107,8 +1107,10 @@ def listar_pendencias(invoices, perfil=None):
     adm = imp = fin = True
     pend = []
 
-    def add(r, acao, quem, data=None, valor=None, alerta=False):
-        pend.append({"r": r, "acao": acao, "quem": quem, "data": data, "valor": valor, "alerta": alerta})
+    def add(r, acao, quem, data=None, valor=None, alerta=False, atencao=False):
+        # alerta = vencido/atrasado (vermelho); atencao = vence em até 7 dias ou problema a corrigir (amarelo)
+        pend.append({"r": r, "acao": acao, "quem": quem, "data": data, "valor": valor, "alerta": alerta,
+                     "atencao": atencao and not alerta})
 
     lim_7 = somar_dias(hoje(), 7)
     for r in invoices:
@@ -1146,10 +1148,10 @@ def listar_pendencias(invoices, perfil=None):
                 vencido = p["vencimento"] < hoje()
                 if p["bloqueado"]:  # aprovação da Engenharia de Processos antes do pagamento
                     add(r, "Liberar o pagamento ao Financeiro" + rotulo + (" (já vencido)" if vencido else ""),
-                        "admin", p["vencimento"], p["pendente"], alerta=vencido or p["vencimento"] <= lim_7)
+                        "admin", p["vencimento"], p["pendente"], alerta=vencido, atencao=p["vencimento"] <= lim_7)
                     continue
                 add(r, ("Pagamento vencido" if vencido else "Pagar invoice") + rotulo, "financeiro", p["vencimento"],
-                    p["pendente"], alerta=vencido or p["vencimento"] <= lim_7)
+                    p["pendente"], alerta=vencido, atencao=p["vencimento"] <= lim_7)
         if fin:
             for p in r["parcelas_liberacao"]:
                 if p["status"] != "DISPONIVEL" or p["pendente"] <= TOLERANCIA:
@@ -1157,12 +1159,12 @@ def listar_pendencias(invoices, perfil=None):
                 vencido = p["vencimento"] < hoje()
                 add(r, ("Liberação do segurado vencida" if vencido else "Liberar valor segurado")
                     + (f" (invoice {p['invoice']} chegou)" if p["invoice"] else " (revalidação)"), "financeiro",
-                    p["vencimento"], p["pendente"], alerta=vencido or p["vencimento"] <= lim_7)
+                    p["vencimento"], p["pendente"], alerta=vencido, atencao=p["vencimento"] <= lim_7)
         if fin and r["swifts_pendentes"]:
             add(r, f"Cadastrar o caminho do Swift ({r['swifts_pendentes']} pagamento(s))", "financeiro")
         for doc in r["docs_quebrados"]:
             add(r, f"Arquivo não encontrado na pasta da rede ({NOME_DOCUMENTO[doc['origem']]}): corrigir o caminho "
-                   f"{doc['caminho']}", SETOR_DOCUMENTO[doc["origem"]], alerta=True)
+                   f"{doc['caminho']}", SETOR_DOCUMENTO[doc["origem"]], atencao=True)
         if fin and not r["banco_debito"] and (r["etd_planejado"] or r["etd_real"]):
             add(r, "Informar o banco de débito", "financeiro")
     for p in pend:
