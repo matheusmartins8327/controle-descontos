@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.24"
+VERSAO = "4.25"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -346,6 +346,24 @@ CREATE TABLE IF NOT EXISTS senha_codigos (
     expira_em TEXT NOT NULL,
     tentativas INTEGER NOT NULL DEFAULT 0,
     usado_em TEXT
+);
+-- versão 4.25: condição de pagamento padrão e lembretes por fornecedor
+CREATE TABLE IF NOT EXISTS fornecedor_condicao (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fornecedor_id INTEGER NOT NULL REFERENCES fornecedores(id) ON DELETE CASCADE,
+    ordem INTEGER NOT NULL,
+    percentual REAL NOT NULL,
+    tipo TEXT NOT NULL,                   -- ANTECIPADO | PRAZO
+    dias INTEGER
+);
+CREATE TABLE IF NOT EXISTS fornecedor_lembretes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fornecedor_id INTEGER NOT NULL REFERENCES fornecedores(id) ON DELETE CASCADE,
+    texto TEXT NOT NULL,
+    criado_por INTEGER REFERENCES usuarios(id),
+    criado_em TEXT NOT NULL,
+    ok_por INTEGER REFERENCES usuarios(id),  -- quem deu OK (o lembrete deixa de aparecer)
+    ok_em TEXT
 );
 -- versão 4.0: e-mails automáticos
 CREATE TABLE IF NOT EXISTS notificacoes_estado (
@@ -2341,10 +2359,115 @@ def fornecedores():
                 flash("Já existe um fornecedor com este nome.", "erro")
         return redirect(url_for("fornecedores"))
     lista = db.execute(
-        "SELECT f.*, (SELECT COUNT(*) FROM invoices i WHERE i.fornecedor_id = f.id) AS qtd"
+        "SELECT f.*, (SELECT COUNT(*) FROM invoices i WHERE i.fornecedor_id = f.id) AS qtd,"
+        " (SELECT COUNT(*) FROM fornecedor_lembretes l WHERE l.fornecedor_id = f.id AND l.ok_em IS NULL) AS lembretes"
         " FROM fornecedores f ORDER BY f.ativo DESC, f.nome"
     ).fetchall()
-    return render_template("fornecedores.html", fornecedores=lista, pode_editar=pode_editar)
+    condicoes = {f["id"]: condicao_texto({"condicao": condicao_fornecedor(f["id"])}) for f in lista}
+    return render_template("fornecedores.html", fornecedores=lista, pode_editar=pode_editar, condicoes=condicoes)
+
+
+# ---------------------------------------------------------------------------
+# Configuração do fornecedor: condição de pagamento padrão e lembretes para o próximo invoice
+# ---------------------------------------------------------------------------
+def condicao_fornecedor(fid):
+    return [dict(c) for c in get_db().execute(
+        "SELECT percentual, tipo, dias FROM fornecedor_condicao WHERE fornecedor_id = ? ORDER BY ordem", (fid,))]
+
+
+def lembretes_ativos(fid):
+    return get_db().execute(
+        "SELECT l.*, u.nome AS autor FROM fornecedor_lembretes l LEFT JOIN usuarios u ON u.id = l.criado_por"
+        " WHERE l.fornecedor_id = ? AND l.ok_em IS NULL ORDER BY l.id", (fid,)).fetchall()
+
+
+@app.route("/fornecedores/<int:fid>", methods=["GET", "POST"])
+@login_obrigatorio
+def fornecedor_config(fid):
+    db = get_db()
+    f = db.execute("SELECT * FROM fornecedores WHERE id = ?", (fid,)).fetchone()
+    if f is None:
+        abort(404)
+    pode_editar = pode("importacao")
+    if request.method == "POST":
+        if not pode_editar:
+            abort(403)
+        acao = request.form.get("acao")
+        if acao == "condicao":
+            cond, erros = [], []
+            for pct, tipo, dias in zip(request.form.getlist("cond_pct"), request.form.getlist("cond_tipo"),
+                                       request.form.getlist("cond_dias") + [""] * 20):
+                p = parse_num(pct)
+                if p is None:
+                    continue
+                if tipo not in CONDICOES or p <= 0 or p > 100:
+                    erros.append("Percentual ou tipo inválido.")
+                elif tipo == "PRAZO" and not dias.strip().isdigit():
+                    erros.append(f"Informe os dias após a HAWB da parcela de {fmt_qtd(p)}%.")
+                else:
+                    cond.append((p, tipo, int(dias) if tipo == "PRAZO" else None))
+            if cond and abs(sum(c[0] for c in cond) - 100) > 0.01:
+                erros.append("A condição precisa somar 100%.")
+            if erros:
+                for e in erros:
+                    flash(e, "erro")
+            else:
+                db.execute("DELETE FROM fornecedor_condicao WHERE fornecedor_id = ?", (fid,))
+                for ordem, (p, tipo, dias) in enumerate(cond, 1):
+                    db.execute("INSERT INTO fornecedor_condicao (fornecedor_id, ordem, percentual, tipo, dias)"
+                               " VALUES (?, ?, ?, ?, ?)", (fid, ordem, p, tipo, dias))
+                db.commit()
+                flash("Condição de pagamento padrão salva." if cond else "Condição padrão removida.", "ok")
+            return redirect(url_for("fornecedor_config", fid=fid) + "#condicao")
+        if acao == "lembrete":
+            texto = request.form.get("texto", "").strip()[:1000]
+            if not texto:
+                flash("Escreva o texto do lembrete.", "erro")
+            else:
+                db.execute("INSERT INTO fornecedor_lembretes (fornecedor_id, texto, criado_por, criado_em)"
+                           " VALUES (?, ?, ?, ?)", (fid, texto, g.usuario["id"], agora()))
+                db.commit()
+                flash("Lembrete cadastrado: vai aparecer ao criar o próximo invoice deste fornecedor.", "ok")
+            return redirect(url_for("fornecedor_config", fid=fid) + "#lembretes")
+        if acao == "excluir_lembrete":
+            db.execute("DELETE FROM fornecedor_lembretes WHERE id = ? AND fornecedor_id = ?",
+                       (request.form.get("lid", type=int), fid))
+            db.commit()
+            flash("Lembrete excluído.", "ok")
+            return redirect(url_for("fornecedor_config", fid=fid) + "#lembretes")
+        abort(400)
+    historico = db.execute(
+        "SELECT l.*, u.nome AS autor, o.nome AS quem_ok FROM fornecedor_lembretes l"
+        " LEFT JOIN usuarios u ON u.id = l.criado_por LEFT JOIN usuarios o ON o.id = l.ok_por"
+        " WHERE l.fornecedor_id = ? AND l.ok_em IS NOT NULL ORDER BY l.ok_em DESC LIMIT 30", (fid,)).fetchall()
+    return render_template("fornecedor_config.html", f=f, condicao=condicao_fornecedor(fid),
+                           lembretes=lembretes_ativos(fid), historico=historico, pode_editar=pode_editar)
+
+
+@app.route("/api/fornecedor-info")
+@login_obrigatorio
+def api_fornecedor_info():
+    """Condição padrão e lembretes ativos do fornecedor escolhido na criação do invoice."""
+    fid = obter_fornecedor(" ".join(request.args.get("nome", "").split()), criar=False)
+    if not fid:
+        return jsonify({"condicao": [], "lembretes": []})
+    return jsonify({
+        "condicao": condicao_fornecedor(fid),
+        "lembretes": [{"id": l["id"], "texto": l["texto"], "autor": l["autor"] or "—",
+                       "em": fmt_data(l["criado_em"])} for l in lembretes_ativos(fid)],
+    })
+
+
+@app.route("/api/lembretes/<int:lid>/ok", methods=["POST"])
+@login_obrigatorio
+def api_lembrete_ok(lid):
+    """OK no lembrete: ele não aparece mais nos próximos invoices."""
+    db = get_db()
+    if db.execute("SELECT 1 FROM fornecedor_lembretes WHERE id = ? AND ok_em IS NULL", (lid,)).fetchone() is None:
+        return jsonify({"ok": False}), 404
+    db.execute("UPDATE fornecedor_lembretes SET ok_em = ?, ok_por = ? WHERE id = ?", (agora(), g.usuario["id"], lid))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------------------

@@ -336,6 +336,71 @@
     carregarDescontos();
   }
   recalcular();
+  {% if not editando %}
+  // ---- fornecedor escolhido: condição de pagamento padrão e lembretes (aba Fornecedores)
+  (function () {
+    const campoForn = document.getElementById('fornecedor');
+    const avisoCond = document.createElement('p'); avisoCond.className = 'aviso-condicao';
+    document.querySelector('.acoes-condicao').after(avisoCond);
+    const vistos = new Set();
+    let ultimo = '';
+    const condAtual = () => Array.from(parcelas.rows).map(tr => [num(tr.querySelector('[name=cond_pct]').value),
+      tr.querySelector('[name=cond_tipo]').value, tr.querySelector('[name=cond_dias]').value.trim()]);
+    const vazia = () => { const c = condAtual(); return c.length === 1 && (c[0][0] === null || (c[0][0] === 100 && c[0][1] === 'PRAZO' && !c[0][2])); };
+    function preencherCondicao(cond, nome) {
+      const atual = JSON.stringify(condAtual()), nova = JSON.stringify(cond.map(c => [c.percentual, c.tipo, c.dias != null ? String(c.dias) : '']));
+      if (atual === nova) return;
+      if (!vazia() && !confirm(`Substituir a condição de pagamento pela condição padrão de ${nome}?`)) return;
+      while (parcelas.rows.length > 1) parcelas.deleteRow(-1);
+      cond.forEach((c, i) => {
+        const tr = i === 0 ? parcelas.rows[0] : parcelas.rows[0].cloneNode(true);
+        tr.querySelector('[name=cond_pct]').value = String(c.percentual).replace('.', ',');
+        tr.querySelector('[name=cond_tipo]').value = c.tipo;
+        tr.querySelector('[name=cond_dias]').value = c.dias != null ? c.dias : '';
+        if (i > 0) parcelas.appendChild(tr);
+      });
+      ajustarParcelas(); registrarCondicao();
+      avisoCond.textContent = `Condição preenchida conforme o cadastro de ${nome}. Pode ser alterada se este invoice for diferente.`;
+    }
+    function mostrarLembretes(lista, nome) {
+      const fundo = document.createElement('div'); fundo.className = 'modal-fundo';
+      const esc = t => t.replace(/[&<>"]/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[ch]));
+      fundo.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
+        <h2>🔔 Lembrete${lista.length > 1 ? 's' : ''} para ${esc(nome)}</h2>
+        ${lista.map(l => `<div class="lembrete-item"><div><p>${esc(l.texto)}</p><small>${esc(l.autor)} · ${esc(l.em)}</small></div></div>`).join('')}
+        <div class="botoes">
+          <button type="button" class="btn" data-acao="depois">Me lembre no próximo invoice</button>
+          <button type="button" class="btn primario" data-acao="ok">OK</button>
+        </div></div>`;
+      document.body.appendChild(fundo);
+      fundo.querySelector('[data-acao=ok]').focus();
+      fundo.addEventListener('click', async e => {
+        const acao = e.target.dataset.acao; if (!acao) return;
+        if (acao === 'ok') {
+          await Promise.all(lista.map(l => fetch(`{{ url_for('api_lembrete_ok', lid=0) }}`.replace('/0/', `/${l.id}/`),
+            {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+             body: 'csrf_token={{ csrf_token() }}'})));
+        }
+        fundo.remove();
+      });
+    }
+    async function aoEscolher(inicial) {
+      const nome = campoForn.value.trim();
+      if (!nome || nome.toLowerCase() === ultimo) return;
+      ultimo = nome.toLowerCase();
+      let info;
+      try { info = await (await fetch(`{{ url_for('api_fornecedor_info') }}?nome=${encodeURIComponent(nome)}`)).json(); }
+      catch (e) { return; }
+      avisoCond.textContent = '';
+      if (info.condicao && info.condicao.length && inicial !== true) preencherCondicao(info.condicao, nome);
+      if (info.lembretes && info.lembretes.length && !vistos.has(ultimo)) { vistos.add(ultimo); mostrarLembretes(info.lembretes, nome); }
+    }
+    campoForn.addEventListener('change', aoEscolher);
+    campoForn.addEventListener('blur', aoEscolher);
+    if (campoForn.value.trim()) aoEscolher(true);  // página reaberta após erro: não mexe na condição digitada
+  })();
+  {% endif %}
 })();
+
 </script>
 {% endblock %}

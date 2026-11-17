@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.24)
+# Controle de Invoices e Descontos (v4.25)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -158,6 +158,12 @@ Na tela de login, **Esqueci minha senha**: o usuário informa o e-mail e recebe 
 **código de 6 dígitos** válido por 15 minutos, que digita junto com a nova senha. Sem links no e-mail; o código só vale
 uma vez, é cancelado após 5 erros, há limite de 3 pedidos por hora e a tela não revela se o e-mail está cadastrado.
 O código não fica guardado no histórico de e-mails. O Administrador continua podendo redefinir senhas em Usuários.
+
+### Fornecedores: condição padrão e lembretes
+Em **Fornecedores → Configurar**, a Importação cadastra para cada fornecedor:
+- **Condição de pagamento padrão**: ao escolher o fornecedor na criação do invoice, a condição é preenchida (continua editável).
+- **Lembretes**: aparecem numa janela ao escolher o fornecedor na criação do invoice. **OK** dá o lembrete como visto (não
+  aparece mais; fica no histórico com quem e quando); **Me lembre no próximo invoice** fecha e ele volta na próxima criação.
 
 ### Arquivos anexados (padrão do sistema)
 Todo anexo é feito pelo botão **Anexar** (envio do arquivo pelo navegador; vários de uma vez; até 10 MB cada; PDF,

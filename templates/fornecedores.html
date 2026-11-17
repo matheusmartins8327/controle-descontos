@@ -18,7 +18,7 @@
   {% if fornecedores %}
   <div class="rolagem">
   <table>
-    <thead><tr><th>Nome</th><th>Cidade</th><th>Contato</th><th class="num">Descontos</th><th>Situação</th>{% if pode_editar %}<th></th>{% endif %}</tr></thead>
+    <thead><tr><th>Nome</th><th>Cidade</th><th>Contato</th><th>Condição padrão</th><th>Lembretes</th><th class="num">Invoices</th><th>Situação</th><th></th></tr></thead>
     <tbody>
     {% for f in fornecedores %}
     {% if pode_editar %}
@@ -26,12 +26,19 @@
         <td><input form="f{{ f.id }}" name="nome" value="{{ f.nome }}" required></td>
         <td><input form="f{{ f.id }}" name="cidade" value="{{ f.cidade or '' }}"></td>
         <td><input form="f{{ f.id }}" name="contato" value="{{ f.contato or '' }}"></td>
+        <td><small>{{ condicoes[f.id] or '—' }}</small></td>
+        <td>{% if f.lembretes %}<span class="etiqueta lembrete">🔔 {{ f.lembretes }}</span>{% else %}<small>—</small>{% endif %}</td>
         <td class="num">{{ f.qtd }}</td>
         <td><select form="f{{ f.id }}" name="ativo"><option value="1" {{ 'selected' if f.ativo }}>Ativo</option><option value="0" {{ 'selected' if not f.ativo }}>Inativo</option></select></td>
-        <td><form method="post" id="f{{ f.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="id" value="{{ f.id }}"><button class="btn pequeno">Salvar</button></form></td>
+        <td class="acoes-forn"><form method="post" id="f{{ f.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="id" value="{{ f.id }}"><button class="btn pequeno">Salvar</button></form>
+          <a class="btn pequeno primario" href="{{ url_for('fornecedor_config', fid=f.id) }}">Configurar</a></td>
       </tr>
     {% else %}
-      <tr><td>{{ f.nome }}</td><td>{{ f.cidade or '—' }}</td><td>{{ f.contato or '—' }}</td><td class="num">{{ f.qtd }}</td><td>{{ 'Ativo' if f.ativo else 'Inativo' }}</td></tr>
+      <tr><td>{{ f.nome }}</td><td>{{ f.cidade or '—' }}</td><td>{{ f.contato or '—' }}</td>
+        <td><small>{{ condicoes[f.id] or '—' }}</small></td>
+        <td>{% if f.lembretes %}<span class="etiqueta lembrete">🔔 {{ f.lembretes }}</span>{% else %}<small>—</small>{% endif %}</td>
+        <td class="num">{{ f.qtd }}</td><td>{{ 'Ativo' if f.ativo else 'Inativo' }}</td>
+        <td><a class="btn pequeno" href="{{ url_for('fornecedor_config', fid=f.id) }}">Ver</a></td></tr>
     {% endif %}
     {% endfor %}
     </tbody>

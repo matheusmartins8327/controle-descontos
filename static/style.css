@@ -540,3 +540,24 @@ th.ordenavel.desc::after { content: " ↓"; opacity: 1; }
 .filtro-info { display: none; align-items: center; gap: .6rem; font-size: .85rem; color: var(--pri-escuro); margin: .2rem 0 .5rem; }
 .filtro-info.ativo { display: flex; }
 .dica-filtros { color: var(--suave); align-self: center; }
+
+/* v4.25: configuração do fornecedor e lembretes */
+.etiqueta.lembrete { background: #fff4d6; color: #8a5a00; font-size: .78rem; padding: .1rem .5rem; border-radius: 99px; font-weight: 600; white-space: nowrap; }
+.acoes-forn { display: flex; gap: .35rem; align-items: center; }
+.acoes-forn form { margin: 0; }
+.lembrete-item { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; padding: .7rem .9rem;
+  border: 1px solid #f3dca0; background: #fffaf0; border-radius: 10px; margin-bottom: .5rem; }
+.lembrete-item p { margin: 0 0 .25rem; white-space: pre-wrap; }
+.lembrete-item form { margin: 0; }
+.lembrete-item.visto { background: #f7f8fa; border-color: var(--borda); color: var(--suave); }
+.novo-lembrete { margin-top: .8rem; }
+.novo-lembrete textarea { width: 100%; font: inherit; }
+.historico-lembretes { margin-top: 1rem; }
+.historico-lembretes summary { cursor: pointer; color: var(--pri-escuro); margin-bottom: .5rem; }
+/* janela de lembretes na criação do invoice */
+.modal-fundo { position: fixed; inset: 0; background: rgba(10,20,50,.45); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
+.modal { background: #fff; border-radius: 14px; max-width: 560px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,.25); padding: 1.3rem 1.4rem; max-height: 85vh; overflow: auto; }
+.modal h2 { margin: 0 0 .3rem; }
+.modal .lembrete-item { margin: .7rem 0; }
+.modal .botoes { display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap; margin-top: .5rem; }
+.aviso-condicao { margin-top: .4rem; font-size: .85rem; color: var(--pri-escuro); }

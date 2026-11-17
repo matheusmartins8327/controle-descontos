@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block titulo %}{{ f.nome }}{% endblock %}
+{% block conteudo %}
+<p><a href="{{ url_for('fornecedores') }}">← Fornecedores</a></p>
+<h1>{{ f.nome }}</h1>
+<p class="sub">{{ f.cidade or '' }}{% if f.cidade and f.contato %} · {% endif %}{{ f.contato or '' }}{% if not f.ativo %} · <strong>Inativo</strong>{% endif %}</p>
+
+<section class="bloco" id="condicao">
+  <h2>Condição de pagamento padrão</h2>
+  <p class="sub">Ao criar um invoice deste fornecedor, a condição é preenchida automaticamente. Ela continua podendo ser alterada no invoice;
+    serve só para evitar erros de digitação.</p>
+  {% if pode_editar %}
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="condicao">
+    <table class="condicao"><thead><tr><th class="num">Percentual</th><th>Tipo</th><th class="num">Dias após a HAWB</th><th></th></tr></thead>
+      <tbody id="parcelas-forn">
+      {% for c in (condicao or [{'percentual': None, 'tipo': 'PRAZO', 'dias': None}]) %}
+        <tr><td><input name="cond_pct" class="num" inputmode="decimal" value="{{ c.percentual|qtd if c.percentual is not none else '' }}"> %</td>
+          <td><select name="cond_tipo">{% for k, v in CONDICOES.items() %}<option value="{{ k }}" {{ 'selected' if c.tipo == k }}>{{ v }}</option>{% endfor %}</select></td>
+          <td><input name="cond_dias" class="num" inputmode="numeric" value="{{ c.dias if c.dias is not none else '' }}"></td>
+          <td><button type="button" class="btn pequeno link remover">✕</button></td></tr>
+      {% endfor %}
+      </tbody></table>
+    <div class="acoes-condicao">
+      <button type="button" class="btn pequeno" id="add-parcela-forn">+ Parcela</button>
+      <button class="btn primario pequeno">Salvar condição</button>
+    </div>
+    <p class="sub dica">Para remover a condição padrão, apague os percentuais e salve.</p>
+  </form>
+  {% else %}<p>{{ condicao_texto({'condicao': condicao}) or 'Não cadastrada.' }}</p>{% endif %}
+</section>
+
+<section class="bloco" id="lembretes">
+  <h2>Lembretes para o próximo invoice <span class="cont">{{ lembretes|length }}</span></h2>
+  <p class="sub">Aparecem na tela de criação do invoice quando este fornecedor é escolhido. Com <strong>OK</strong>, o lembrete é dado como visto e
+    não aparece mais; com <strong>Me lembre no próximo invoice</strong>, volta a aparecer na próxima criação.</p>
+  {% for l in lembretes %}
+    <div class="lembrete-item">
+      <div><p>{{ l.texto }}</p><small>{{ l.autor or '—' }} · {{ l.criado_em|data }}</small></div>
+      {% if pode_editar %}<form method="post" onsubmit="return confirm('Excluir este lembrete?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="excluir_lembrete"><input type="hidden" name="lid" value="{{ l.id }}">
+        <button class="btn pequeno link">Excluir</button></form>{% endif %}
+    </div>
+  {% else %}<p class="vazio">Nenhum lembrete ativo.</p>{% endfor %}
+  {% if pode_editar %}
+  <form method="post" class="novo-lembrete">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="lembrete">
+    <label>Novo lembrete<textarea name="texto" rows="3" maxlength="1000" required placeholder="Ex.: confirmar o novo preço do item SB.001.50 antes de fechar o invoice."></textarea></label>
+    <button class="btn primario">+ Adicionar lembrete</button>
+  </form>
+  {% endif %}
+  {% if historico %}
+  <details class="historico-lembretes"><summary>Lembretes já vistos ({{ historico|length }})</summary>
+    {% for l in historico %}<div class="lembrete-item visto"><div><p>{{ l.texto }}</p>
+      <small>{{ l.autor or '—' }} · {{ l.criado_em|data }} — OK por {{ l.quem_ok or '—' }} em {{ l.ok_em|data }}</small></div></div>{% endfor %}
+  </details>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  const corpo = document.getElementById('parcelas-forn');
+  if (corpo) {
+    const ajustar = () => corpo.querySelectorAll('tr').forEach(tr => {
+      const prazo = tr.querySelector('[name=cond_tipo]').value === 'PRAZO', d = tr.querySelector('[name=cond_dias]');
+      d.readOnly = !prazo; d.classList.toggle('inativo', !prazo); if (!prazo) d.value = '';
+    });
+    corpo.addEventListener('change', ajustar);
+    corpo.addEventListener('click', e => {
+      if (!e.target.classList.contains('remover')) return;
+      if (corpo.rows.length > 1) e.target.closest('tr').remove(); else e.target.closest('tr').querySelectorAll('input').forEach(i => i.value = '');
+    });
+    document.getElementById('add-parcela-forn').addEventListener('click', () => {
+      const tr = corpo.rows[0].cloneNode(true); tr.querySelectorAll('input').forEach(i => i.value = '');
+      tr.querySelector('[name=cond_tipo]').value = 'PRAZO'; corpo.appendChild(tr); ajustar();
+    });
+    ajustar();
+  }
+</script>
+{% endblock %}
