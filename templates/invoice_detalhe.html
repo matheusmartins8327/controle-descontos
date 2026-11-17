@@ -417,14 +417,33 @@
   </ul>
 </section>
 
-{% if admin and ativo and not r.pagamentos and not r.deducoes_recebidas and not d %}
-<section class="bloco admin">
+{% if admin %}
+<section class="bloco admin" id="admin">
   <h2>Ações do administrador</h2>
+  {% if ativo and not r.pagamentos and not r.deducoes_recebidas and not d %}
   <form method="post" action="{{ url_for('invoice_cancelar', id=r.id) }}" onsubmit="return confirm('Cancelar este invoice?')" class="linha-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label class="cresce">Cancelar invoice — motivo<input name="motivo" required></label>
     <button class="btn perigo">Cancelar invoice</button>
   </form>
+  {% endif %}
+  <details class="excluir-invoice">
+    <summary>Excluir este invoice definitivamente</summary>
+    <p>Apaga o invoice <strong>{{ r.numero }}</strong> e tudo o que depende dele: itens, condição de pagamento, desconto e revalidações,
+      {{ r.pagamentos|length }} pagamento(s) com os Swifts, lançamentos financeiros e arquivos, DUIMP anexada, histórico e e-mails.
+      Um backup do banco é feito antes (os arquivos anexados não entram no backup).</p>
+    {% set ligadas = r.deducoes_recebidas|list + r.deducoes_do_desconto|list %}
+    {% if ligadas %}<div class="flash aviso-box"><strong>Atenção: {{ ligadas|length }} dedução(ões) ligam este invoice a outros e também serão removidas</strong>
+      (o valor desses invoices muda):
+      <ul>{% for x in r.deducoes_recebidas %}<li>{{ x.valor|moeda(m) }} do desconto do invoice {{ x.invoice_origem }}, deduzido aqui</li>{% endfor %}
+          {% for x in r.deducoes_do_desconto %}<li>{{ x.valor|moeda(m) }} deste desconto, deduzido no invoice {{ x.invoice_destino }}</li>{% endfor %}</ul></div>{% endif %}
+    <form method="post" action="{{ url_for('invoice_excluir', id=r.id) }}" class="linha-form"
+          onsubmit="return confirm('Excluir DEFINITIVAMENTE o invoice {{ r.numero|replace("'", "") }}? Esta ação não pode ser desfeita pela tela.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label class="cresce">Para confirmar, digite o número do invoice ({{ r.numero }})<input name="confirmacao" autocomplete="off" required></label>
+      <button class="btn perigo">Excluir invoice</button>
+    </form>
+  </details>
 </section>
 {% endif %}
 {% endblock %}

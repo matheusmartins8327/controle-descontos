@@ -561,3 +561,9 @@ th.ordenavel.desc::after { content: " ↓"; opacity: 1; }
 .modal .lembrete-item { margin: .7rem 0; }
 .modal .botoes { display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap; margin-top: .5rem; }
 .aviso-condicao { margin-top: .4rem; font-size: .85rem; color: var(--pri-escuro); }
+
+/* v4.26: exclusão de invoice */
+.excluir-invoice { margin-top: .8rem; border-top: 1px solid var(--borda); padding-top: .7rem; }
+.excluir-invoice summary { cursor: pointer; color: #b42318; font-weight: 600; }
+.excluir-invoice p { font-size: .9rem; }
+.excluir-invoice ul { margin: .3rem 0 0 1.1rem; }

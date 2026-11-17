@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.25"
+VERSAO = "4.26"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2288,6 +2288,65 @@ def pagamento_excluir(pid):
     return redirect(url_for("invoice_detalhe", id=p["invoice_id"]) + "#pagamentos")
 
 
+def deducoes_ligadas(iid):
+    """Deduções que ligam este invoice a outros (recebidas por ele ou feitas com o desconto dele)."""
+    return get_db().execute(
+        "SELECT x.*, d.invoice_id AS origem_id, o.numero AS origem_numero, i.numero AS destino_numero"
+        " FROM deducoes x JOIN descontos d ON d.id = x.desconto_id JOIN invoices o ON o.id = d.invoice_id"
+        " JOIN invoices i ON i.id = x.invoice_id WHERE x.invoice_id = ? OR d.invoice_id = ?", (iid, iid)).fetchall()
+
+
+def excluir_invoice(iid):
+    """Exclui o invoice e tudo o que depende dele (itens, condição, desconto, deduções, pagamentos, lançamentos,
+    arquivos, histórico e e-mails). Deduções ligadas a outros invoices também são removidas, com registro no
+    histórico desses invoices. Faz commit; os arquivos são apagados do disco depois."""
+    db = get_db()
+    inv = db.execute("SELECT * FROM invoices WHERE id = ?", (iid,)).fetchone()
+    ligadas = deducoes_ligadas(iid)
+    for x in ligadas:
+        outro = x["origem_id"] if x["invoice_id"] == iid else x["invoice_id"]
+        if outro != iid:
+            registrar_evento(outro, f"Dedução removida pela exclusão do invoice {inv['numero']}",
+                             f"{fmt_moeda(x['valor'], inv['moeda'])} (desconto do invoice {x['origem_numero']} "
+                             f"deduzido no invoice {x['destino_numero']})")
+    arquivos = db.execute(
+        "SELECT * FROM arquivos WHERE (origem = 'duimp' AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
+        " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
+        " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid)).fetchall()
+    db.execute("DELETE FROM arquivos WHERE (origem = 'duimp' AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
+               " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
+               " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid))
+    db.execute("DELETE FROM deducoes WHERE invoice_id = ? OR desconto_id IN (SELECT id FROM descontos WHERE invoice_id = ?)",
+               (iid, iid))
+    db.execute("DELETE FROM revisoes_desconto WHERE desconto_id IN (SELECT id FROM descontos WHERE invoice_id = ?)", (iid,))
+    db.execute("DELETE FROM lancamento_anexos WHERE lancamento_id IN (SELECT id FROM lancamentos WHERE invoice_id = ?)",
+               (iid,))
+    for t in ("descontos", "pagamentos", "invoice_itens", "condicao_parcelas", "lancamentos", "eventos",
+              "notificacoes_estado", "anexos", "emails"):
+        db.execute(f"DELETE FROM {t} WHERE invoice_id = ?", (iid,))
+    db.execute("DELETE FROM invoices WHERE id = ?", (iid,))
+    db.commit()
+    remover_arquivos(arquivos)
+    return inv, ligadas, len(arquivos)
+
+
+@app.route("/invoices/<int:id>/excluir", methods=["POST"])
+@somente_admin
+def invoice_excluir(id):
+    """Exclusão definitiva de um invoice pelo Administrador (backup do banco antes)."""
+    r = carregar_invoice(id)
+    if request.form.get("confirmacao", "").strip().lower() != r["numero"].strip().lower():
+        flash(f"Para excluir, digite exatamente o número do invoice ({r['numero']}).", "erro")
+        return redirect(url_for("invoice_detalhe", id=id) + "#admin")
+    backup = backup_banco("-antes-de-excluir-invoice")
+    inv, ligadas, n_arq = excluir_invoice(id)
+    flash(f"Invoice {inv['numero']} ({r['fornecedor']}) excluído definitivamente"
+          + (f", com {len(ligadas)} dedução(ões) ligada(s) a outros invoices" if ligadas else "")
+          + (f" e {n_arq} arquivo(s)" if n_arq else "")
+          + f". Backup do banco feito antes: {os.path.basename(backup) if backup else '—'}.", "ok")
+    return redirect(url_for("painel"))
+
+
 @app.route("/invoices/<int:id>/cancelar", methods=["POST"])
 @somente_admin
 def invoice_cancelar(id):
@@ -4238,19 +4297,7 @@ def carga_historico_excluir(id):
     if ligado:
         flash("Este invoice tem deduções ligadas a outros invoices: remova as deduções antes de excluí-lo.", "erro")
         return redirect(url_for("carga_historico"))
-    arquivos = db.execute("SELECT * FROM arquivos WHERE (origem = 'duimp' AND origem_id = ?) OR (origem = 'pagamento'"
-                          " AND origem_id IN (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento'"
-                          " AND origem_id IN (SELECT id FROM lancamentos WHERE invoice_id = ?))", (id, id, id)).fetchall()
-    for a in arquivos:
-        db.execute("DELETE FROM arquivos WHERE id = ?", (a["id"],))
-    db.execute("DELETE FROM revisoes_desconto WHERE desconto_id IN (SELECT id FROM descontos WHERE invoice_id = ?)", (id,))
-    for t in ("descontos", "pagamentos", "invoice_itens", "condicao_parcelas", "lancamentos", "eventos",
-              "notificacoes_estado", "anexos"):
-        db.execute(f"DELETE FROM {t} WHERE invoice_id = ?", (id,))
-    db.execute("DELETE FROM emails WHERE invoice_id = ?", (id,))
-    db.execute("DELETE FROM invoices WHERE id = ?", (id,))
-    db.commit()
-    remover_arquivos(arquivos)
+    excluir_invoice(id)
     flash(f"Invoice {inv['numero']} excluído da carga de histórico.", "ok")
     return redirect(url_for("carga_historico"))
 # ---- importação da planilha de histórico (parte da CARGA DE HISTÓRICO, também temporária) ----
