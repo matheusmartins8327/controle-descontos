@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_documentos.html" import docs, docs_forms %}
+{% from "_documentos.html" import arquivos, botao_anexar, docs_antigos, arquivos_forms %}
 {% block titulo %}{{ r.numero }} · {{ r.fornecedor }}{% endblock %}
 {% block conteudo %}
 {% set m = r.moeda %}
@@ -80,11 +80,12 @@
     <dt>Coleta programada</dt><dd>{{ r.data_prog_coleta|data }}</dd>
     {% if r.obs %}<dt>Observações</dt><dd class="pre">{{ r.obs }}</dd>{% endif %}
   </dl>
-  <div class="invoice-assinado"><strong>Invoice assinado{{ ' *' if not r.historico }}</strong> <small>· caminho na pasta da rede</small>
-    {{ docs(r.invoice_docs, 'invoice', r.id, imp and ativo, request.path, '\\\\servidor\\Importacao\\Invoices\\arquivo.pdf') }}
-    {% if not r.invoice_docs %}<small class="{{ 'erro-texto' if not r.historico and not r.cadastro_concluido_em }}">{{ 'Obrigatório para concluir o cadastro.' if not r.historico and not r.cadastro_concluido_em else 'Não cadastrado.' }}</small>{% endif %}
+  <div class="invoice-assinado arquivos"><strong>Invoice assinado{{ ' *' if not r.historico }}</strong>
+    {{ arquivos(r.invoice_arquivos, imp and ativo, 'invoice assinado') }}{{ docs_antigos(r.invoice_docs) }}
+    {% if imp and ativo %}{{ botao_anexar('f-invoice-' ~ r.id, 'Anexar invoice assinado' if not r.invoice_arquivos else 'Anexar outro') }}{% endif %}
+    {% if not r.invoice_arquivos and not r.invoice_docs %}<small class="{{ 'erro-texto' if not r.historico and not r.cadastro_concluido_em }}">{{ 'Obrigatório para concluir o cadastro.' if not r.historico and not r.cadastro_concluido_em else 'Não cadastrado.' }}</small>{% endif %}
   </div>
-  {{ docs_forms(r.invoice_docs, 'invoice', r.id, imp and ativo, request.path) }}
+  {{ arquivos_forms(r.invoice_arquivos, imp and ativo, 'f-invoice-' ~ r.id, url_for('invoice_assinado_anexar', id=r.id)) }}
   <div class="rolagem">
   <table>
     {% set com_desc = r.deducoes_aplicadas > 0.005 %}
@@ -164,9 +165,9 @@
           {% else %}<textarea name="{{ campo }}" rows="2">{{ r[campo] or '' }}</textarea>{% endif %}
           </label>
           {% if campo == 'data_registro_br' %}
-          <div class="campo-arquivo"><span class="rotulo-arq">DUIMP — caminho na pasta da rede</span>
-            {% for a in r.duimp_arquivos %}<div class="arq"><a href="{{ url_for('arquivo_baixar', aid=a.id) }}" target="_blank" rel="noopener">📄 <span>{{ a.nome }}</span></a></div>{% endfor %}
-            {{ docs(r.duimp_docs, 'duimp', r.id, imp, request.path ~ '#etapa-DESEMBARACO', '\\\\servidor\\Importacao\\DUIMP\\arquivo.pdf') }}
+          <div class="campo-arquivo arquivos"><span class="rotulo-arq">DUIMP (arquivo)</span>
+            {{ arquivos(r.duimp_arquivos, imp, 'DUIMP') }}{{ docs_antigos(r.duimp_docs) }}
+            {{ botao_anexar('f-duimp-' ~ r.id, 'Anexar DUIMP' if not r.duimp_arquivos else 'Anexar outro') }}
           </div>
           {% endif %}
         {% endfor %}
@@ -174,7 +175,7 @@
       </form>
       {% else %}
       <dl>{% for campo, rotulo, tipo, obrig in CAMPOS_ETAPA[e] %}<dt>{{ rotulo }}</dt><dd>{{ r[campo]|data if tipo == 'data' else (('Sim' if r[campo] else 'Não') if tipo == 'flag' else (r[campo] or '—')) }}</dd>
-        {% if campo == 'data_registro_br' %}<dt>DUIMP (caminho)</dt><dd>{% for a in r.duimp_arquivos %}<div class="arq"><a href="{{ url_for('arquivo_baixar', aid=a.id) }}" target="_blank" rel="noopener">📄 <span>{{ a.nome }}</span></a></div>{% endfor %}{{ docs(r.duimp_docs, 'duimp', r.id, False, request.path ~ '#etapa-DESEMBARACO') }}{% if not r.duimp_arquivos and not r.duimp_docs %}—{% endif %}</dd>{% endif %}{% endfor %}</dl>
+        {% if campo == 'data_registro_br' %}<dt>DUIMP (arquivo)</dt><dd class="arquivos">{{ arquivos(r.duimp_arquivos, False) }}{{ docs_antigos(r.duimp_docs) }}{% if not r.duimp_arquivos and not r.duimp_docs %}—{% endif %}</dd>{% endif %}{% endfor %}</dl>
       {% endif %}
       {% if e == 'EMBARQUE' %}
         <div class="banco">
@@ -190,8 +191,8 @@
     </div>
   {% endfor %}
   </div>
-  {# formulários dos caminhos da DUIMP (fora do formulário da etapa) #}
-  {{ docs_forms(r.duimp_docs, 'duimp', r.id, imp, request.path ~ '#etapa-DESEMBARACO') }}
+  {# formulários do anexo da DUIMP (fora do formulário da etapa) #}
+  {% if imp %}{{ arquivos_forms(r.duimp_arquivos, imp, 'f-duimp-' ~ r.id, url_for('duimp_anexar', id=r.id)) }}{% endif %}
 </section>
 
 {# ---------- inspeção e desconto (Engenharia de Processos) ---------- #}
@@ -361,10 +362,17 @@
           </div>
           {% endfor %}
           {% if p.swift_url %}<div class="arq"><a href="{{ p.swift_url }}" target="_blank" rel="noopener" title="Link do OneDrive registrado antes da versão 4.10">↗ <span>Swift (link antigo)</span></a></div>{% endif %}
+          {{ docs_antigos(r.swift_docs.get(p.id, [])) }}
           {% set tem_swift = p.swift_url or r.swift_arquivos.get(p.id) or r.swift_docs.get(p.id) %}
           {% if p.historico and not tem_swift %}<small>Histórico (sem Swift)</small>
           {% elif not tem_swift %}<span class="ciencia c-pendente">Pendente</span>{% endif %}
-          {{ docs(r.swift_docs.get(p.id, []), 'pagamento', p.id, fin, request.path ~ '#pagamentos', '\\\\servidor\\Financeiro\\Swift\\arquivo.pdf') }}</td>
+          {% if fin %}
+          <form method="post" action="{{ url_for('pagamento_swift', pid=p.id) }}" enctype="multipart/form-data" class="form-anexar">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="btn-anexar" title="Anexar o arquivo do Swift (até {{ ANEXO_MAX_MB }} MB)"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9"/></svg>
+              {{ 'Anexar Swift' if not tem_swift else 'Anexar' }}<input type="file" name="arquivo" multiple onchange="this.form.classList.add('enviando'); this.form.submit()"></label>
+          </form>
+          {% endif %}</td>
         <td>{% if fin %}<details class="admin-desfazer"><summary>Corrigir</summary>
           <form method="post" action="{{ url_for('pagamento_editar', pid=p.id) }}" class="form-corrigir">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -379,7 +387,6 @@
     {% endfor %}
     </tbody>
   </table>
-  {% for p in r.pagamentos %}{{ docs_forms(r.swift_docs.get(p.id, []), 'pagamento', p.id, fin, request.path ~ '#pagamentos') }}{% endfor %}
   </div>
   {% endif %}
   {% if fin and (r.principal_liberado_pendente > 0.005 or r.liberacao_disponivel > 0.005) %}
@@ -396,9 +403,8 @@
       <label>Valor pago ({{ m }}) *<input name="valor" id="valor-pagamento" inputmode="decimal" required>
         <small>Pode ser parcial.</small></label>
       <label>Banco<input name="banco" value="{{ r.banco_debito or '' }}"></label>
-      <label class="largo">Caminho do Swift na pasta da rede<span class="campo-com-botao"><input name="swift_caminho" id="swift-caminho" placeholder="\\servidor\Financeiro\Swift\arquivo.pdf (pode cadastrar depois)" autocomplete="off">
-        <button type="button" class="btn pequeno" data-doc-form="" data-alvo="swift-caminho" data-origem="pagamento" data-pasta="{{ pasta_padrao('pagamento') }}" data-rotulo="Swift">Selecionar arquivo…</button></span>
-        <small>O processo só é concluído com o Swift de todos os pagamentos.</small></label>
+      <label class="largo">Arquivo do Swift<input type="file" name="swift_arquivo" multiple>
+        <small>PDF ou imagem, até {{ ANEXO_MAX_MB }} MB. Pode anexar depois. O processo só é concluído com o Swift de todos os pagamentos.</small></label>
       <label class="largo">Observação<input name="obs" placeholder="Opcional"></label>
     </div>
     <button class="btn primario">Registrar pagamento</button>

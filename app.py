@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.30"
+VERSAO = "4.31"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -883,13 +883,10 @@ def calcular(inv):
     r["duimp_arquivos"] = arquivos_de("duimp", [iid]).get(iid, [])
     r["duimp_docs"] = documentos_de("duimp", [iid]).get(iid, [])
     r["invoice_docs"] = documentos_de("invoice", [iid]).get(iid, [])
-    # documentos cujo arquivo não foi encontrado na pasta da rede (pendência do setor que cadastra)
-    r["docs_quebrados"] = db.execute(
-        "SELECT d.* FROM documentos d WHERE d.status = 'NAO_ENCONTRADO' AND ("
-        " (d.origem IN ('duimp', 'invoice') AND d.origem_id = ?) OR"
-        " (d.origem = 'pagamento' AND d.origem_id IN (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR"
-        " (d.origem = 'lancamento' AND d.origem_id IN (SELECT id FROM lancamentos WHERE invoice_id = ?)))",
-        (iid, iid, iid)).fetchall()
+    r["invoice_arquivos"] = arquivos_de("invoice", [iid]).get(iid, [])
+    # v4.31: os anexos voltaram a ser arquivos guardados no sistema; os caminhos na rede antigos (v4.27 a 4.30)
+    # ficam só para consulta e não geram mais pendência de "arquivo não encontrado".
+    r["docs_quebrados"] = []
     pendentes = [p for p in r["parcelas"] if p["pendente"] > TOLERANCIA]
     # próximo vencimento em aberto (sem data: parcela a prazo de invoice sem data da HAWB)
     r["vencimento"] = pendentes[0]["vencimento"] if pendentes else None
@@ -1169,7 +1166,7 @@ def listar_pendencias(invoices, perfil=None):
                     + (f" (invoice {p['invoice']} chegou)" if p["invoice"] else " (revalidação)"), "financeiro",
                     p["vencimento"], p["pendente"], alerta=vencido, atencao=p["vencimento"] <= lim_7)
         if fin and r["swifts_pendentes"]:
-            add(r, f"Cadastrar o caminho do Swift ({r['swifts_pendentes']} pagamento(s))", "financeiro")
+            add(r, f"Anexar o Swift ({r['swifts_pendentes']} pagamento(s))", "financeiro")
         for doc in r["docs_quebrados"]:
             add(r, f"Arquivo não encontrado na pasta da rede ({NOME_DOCUMENTO[doc['origem']]}): corrigir o caminho "
                    f"{doc['caminho']}", SETOR_DOCUMENTO[doc["origem"]], atencao=True)
@@ -1440,15 +1437,17 @@ def criacao_faltando(r):
         falta.append("Itens")
     elif any(not x["codigo"] or not x["quantidade"] or x["valor_unit"] is None for x in itens):
         falta.append("Código, quantidade e preço de todos os itens")
-    # v4.30: o invoice assinado (caminho na rede) é obrigatório para concluir o cadastro.
-    # Não vale para o histórico nem para cadastros já concluídos antes desta regra.
+    # v4.30: o invoice assinado é obrigatório para concluir o cadastro (v4.31: arquivo anexado no sistema;
+    # um caminho na rede cadastrado na v4.30 também vale). Não vale para o histórico nem para cadastros já
+    # concluídos antes desta regra.
     if r.get("id") and not r.get("historico") and not r.get("cadastro_concluido_em"):
-        docs = r.get("invoice_docs")
-        if docs is None:
-            docs = get_db().execute("SELECT 1 FROM documentos WHERE origem = 'invoice' AND origem_id = ?",
-                                    (r["id"],)).fetchall()
-        if not docs:
-            falta.append("Invoice assinado (caminho na rede)")
+        tem = r.get("invoice_arquivos") or r.get("invoice_docs")
+        if r.get("invoice_arquivos") is None:
+            db = get_db()
+            tem = db.execute("SELECT 1 FROM arquivos WHERE origem = 'invoice' AND origem_id = ?", (r["id"],)).fetchone() \
+                or db.execute("SELECT 1 FROM documentos WHERE origem = 'invoice' AND origem_id = ?", (r["id"],)).fetchone()
+        if not tem:
+            falta.append("Invoice assinado (arquivo anexado)")
     return falta
 
 
@@ -1469,28 +1468,16 @@ def ajuste_v430_cadastro():
 
 
 def salvar_invoice_assinado_form(iid):
-    """Campo 'Invoice assinado' da tela de cadastro: grava o caminho (e a impressão digital) como documento."""
-    f = request.form
-    caminho = normalizar_caminho(f.get("invoice_caminho"))
-    if not caminho:
+    """Campo 'Invoice assinado' da tela de cadastro: guarda o arquivo enviado no sistema."""
+    arquivos = [f for f in request.files.getlist("invoice_arquivo") if f and f.filename]
+    if not arquivos:
         return
-    if not RE_CAMINHO_REDE.match(caminho):
-        flash("Invoice assinado: caminho inválido (use o caminho completo na pasta da rede). "
-              "Cadastre o caminho na tela do invoice.", "erro")
-        return
-    db = get_db()
-    if db.execute("SELECT 1 FROM documentos WHERE origem = 'invoice' AND origem_id = ? AND lower(caminho) = lower(?)",
-                  (iid, caminho)).fetchone():
-        return
-    sha = (f.get("invoice_sha256") or "").strip().lower()
-    tam = (f.get("invoice_tamanho") or "").strip()
-    db.execute("INSERT INTO documentos (origem, origem_id, caminho, status, cadastrado_por, cadastrado_em, nome_arquivo,"
-               " tamanho, arquivo_modificado_em, sha256) VALUES ('invoice', ?, ?, 'NAO_VERIFICADO', ?, ?, ?, ?, ?, ?)",
-               (iid, caminho, g.usuario["id"], agora(), (f.get("invoice_nome_arquivo") or "")[:255] or None,
-                int(tam) if tam.isdigit() else None, (f.get("invoice_modificado_em") or "")[:19] or None,
-                sha if re.fullmatch(r"[0-9a-f]{64}", sha) else None))
-    registrar_evento(iid, "Caminho cadastrado (invoice assinado)", caminho)
-    db.commit()
+    salvos, erros = salvar_arquivos("invoice", iid, arquivos)
+    if salvos:
+        registrar_evento(iid, "Invoice assinado anexado", ", ".join(salvos))
+        get_db().commit()
+    for e in erros:
+        flash("Invoice assinado: " + e + " Anexe o arquivo na tela do invoice.", "erro")
 
 
 def registrar_conclusao_cadastro(iid):
@@ -2304,7 +2291,7 @@ def pagamento_novo(id):
                      (f"Swift: {', '.join(salvos)}" if salvos else "Swift pendente")
                      + (f" · banco: {banco}" if banco else ""))
     db.commit()
-    flash("Pagamento registrado." + ("" if salvos else " O Swift ficou pendente: cadastre o caminho na tabela de pagamentos."), "ok")
+    flash("Pagamento registrado." + ("" if salvos else " O Swift ficou pendente: anexe o arquivo na tabela de pagamentos."), "ok")
     for e in erros:
         flash(e, "erro")
     return volta
@@ -2434,10 +2421,10 @@ def excluir_invoice(iid):
                              f"{fmt_moeda(x['valor'], inv['moeda'])} (desconto do invoice {x['origem_numero']} "
                              f"deduzido no invoice {x['destino_numero']})")
     arquivos = db.execute(
-        "SELECT * FROM arquivos WHERE (origem = 'duimp' AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
+        "SELECT * FROM arquivos WHERE (origem IN ('duimp', 'invoice') AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
         " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
         " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid)).fetchall()
-    db.execute("DELETE FROM arquivos WHERE (origem = 'duimp' AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
+    db.execute("DELETE FROM arquivos WHERE (origem IN ('duimp', 'invoice') AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
                " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
                " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid))
     db.execute("DELETE FROM documentos WHERE (origem IN ('duimp', 'invoice') AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
@@ -2841,12 +2828,12 @@ def sistema_apagar_invoices():
     db.commit()  # nenhuma transação aberta antes de desligar a verificação de chaves
     backup = backup_banco("-antes-de-apagar-invoices")
     qtd = db.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
-    arquivos = db.execute("SELECT * FROM arquivos WHERE origem IN ('lancamento', 'pagamento', 'duimp')").fetchall()
+    arquivos = db.execute("SELECT * FROM arquivos WHERE origem IN ('lancamento', 'pagamento', 'duimp', 'invoice')").fetchall()
     extras = sorted(tabelas_dependentes(db, TABELAS_INVOICES))
     removidos_fornecedores = 0
     db.execute("PRAGMA foreign_keys = OFF")  # apaga tudo de uma vez, sem esbarrar na ordem das ligações
     try:
-        db.execute("DELETE FROM arquivos WHERE origem IN ('lancamento', 'pagamento', 'duimp')")
+        db.execute("DELETE FROM arquivos WHERE origem IN ('lancamento', 'pagamento', 'duimp', 'invoice')")
         db.execute("DELETE FROM documentos")
         for t in extras + TABELAS_INVOICES:
             db.execute(f'DELETE FROM "{t}"')
@@ -3087,7 +3074,8 @@ def lancamento_erp(lid):
 # ---------- arquivos anexados (padrão do sistema para qualquer anexo) ----------
 # Os arquivos são enviados pelo navegador e ficam no servidor (pasta ARQUIVOS_DIR, fora do GitHub).
 # origem: 'lancamento' (custos da aba Lançamentos Financeiros) | 'pagamento' (Swift de cada pagamento)
-ORIGENS_ARQUIVO = {"lancamento": "lançamento financeiro", "pagamento": "pagamento (Swift)", "duimp": "DUIMP"}
+ORIGENS_ARQUIVO = {"lancamento": "lançamento financeiro", "pagamento": "pagamento (Swift)", "duimp": "DUIMP",
+                   "invoice": "invoice assinado"}
 
 
 def arquivos_de(origem, ids=None):
@@ -3183,6 +3171,8 @@ def info_origem(a):
         return l["invoice_id"], l["tipo"] or "sem tipo", None
     if a["origem"] == "duimp":
         return a["origem_id"], "DUIMP", url_for("invoice_detalhe", id=a["origem_id"]) + "#etapa-DESEMBARACO"
+    if a["origem"] == "invoice":
+        return a["origem_id"], "invoice assinado", url_for("invoice_detalhe", id=a["origem_id"])
     p = db.execute("SELECT invoice_id, data_pagamento FROM pagamentos WHERE id = ?", (a["origem_id"],)).fetchone()
     if p is None:
         return None, "", url_for("painel")
@@ -3233,6 +3223,29 @@ def duimp_anexar(id):
         for e in erros:
             flash(e, "erro")
     return redirect(url_for("invoice_detalhe", id=r["id"]) + "#etapa-DESEMBARACO")
+
+
+@app.route("/invoices/<int:id>/invoice-assinado", methods=["POST"])
+@login_obrigatorio
+def invoice_assinado_anexar(id):
+    """A Importação anexa o invoice assinado (obrigatório para concluir o cadastro)."""
+    if not pode("importacao"):
+        abort(403)
+    r = carregar_invoice(id)
+    arquivos = [f for f in request.files.getlist("arquivo") if f and f.filename]
+    if not arquivos:
+        flash("Escolha o arquivo do invoice assinado.", "erro")
+    else:
+        salvos, erros = salvar_arquivos("invoice", id, arquivos)
+        if salvos:
+            registrar_evento(id, "Invoice assinado anexado", ", ".join(salvos))
+            get_db().commit()
+            flash("Invoice assinado anexado: " + ", ".join(salvos) + ".", "ok")
+            if registrar_conclusao_cadastro(id):
+                flash("Cadastro do invoice concluído: o vencimento da parcela antecipada conta a partir de hoje.", "ok")
+        for e in erros:
+            flash(e, "erro")
+    return redirect(url_for("invoice_detalhe", id=r["id"]))
 
 
 @app.route("/invoices/<int:id>/liberar-pagamento", methods=["POST"])
@@ -3291,13 +3304,14 @@ def arquivo_excluir(aid):
         else (lambda: redirect(volta_url))
     if a["origem"] == "pagamento":
         permitido = pode("financeiro")
-    elif a["origem"] == "duimp":
+    elif a["origem"] in ("duimp", "invoice"):
         permitido = pode("importacao")
     else:
         permitido = g.usuario["perfil"] == "admin" or (pode_anexar() and a["enviado_por"] == g.usuario["id"])
     if not permitido:
         flash({"lancamento": "Só quem anexou o arquivo (ou o Administrador) pode excluí-lo.",
-               "duimp": "Só a Importação pode excluir a DUIMP."}.get(a["origem"], "Só o Financeiro pode excluir o Swift."),
+               "duimp": "Só a Importação pode excluir a DUIMP.",
+               "invoice": "Só a Importação pode excluir o invoice assinado."}.get(a["origem"], "Só o Financeiro pode excluir o Swift."),
               "erro")
         return voltar()
     db.execute("DELETE FROM arquivos WHERE id = ?", (aid,))
@@ -3956,7 +3970,6 @@ def tarefa_diaria():
     """Para tarefa agendada (deploy/tarefa_diaria.sh): resumos + fila."""
     with app.app_context():
         msg = " ".join(executar_resumos(pelo_agendador=True))
-        msg += " " + texto_verificacao(verificar_documentos())
         n = enviar_fila()
         return f"{msg} E-mails enviados agora: {n}."
 
@@ -3993,7 +4006,6 @@ def tarefa_diaria_url(chave):
     if not certa or not secrets.compare_digest(certa, chave):
         abort(404)
     msg = " ".join(executar_resumos(pelo_agendador=True))
-    msg += " " + texto_verificacao(verificar_documentos())
     n = enviar_fila()
     return Response(f"OK · {msg} E-mails enviados agora: {n}.", mimetype="text/plain")
 
@@ -4665,6 +4677,7 @@ def pasta_padrao(origem):
 
 
 app.jinja_env.globals["pasta_padrao"] = lambda origem: pasta_padrao(origem)
+app.jinja_env.globals["arquivos_invoice"] = lambda iid: arquivos_de("invoice", [iid]).get(iid, []) if iid else []
 app.jinja_env.globals["documentos_invoice"] = lambda iid: documentos_de("invoice", [iid]).get(iid, []) if iid else []
 
 

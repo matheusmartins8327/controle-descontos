@@ -19,37 +19,6 @@
   {% endif %}
 </section>
 
-<section class="bloco" id="rede">
-  <h2>Documentos na pasta da rede</h2>
-  <p>Os documentos (Swift, DUIMP, guias dos lançamentos) são cadastrados pelo <strong>caminho do arquivo na pasta compartilhada da empresa</strong>.
-    Hoje: {{ docs_contagem.get('OK', 0) }} encontrado(s), <strong>{{ docs_contagem.get('NAO_ENCONTRADO', 0) }} não encontrado(s)</strong>,
-    {{ docs_contagem.get('NAO_VERIFICADO', 0) }} ainda não verificado(s).</p>
-  <p class="sub">Quando um arquivo some, o documento fica "não encontrado" e vira pendência do setor que cadastra o caminho. Isso acontece de duas formas:
-    qualquer usuário marca <strong>Não encontrado</strong> ao não achar o arquivo, ou a <strong>verificação automática diária</strong>, feita pelo próprio servidor
-    junto com o agendador das 8h. A verificação automática <strong>só funciona com o servidor dentro da rede da empresa</strong>, enxergando a pasta;
-    enquanto ele estiver fora (PythonAnywhere), ela apenas informa que não tem acesso e não altera nada.</p>
-  {% if rede_ultima %}<p class="sub">Última verificação: {{ rede_ultima.em|data }} — {{ rede_ultima.ok }} encontrado(s), {{ rede_ultima.nao_encontrado }} não encontrado(s),
-    {{ rede_ultima.sem_acesso }} sem acesso à pasta.</p>{% endif %}
-  <form method="post" action="{{ url_for('sistema_rede') }}" class="pastas-padrao">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="pastas">
-    <h3>Pasta padrão de cada documento</h3>
-    <p class="sub">Sugerida na tela de seleção quando a pessoa ainda não tem uma pasta lembrada (o navegador não informa a pasta do arquivo escolhido).</p>
-    <div class="grade">{% for o, pasta in pastas_padrao.items() %}
-      <label>{{ NOME_DOCUMENTO[o]|capitalize }}<input name="pasta_{{ o }}" value="{{ pasta }}" placeholder="\\servidor\pasta\" autocomplete="off"></label>{% endfor %}</div>
-    <button class="btn">Salvar pastas padrão</button>
-  </form>
-  <form method="post" action="{{ url_for('sistema_rede') }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>Mapeamento da pasta (para servidor Linux dentro da rede; um por linha: <code>caminho no Windows = caminho no servidor</code>)
-      <textarea name="mapeamentos" rows="3" placeholder="\\servidor\Importacao = /mnt/importacao&#10;Z:\ = /mnt/importacao">{{ rede_mapeamentos }}</textarea></label>
-    <small>Num servidor Windows dentro da rede, os caminhos \\servidor\... funcionam direto, sem mapeamento.</small>
-    <div class="linha-form">
-      <button class="btn">Salvar mapeamento</button>
-      <button class="btn primario" name="acao" value="verificar">Verificar documentos agora</button>
-    </div>
-  </form>
-</section>
-
 <section class="bloco">
   <h2>Arquivos anexados <small>· pasta instance/arquivos</small></h2>
   <p>{{ anexos_qtd }} arquivo(s) anexados (Swifts e lançamentos financeiros), ocupando <strong>{{ anexos_bytes|tamanho }}</strong>.

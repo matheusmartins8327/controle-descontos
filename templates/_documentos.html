@@ -1,48 +1,36 @@
-{# Documentos = caminho do arquivo na pasta da rede da empresa.
-   docs(): lista + campo para cadastrar (usa atributos form=, então pode ficar dentro de outro formulário);
-   docs_forms(): os formulários ocultos correspondentes (colocar FORA de qualquer outro formulário). #}
-{% macro docs(lista, origem, origem_id, pode_cad, voltar, placeholder='\\\\servidor\\pasta\\arquivo.pdf') %}
-<div class="docs">
-  {% for d in lista %}
-  <div class="doc doc-{{ d.status|lower }}">
-    <span class="doc-status" title="{{ {'OK': 'Encontrado na última verificação', 'NAO_ENCONTRADO': 'Arquivo não encontrado', 'NAO_VERIFICADO': 'Ainda não verificado'}[d.status] }}">{{ {'OK': '✓', 'NAO_ENCONTRADO': '⚠', 'NAO_VERIFICADO': '•'}[d.status] }}</span>
-    <code class="doc-caminho" title="{{ d.caminho }}">{{ d.caminho }}</code>
-    <button type="button" class="btn pequeno link" data-copiar="{{ d.caminho }}" title="Copiar o caminho para colar no Explorador de Arquivos">Copiar</button>
-    {% if d.status != 'NAO_ENCONTRADO' %}<button class="btn pequeno link" form="doc-nf-{{ d.id }}" title="Avisar que o arquivo não está neste caminho">Não encontrado</button>{% endif %}
-    {% if pode_cad %}
-    <button type="button" class="btn pequeno link" data-doc-form="doc-ed-{{ d.id }}" data-origem="{{ origem }}"
-      data-pasta="{{ pasta_padrao(origem) }}" data-atual="{{ d.caminho }}" data-rotulo="corrigir o caminho">Corrigir</button>
-    <button class="btn pequeno link perigo-txt" form="doc-ex-{{ d.id }}">Excluir</button>
-    {% endif %}
-    {% if d.status == 'NAO_ENCONTRADO' %}<small class="doc-problema">Não encontrado{% if d.quem_problema %} por {{ d.quem_problema }}{% else %} na verificação automática{% endif %} em {{ d.problema_em|data }}{% if d.problema_obs and d.quem_problema %} · {{ d.problema_obs }}{% endif %}{% if pode_cad %} — corrija o caminho{% endif %}</small>{% endif %}
+{# Anexos do sistema (desde a v4.31, de novo): o arquivo é enviado pelo navegador e fica guardado no servidor;
+   ao clicar, o sistema entrega uma cópia para visualizar/baixar.
+   arquivos(): lista dos arquivos (com ✕ para excluir quando permitido, via form= — pode ficar dentro de outro formulário).
+   docs_antigos(): caminhos na pasta da rede cadastrados nas versões 4.27 a 4.30 (somente consulta).
+   arquivos_forms(): formulários ocultos (colocar FORA de qualquer outro formulário). #}
+{% macro arquivos(lista, pode_excluir, rotulo='arquivo') %}
+  {% for a in lista %}
+  <div class="arq">
+    <a href="{{ url_for('arquivo_baixar', aid=a.id) }}" target="_blank" rel="noopener" title="{{ a.nome }} · {{ a.tamanho|tamanho }} · {{ a.usuario or '—' }} em {{ a.enviado_em|data }}">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2.5H6a2 2 0 00-2 2v15a2 2 0 002 2h12a2 2 0 002-2V8.5z"/><path d="M14 2.5v6h6"/></svg>
+      <span>{{ a.nome }}</span></a>
+    {% if pode_excluir %}<button class="arq-x" form="del-arq-{{ a.id }}" title="Excluir arquivo" onclick="return confirm('Excluir o arquivo {{ a.nome|replace("'", "")|replace('"', '') }} ({{ rotulo }})?')">✕</button>{% endif %}
   </div>
   {% endfor %}
-  {% if pode_cad %}
-  <div class="doc-novo">
-    <button type="button" class="btn-anexar" data-doc-form="doc-novo-{{ origem }}-{{ origem_id }}" data-origem="{{ origem }}"
-      data-pasta="{{ pasta_padrao(origem) }}" data-rotulo="{{ {'pagamento': 'Swift', 'duimp': 'DUIMP', 'lancamento': 'documento do lançamento'}[origem] }}">
-      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9"/></svg>
-      {{ 'Selecionar arquivo…' if not lista else 'Selecionar outro arquivo…' }}</button>
-  </div>
-  {% endif %}
-</div>
 {% endmacro %}
 
-{% macro docs_forms(lista, origem, origem_id, pode_cad, voltar) %}
-<form id="doc-novo-{{ origem }}-{{ origem_id }}" method="post" action="{{ url_for('documento_novo') }}" class="oculto">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
-  <input type="hidden" name="origem" value="{{ origem }}"><input type="hidden" name="origem_id" value="{{ origem_id }}">
-  <input type="hidden" name="caminho"><input type="hidden" name="nome_arquivo"><input type="hidden" name="tamanho"><input type="hidden" name="modificado_em"><input type="hidden" name="sha256"></form>
-{% for d in lista %}
-<form id="doc-nf-{{ d.id }}" method="post" action="{{ url_for('documento_acao', did=d.id, acao='nao-encontrado') }}" class="oculto"
-      onsubmit="var o = prompt('Avisar que o arquivo não foi encontrado neste caminho? A pendência irá para o setor responsável.\\n\\nObservação (opcional):', ''); if (o === null) return false; this.obs.value = o; return true;">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}"><input type="hidden" name="obs"></form>
-{% if pode_cad %}
-<form id="doc-ed-{{ d.id }}" method="post" action="{{ url_for('documento_acao', did=d.id, acao='editar') }}" class="oculto">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}">
-  <input type="hidden" name="caminho"><input type="hidden" name="nome_arquivo"><input type="hidden" name="tamanho"><input type="hidden" name="modificado_em"><input type="hidden" name="sha256"></form>
-<form id="doc-ex-{{ d.id }}" method="post" action="{{ url_for('documento_acao', did=d.id, acao='excluir') }}" class="oculto" onsubmit="return confirm('Excluir este caminho?')">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="voltar" value="{{ voltar }}"></form>
-{% endif %}
-{% endfor %}
+{% macro botao_anexar(form_id, texto) %}
+<label class="btn-anexar" title="Anexar arquivo (até {{ ANEXO_MAX_MB }} MB)"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9"/></svg>
+  {{ texto }}<input type="file" name="arquivo" form="{{ form_id }}" multiple onchange="this.form.classList.add('enviando'); this.form.submit()"></label>
+{% endmacro %}
+
+{% macro docs_antigos(lista) %}
+  {% for d in lista %}
+  <div class="doc doc-antigo" title="Caminho na pasta da rede cadastrado antes da volta dos anexos (v4.31)">
+    <code class="doc-caminho" title="{{ d.caminho }}">{{ d.caminho }}</code>
+    <button type="button" class="btn pequeno link" data-copiar="{{ d.caminho }}" title="Copiar o caminho para colar no Explorador de Arquivos">Copiar</button>
+  </div>
+  {% endfor %}
+{% endmacro %}
+
+{% macro arquivos_forms(lista, pode_excluir, form_anexar=None, acao_anexar=None, voltar=None) %}
+{% if form_anexar %}<form id="{{ form_anexar }}" method="post" action="{{ acao_anexar }}" enctype="multipart/form-data" class="form-anexar oculto">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% if voltar %}<input type="hidden" name="voltar" value="{{ voltar }}">{% endif %}</form>{% endif %}
+{% if pode_excluir %}{% for a in lista %}<form id="del-arq-{{ a.id }}" method="post" action="{{ url_for('arquivo_excluir', aid=a.id) }}" class="oculto">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% if voltar %}<input type="hidden" name="voltar" value="{{ voltar }}">{% endif %}</form>{% endfor %}{% endif %}
 {% endmacro %}

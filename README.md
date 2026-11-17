@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.30)
+# Controle de Invoices e Descontos (v4.31)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -85,7 +85,7 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 
 | # | Etapa | Quem informa | Informações |
 |---|-------|--------------|-------------|
-| 1 | Criação do invoice | Importação | Fornecedor, nº, moeda, **data de assinatura**, **condição de pagamento** (uma ou mais parcelas), agente de carga, despachante, grupo de consolidação, coleta programada e itens (código, descrição, quantidade e preço original) e o **invoice assinado** (caminho do arquivo na pasta da rede, obrigatório), digitados ou **carregados de uma planilha Excel**. Aparece a **janela de descontos aprovados** do fornecedor (mesma moeda) para deduzir um ou mais, total ou parcialmente; o **valor final** é calculado após as deduções |
+| 1 | Criação do invoice | Importação | Fornecedor, nº, moeda, **data de assinatura**, **condição de pagamento** (uma ou mais parcelas), agente de carga, despachante, grupo de consolidação, coleta programada e itens (código, descrição, quantidade e preço original) e o **invoice assinado** (arquivo anexado, obrigatório), digitados ou **carregados de uma planilha Excel**. Aparece a **janela de descontos aprovados** do fornecedor (mesma moeda) para deduzir um ou mais, total ou parcialmente; o **valor final** é calculado após as deduções |
 | 2 | Coleta | Importação | Data da HAWB e data real de coleta |
 | 3 | Embarque | Importação / Financeiro | ETD e ETA planejados (obrigatórios para salvar), ETD e ETA reais; **banco de débito** (Financeiro, obrigatório para concluir a etapa) |
 | 4 | Desembaraço | Importação | Data de emissão da DUIMP (e o arquivo da DUIMP, opcional) → data de parametrização, canal (Verde, Amarelo ou Vermelho), exigências da ANVISA, data de desembaraço e **número da NF**. DUIMP e boleto do ICMS seguem por e-mail, fora do sistema (não são anexados nem guardados) |
@@ -171,20 +171,15 @@ Em **Fornecedores → Configurar**, a Importação cadastra para cada fornecedor
 - **Lembretes**: aparecem numa janela ao escolher o fornecedor na criação do invoice. **OK** dá o lembrete como visto (não
   aparece mais; fica no histórico com quem e quando); **Me lembre no próximo invoice** fecha e ele volta na próxima criação.
 
-### Documentos: caminho na pasta da rede da empresa (padrão desde a v4.27)
-Todo documento (Swift de cada pagamento, DUIMP, documentos dos lançamentos financeiros) é cadastrado pelo **caminho do
-arquivo na pasta compartilhada** (`\\servidor\pasta\arquivo.pdf` ou `Z:\pasta\arquivo.pdf`), com botão **Copiar** para
-colar no Explorador de Arquivos (navegadores não abrem caminhos da rede a partir de um site). Arquivos enviados em versões
-anteriores continuam disponíveis para abrir.
-- **Selecionar arquivo…** abre a janela "Abrir" do Windows. Como os navegadores não revelam a pasta do arquivo escolhido, a tela
-  de confirmação mostra o nome do arquivo e a **pasta na rede** (lembrada da última vez ou a pasta padrão configurada em
-  Sistema); **Confirmar** salva só o caminho completo. Também é guardada a "impressão digital" do arquivo (nome, tamanho,
-  data de modificação e SHA-256), base para a futura leitura/validação do conteúdo (ainda não ativada).
-- **Arquivo sumiu** (renomeado, movido, apagado): o documento fica "não encontrado" e vira **pendência do setor que cadastra**
-  (Swift → Financeiro; DUIMP e lançamentos → Importação), até o caminho ser corrigido.
-- **Detecção:** (1) qualquer usuário clica em **Não encontrado**; (2) **verificação automática diária** pelo próprio servidor,
-  junto com o agendador das 8h (e o botão em Sistema). Ela só funciona com o servidor **dentro da rede**, enxergando a pasta
-  (servidor Windows: caminhos direto; Linux: mapeamento em Sistema). Fora da rede, apenas informa "sem acesso" e não altera nada.
+### Anexos: arquivos guardados no sistema (v4.31)
+Todo anexo (invoice assinado, DUIMP, Swift de cada pagamento, documentos dos lançamentos financeiros) é **enviado pelo
+navegador e guardado no servidor** (pasta `instance/arquivos`, fora do GitHub), até 10 MB por arquivo. Ao clicar no nome,
+o sistema entrega uma cópia para visualizar (PDF e imagens abrem no navegador; os demais são baixados).
+- **Invoice assinado** é obrigatório para concluir o cadastro (etapa 1); pode ser anexado na criação ou depois, na tela do invoice.
+- Quem anexa pode excluir: Importação (invoice assinado, DUIMP), Financeiro (Swift), quem anexou ou o Administrador (lançamentos).
+- Os caminhos na pasta da rede cadastrados nas versões 4.27 a 4.30 continuam aparecendo (somente consulta, com **Copiar**),
+  mas não geram mais pendência de "arquivo não encontrado".
+- O espaço ocupado pelos anexos aparece em **Sistema**.
 
 ### Correções
 Quem lança cada informação pode corrigi-la: a Importação corrige dados, itens, condição, etapas e deduções; o Financeiro corrige pagamentos, Swifts e banco de débito; o Administrador corrige a inspeção (o valor do desconto, pela revalidação). Toda correção fica no histórico com o valor anterior e o novo.

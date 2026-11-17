@@ -3,7 +3,7 @@
 {% block conteudo %}
 <h1>{{ 'Corrigir invoice' if editando else 'Novo invoice' }}</h1>
 <p class="sub">Criação do invoice · Importação. Você pode salvar a qualquer momento (basta fornecedor e nº do invoice); o que faltar fica nas pendências do painel e o processo só avança quando as informações obrigatórias (*) estiverem completas.</p>
-<form method="post" class="bloco" id="form-invoice">
+<form method="post" class="bloco" id="form-invoice" enctype="multipart/form-data">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="grade">
     <label>Fornecedor *
@@ -17,15 +17,13 @@
       {% else %}<select name="moeda" id="moeda" required><option value="" {{ 'selected' if not d.moeda }}>Selecione…</option>{% for k, s in MOEDAS.items() %}<option value="{{ k }}" {{ 'selected' if d.moeda == k }}>{{ k }} ({{ s }})</option>{% endfor %}</select>{% endif %}
     </label>
     <label>Data de assinatura do invoice *<input type="date" name="data_assinatura" value="{{ d.data_assinatura or '' }}"></label>
-    {% set ja_assinado = documentos_invoice(id) if editando else [] %}
-    <label class="largo">Invoice assinado (caminho na pasta da rede) *
-      {% if ja_assinado %}<small class="bloco-linha">Já cadastrado: <code>{{ ja_assinado[0].caminho }}</code> — para trocar, use "Corrigir" na tela do invoice.</small>
+    {% set ja_assinado = (arquivos_invoice(id) + documentos_invoice(id)) if editando else [] %}
+    <label class="largo">Invoice assinado (arquivo) *
+      {% if ja_assinado %}<small class="bloco-linha">Já anexado: <strong>{{ ja_assinado[0].nome or ja_assinado[0].caminho }}</strong> — para trocar ou incluir outro, use a tela do invoice.</small>
       {% else %}
-      <span class="campo-com-botao"><input name="invoice_caminho" id="invoice-caminho" value="{{ request.form.get('invoice_caminho', '') }}" placeholder="\\servidor\Importacao\Invoices\arquivo.pdf" autocomplete="off">
-        <button type="button" class="btn pequeno" data-doc-form="" data-alvo="invoice-caminho" data-prefixo="invoice" data-origem="invoice" data-pasta="{{ pasta_padrao('invoice') }}" data-rotulo="invoice assinado">Selecionar arquivo…</button></span>
-      <input type="hidden" name="invoice_nome_arquivo" id="invoice-nome_arquivo"><input type="hidden" name="invoice_tamanho" id="invoice-tamanho">
-      <input type="hidden" name="invoice_modificado_em" id="invoice-modificado_em"><input type="hidden" name="invoice_sha256" id="invoice-sha256">
-      <small>Obrigatório para concluir o cadastro. A conclusão do cadastro é a base do vencimento da parcela antecipada.</small>{% endif %}
+      <input type="file" name="invoice_arquivo" id="invoice-arquivo">
+      <small>PDF ou imagem, até {{ ANEXO_MAX_MB }} MB. Obrigatório para concluir o cadastro (base do vencimento da parcela antecipada).
+        Se o formulário voltar com algum erro, selecione o arquivo de novo.</small>{% endif %}
     </label>
     <label>Agente de carga<input name="agente_carga" value="{{ d.agente_carga or '' }}"></label>
     <label>Despachante<input name="despachante" value="{{ d.despachante or '' }}"></label>
