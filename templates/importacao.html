@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block titulo %}Importação{% endblock %}
+{% block conteudo %}
+{% set NOME_ETAPA = {'CRIACAO': 'Cadastro (1)', 'COLETA': 'Coleta (2)', 'EMBARQUE': 'Embarque (3)', 'DESEMBARACO': 'Desembaraço (4)', 'CHEGADA': 'Transporte Terrestre (5)'} %}
+<h1>Importação</h1>
+<p class="sub">Invoices em andamento nas etapas 1 a 5 (do cadastro ao transporte terrestre). Clique num invoice para ver e
+  editar as informações das etapas de uma vez; o botão <strong>Salvar</strong> grava tudo com as mesmas regras da tela do invoice.
+  Ao concluir o Transporte Terrestre (com <strong>NF Liberada</strong>), o invoice segue para a Inspeção e sai desta lista.
+  {% if not editar %}<br><strong>Somente leitura.</strong>{% endif %}</p>
+
+<section class="fluxo cards-imp">
+  {% for e in ETAPAS_IMPORTACAO %}
+  <a class="fluxo-etapa {{ 'sel' if etapa == e }}" href="{{ url_for('importacao', etapa=None if etapa == e else e) }}">
+    <span class="n">{{ contagem[e] }} <small>invoice{{ 's' if contagem[e] != 1 }}</small></span><span class="rot">{{ NOME_ETAPA[e] }}</span></a>
+  {% endfor %}
+</section>
+
+<form class="filtros" method="get">
+  {% if etapa %}<input type="hidden" name="etapa" value="{{ etapa }}">{% endif %}
+  <input name="q" value="{{ busca }}" placeholder="Buscar invoice ou fornecedor">
+  <button class="btn">Buscar</button>
+  {% if busca or etapa %}<a class="btn link" href="{{ url_for('importacao') }}">Limpar ({{ total }} em andamento)</a>{% endif %}
+  <span class="espaco"></span>
+  <button type="button" class="btn link" id="expandir">Expandir todos</button>
+  <button type="button" class="btn link" id="recolher">Recolher todos</button>
+</form>
+
+{% for r in lista %}
+<details class="painel-lanc painel-imp" id="inv-{{ r.id }}" {{ 'open' if aberto == r.id }}>
+  <summary>
+    <span class="pl-titulo"><strong>{{ r.numero }}</strong><span class="pl-forn">{{ r.fornecedor }}</span>
+      <span class="etapa-tag e-{{ r.situacao|lower }}">{{ NOME_ETAPA[r.situacao] }}</span>
+      {% if r.falta %}<small class="falta-imp">falta: {{ r.falta|join(', ') }}</small>{% endif %}</span>
+    <span class="imp-datas">
+      <span title="Data da HAWB">HAWB <b>{{ r.data_hawb|data }}</b></span>
+      <span title="ETA real ou planejado">ETA <b>{{ (r.eta_real or r.eta_planejado)|data }}</b>{% if r.eta_planejado and not r.eta_real %}<small> plan.</small>{% endif %}</span>
+      <span title="Chegada na fábrica (real ou programada)">Chegada <b>{{ (r.data_chegada or r.data_prog_chegada)|data }}</b>{% if r.data_prog_chegada and not r.data_chegada %}<small> prog.</small>{% endif %}</span>
+    </span>
+    <span class="seta">▾</span>
+  </summary>
+  <div class="pl-corpo">
+    <p class="pl-link"><a href="{{ url_for('invoice_detalhe', id=r.id) }}">Abrir o invoice</a> · {{ r.moeda }} · assinatura {{ r.data_assinatura|data }}
+      · agente {{ r.agente_carga or '—' }} · despachante {{ r.despachante or '—' }}
+      {% if r.data_registro_br %} · DUIMP ao banco: <strong>{{ 'enviada' if r.duimp_banco_em else 'pendente (Financeiro)' }}</strong>{% endif %}</p>
+    {% if r.situacao == 'CRIACAO' %}
+      <div class="aviso-box">Cadastro incompleto. Falta: {{ r.falta|join(', ') }}.
+        {% if editar %}<a class="btn pequeno" href="{{ url_for('invoice_editar', id=r.id) }}">Completar cadastro</a>
+        <a class="btn pequeno link" href="{{ url_for('invoice_detalhe', id=r.id) }}">Anexar invoice assinado</a>{% endif %}</div>
+    {% else %}
+    <form method="post" action="{{ url_for('importacao_salvar', id=r.id) }}" class="form-imp">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <fieldset class="imp-grade" {{ 'disabled' if not editar }}>
+      {% for e in ORDEM_LOGISTICA %}
+        <div class="imp-etapa {{ 'feita' if etapa_concluida(r, e) }} {{ 'atual' if r.situacao == e }}">
+          <h3>{{ TITULO_ETAPA[e] }} {% if etapa_concluida(r, e) %}<span class="ok">✔</span>{% endif %}</h3>
+          {% for campo, rotulo, tipo, obrig in CAMPOS_ETAPA[e] %}
+          {% if tipo == 'flag' %}
+            <label class="flag-etapa"><input type="checkbox" name="{{ campo }}" value="1" {{ 'checked' if r[campo] }}> {{ rotulo }}{{ ' *' if obrig }}</label>
+          {% else %}
+          <label>{{ rotulo }}{{ ' *' if obrig }}
+            {% if tipo == 'data' %}<input type="date" name="{{ campo }}" value="{{ r[campo] or '' }}">
+            {% elif tipo == 'canal' %}{% set cc = CORES_CANAL.get(r[campo]) %}<select name="{{ campo }}" class="sel-canal" onchange="var o=this.options[this.selectedIndex];this.style.background=o.style.background;this.style.color=o.style.color"{% if cc %} style="background:{{ cc[0] }};color:{{ cc[1] }}"{% endif %}>
+              <option value="" style="background:#fff;color:#212529">—</option>{% for c, cor in CORES_CANAL.items() %}<option value="{{ c }}" {{ 'selected' if r[campo] == c }} style="background:{{ cor[0] }};color:{{ cor[1] }}">{{ c }}</option>{% endfor %}</select>
+            {% elif tipo == 'linha' %}<input name="{{ campo }}" value="{{ r[campo] or '' }}" autocomplete="off">
+            {% else %}<textarea name="{{ campo }}" rows="1">{{ r[campo] or '' }}</textarea>{% endif %}
+          </label>
+          {% endif %}
+          {% endfor %}
+          {% if e == 'EMBARQUE' %}<small class="imp-obs">Banco de débito (Financeiro): <b>{{ r.banco_debito or 'pendente' }}</b></small>{% endif %}
+        </div>
+      {% endfor %}
+      </fieldset>
+      {% if editar %}<div class="linha-form"><button class="btn primario">Salvar {{ r.numero }}</button>
+        <small>Anexos (DUIMP etc.) ficam na <a href="{{ url_for('invoice_detalhe', id=r.id) }}#etapa-DESEMBARACO">tela do invoice</a>.</small></div>{% endif %}
+    </form>
+    {% endif %}
+  </div>
+</details>
+{% else %}
+<p class="vazio">Nenhum invoice {{ 'nesta etapa' if etapa else 'em andamento nas etapas 1 a 5' }}{{ ' para a busca' if busca }}.</p>
+{% endfor %}
+<script>
+  document.getElementById('expandir').onclick = () => document.querySelectorAll('.painel-imp').forEach(d => d.open = true);
+  document.getElementById('recolher').onclick = () => document.querySelectorAll('.painel-imp').forEach(d => d.open = false);
+</script>
+{% endblock %}

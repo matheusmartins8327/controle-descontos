@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.32"
+VERSAO = "4.33"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -449,13 +449,19 @@ def init_db():
         colunas_inv = {r[1] for r in db.execute("PRAGMA table_info(invoices)")}
         for col, tipo in (("numero_nf", "TEXT"), ("pagamento_liberado_em", "TEXT"), ("pagamento_liberado_por", "INTEGER"),
                           ("pagamento_liberado_obs", "TEXT"), ("historico", "INTEGER NOT NULL DEFAULT 0"),
-                          ("nf_liberada", "INTEGER"), ("cadastro_concluido_em", "TEXT")):
+                          ("nf_liberada", "INTEGER"), ("cadastro_concluido_em", "TEXT"),
+                          ("duimp_banco_em", "TEXT"), ("duimp_banco_por", "INTEGER")):
             if col not in colunas_inv:
                 db.execute(f"ALTER TABLE invoices ADD COLUMN {col} {tipo}")
         # versão 4.30: invoices que já passaram do Transporte não voltam a ficar pendentes da nova "NF Liberada"
         if db.execute("SELECT 1 FROM configuracoes WHERE chave = 'v430_nf'").fetchone() is None:
             db.execute("UPDATE invoices SET nf_liberada = 1 WHERE data_chegada IS NOT NULL")
             db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v430_nf', '1')")
+        # versão 4.33: "DUIMP enviada ao banco" (Financeiro). Invoices que já chegaram à fábrica não viram pendência.
+        if db.execute("SELECT 1 FROM configuracoes WHERE chave = 'v433_duimp_banco'").fetchone() is None:
+            db.execute("UPDATE invoices SET duimp_banco_em = 'antes da v4.33' WHERE data_chegada IS NOT NULL"
+                       " AND duimp_banco_em IS NULL")
+            db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v433_duimp_banco', '1')")
         # versão 4.22: invoices/pagamentos lançados pela carga de histórico (dados do passado)
         if "historico" not in {r[1] for r in db.execute("PRAGMA table_info(pagamentos)")}:
             db.execute("ALTER TABLE pagamentos ADD COLUMN historico INTEGER NOT NULL DEFAULT 0")
@@ -1170,6 +1176,8 @@ def listar_pendencias(invoices, perfil=None):
         for doc in r["docs_quebrados"]:
             add(r, f"Arquivo não encontrado na pasta da rede ({NOME_DOCUMENTO[doc['origem']]}): corrigir o caminho "
                    f"{doc['caminho']}", SETOR_DOCUMENTO[doc["origem"]], atencao=True)
+        if fin and r["data_registro_br"] and not r["duimp_banco_em"] and not r["historico"]:
+            add(r, "Enviar a DUIMP ao banco e marcar \"DUIMP enviada ao banco\"", "financeiro", r["data_registro_br"])
         if fin and not r["banco_debito"] and (r["etd_planejado"] or r["etd_real"]):
             add(r, "Informar o banco de débito", "financeiro")
     for p in pend:
@@ -1911,28 +1919,16 @@ def invoice_detalhe(id):
 # ---------------------------------------------------------------------------
 # Etapas logísticas e banco de débito
 # ---------------------------------------------------------------------------
-@app.route("/invoices/<int:id>/etapa/<etapa>", methods=["POST"])
-@login_obrigatorio
-def invoice_etapa(id, etapa):
-    if etapa not in CAMPOS_ETAPA:
-        abort(404)
-    if not pode("importacao"):
-        abort(403)
-    r = carregar_invoice(id)
-    if r["cancelado_em"]:
-        abort(403)
-    falta_cadastro = criacao_faltando(r)
-    if falta_cadastro:  # a etapa 2 (Coleta) em diante só começa com o cadastro completo
-        flash("Complete o cadastro do invoice antes de seguir para a logística. Falta: "
-              + ", ".join(falta_cadastro) + ".", "erro")
-        return redirect(url_for("invoice_detalhe", id=id) + "#logistica")
+def aplicar_etapa(r, etapa, form):
+    """Grava os campos de uma etapa logística vindos do formulário. Retorna (erro, novos valores).
+    Usado pela tela do invoice e pela aba Importação. Faz commit quando há mudança."""
+    id = r["id"]
     novos, mudancas = {}, []
     for campo, rotulo, tipo, _obrig in CAMPOS_ETAPA[etapa]:
-        valor = request.form.get(campo, "").strip()
+        valor = form.get(campo, "").strip()
         if tipo == "data":
             if valor and not data_valida(valor):
-                flash(f"{rotulo}: data inválida.", "erro")
-                return redirect(url_for("invoice_detalhe", id=id) + f"#etapa-{etapa}")
+                return f"{TITULO_ETAPA[etapa]} · {rotulo}: data inválida.", {}
             valor = data_valida(valor)
         elif tipo == "canal":
             valor = valor if valor in CORES_CANAL else None
@@ -1954,6 +1950,28 @@ def invoice_etapa(id, etapa):
                 registrar_evento(x["origem_id"], f"Invoice {r['numero']} (com dedução de "
                                  f"{fmt_moeda(x['valor'], r['moeda'])}) chegou: valor segurado pode ser liberado")
         db.commit()
+    return None, novos
+
+
+@app.route("/invoices/<int:id>/etapa/<etapa>", methods=["POST"])
+@login_obrigatorio
+def invoice_etapa(id, etapa):
+    if etapa not in CAMPOS_ETAPA:
+        abort(404)
+    if not pode("importacao"):
+        abort(403)
+    r = carregar_invoice(id)
+    if r["cancelado_em"]:
+        abort(403)
+    falta_cadastro = criacao_faltando(r)
+    if falta_cadastro:  # a etapa 2 (Coleta) em diante só começa com o cadastro completo
+        flash("Complete o cadastro do invoice antes de seguir para a logística. Falta: "
+              + ", ".join(falta_cadastro) + ".", "erro")
+        return redirect(url_for("invoice_detalhe", id=id) + "#logistica")
+    erro, novos = aplicar_etapa(r, etapa, request.form)
+    if erro:
+        flash(erro, "erro")
+        return redirect(url_for("invoice_detalhe", id=id) + f"#etapa-{etapa}")
     # salvar sempre funciona; a etapa só é concluída com todas as informações obrigatórias
     falta = etapa_faltando(dict(r, **novos), etapa)
     if falta:
@@ -1961,6 +1979,84 @@ def invoice_etapa(id, etapa):
     else:
         flash(f"Etapa {TITULO_ETAPA[etapa]} salva e concluída.", "ok")
     return redirect(url_for("invoice_detalhe", id=id) + f"#etapa-{etapa}")
+
+
+@app.route("/invoices/<int:id>/duimp-banco", methods=["POST"])
+@login_obrigatorio
+def duimp_banco(id):
+    """O Financeiro marca (ou desmarca) que a DUIMP foi enviada ao banco. Não trava o fluxo; sem a marcação
+    fica uma pendência do Financeiro."""
+    if not pode("financeiro"):
+        abort(403)
+    r = carregar_invoice(id)
+    marcar = bool(request.form.get("duimp_banco"))
+    db = get_db()
+    if marcar and not r["duimp_banco_em"]:
+        db.execute("UPDATE invoices SET duimp_banco_em = ?, duimp_banco_por = ? WHERE id = ?", (agora(), g.usuario["id"], id))
+        registrar_evento(id, "DUIMP enviada ao banco (Financeiro)")
+        flash("Marcado: DUIMP enviada ao banco.", "ok")
+    elif not marcar and r["duimp_banco_em"]:
+        db.execute("UPDATE invoices SET duimp_banco_em = NULL, duimp_banco_por = NULL WHERE id = ?", (id,))
+        registrar_evento(id, "Marcação \"DUIMP enviada ao banco\" desfeita (Financeiro)")
+        flash("Marcação desfeita: DUIMP não enviada ao banco.", "ok")
+    db.commit()
+    return redirect(voltar_seguro(url_for("invoice_detalhe", id=id) + "#etapa-DESEMBARACO"))
+
+
+# ---------------------------------------------------------------------------
+# Aba Importação: invoices nas etapas 1 a 5 (cadastro até o transporte terrestre), com edição rápida
+# ---------------------------------------------------------------------------
+ETAPAS_IMPORTACAO = ["CRIACAO"] + ORDEM_LOGISTICA
+
+
+@app.route("/importacao")
+@login_obrigatorio
+def importacao():
+    lista = [r for r in todos_invoices() if r["situacao"] in ETAPAS_IMPORTACAO and not r["historico"]]
+    for r in lista:
+        r["falta"] = criacao_faltando(r) if r["situacao"] == "CRIACAO" else etapa_faltando(r, r["situacao"])
+    ordem = {e: i for i, e in enumerate(ETAPAS_IMPORTACAO)}
+    lista.sort(key=lambda r: (ordem[r["situacao"]], r["data_prog_chegada"] or r["eta_planejado"] or "9999", r["id"]))
+    contagem = {e: sum(1 for r in lista if r["situacao"] == e) for e in ETAPAS_IMPORTACAO}
+    total = len(lista)
+    etapa = request.args.get("etapa")
+    if etapa in ETAPAS_IMPORTACAO:
+        lista = [r for r in lista if r["situacao"] == etapa]
+    busca = (request.args.get("q") or "").strip().lower()
+    if busca:
+        lista = [r for r in lista if busca in r["numero"].lower() or busca in (r["fornecedor"] or "").lower()]
+    return render_template("importacao.html", lista=lista, contagem=contagem, total=total, etapa=etapa, busca=busca,
+                           ETAPAS_IMPORTACAO=ETAPAS_IMPORTACAO, aberto=request.args.get("aberto", type=int),
+                           editar=pode("importacao"))
+
+
+@app.route("/importacao/<int:id>", methods=["POST"])
+@login_obrigatorio
+def importacao_salvar(id):
+    """Salva de uma vez os campos das etapas 2 a 5 de um invoice (mesmas regras da tela do invoice)."""
+    if not pode("importacao"):
+        abort(403)
+    r = carregar_invoice(id)
+    volta = redirect(url_for("importacao", aberto=id) + f"#inv-{id}")
+    if r["cancelado_em"]:
+        abort(403)
+    falta_cadastro = criacao_faltando(r)
+    if falta_cadastro:
+        flash(f"{r['numero']}: complete o cadastro antes da logística. Falta: " + ", ".join(falta_cadastro) + ".", "erro")
+        return volta
+    for etapa in ORDEM_LOGISTICA:
+        erro, _novos = aplicar_etapa(r, etapa, request.form)
+        if erro:
+            flash(f"{r['numero']}: {erro} Nada desta etapa foi salvo.", "erro")
+    r = carregar_invoice(id)
+    if r["situacao"] in ORDEM_LOGISTICA:
+        falta = etapa_faltando(r, r["situacao"])
+        flash(f"{r['numero']} salvo. Etapa atual: {TITULO_ETAPA[r['situacao']]}"
+              + (f" (falta: {', '.join(falta)})." if falta else "."), "ok")
+    else:
+        flash(f"{r['numero']} salvo. Transporte Terrestre concluído: o invoice seguiu para "
+              f"{SITUACOES.get(r['situacao'], (r['situacao'],))[0]} e saiu desta lista.", "ok")
+    return volta
 
 
 @app.route("/invoices/<int:id>/banco", methods=["POST"])
@@ -3281,15 +3377,81 @@ def pagamento_bloquear(id):
     return redirect(url_for("invoice_detalhe", id=id) + "#pagamentos")
 
 
+VER_NO_NAVEGADOR = ("pdf", "png", "jpg", "jpeg", "gif", "webp")
+
+
 @app.route("/arquivos/<int:aid>")
 @login_obrigatorio
 def arquivo_baixar(aid):
+    """Entrega o arquivo: PDF e imagens abrem no navegador (para a tela de visualização); ?baixar=1 força o download."""
     a = get_db().execute("SELECT * FROM arquivos WHERE id = ?", (aid,)).fetchone()
     if a is None or not os.path.exists(caminho_anexo(a)):
         abort(404)
     ext = a["nome"].rsplit(".", 1)[-1].lower()
-    abrir_no_navegador = ext in ("pdf", "png", "jpg", "jpeg", "gif", "webp", "txt")
-    return send_file(caminho_anexo(a), download_name=a["nome"], as_attachment=not abrir_no_navegador)
+    baixar = request.args.get("baixar") == "1" or ext not in VER_NO_NAVEGADOR
+    return send_file(caminho_anexo(a), download_name=a["nome"], as_attachment=baixar)
+
+
+def conteudo_para_visualizar(a):
+    """(tipo, conteúdo) para a tela de visualização. Tipos: pdf, imagem, texto, planilha, nenhum."""
+    ext = a["nome"].rsplit(".", 1)[-1].lower()
+    arq = caminho_anexo(a)
+    try:
+        if ext == "pdf":
+            return "pdf", None
+        if ext in ("png", "jpg", "jpeg", "gif", "webp"):
+            return "imagem", None
+        if ext in ("txt", "csv", "xml", "ofx", "eml"):
+            with open(arq, "rb") as f:
+                bruto = f.read(300_000)
+            for cod in ("utf-8", "latin-1"):
+                try:
+                    return "texto", bruto.decode(cod)
+                except UnicodeDecodeError:
+                    continue
+        if ext == "xlsx":
+            from openpyxl import load_workbook
+            wb = load_workbook(arq, read_only=True, data_only=True)
+            abas = []
+            for ws in wb.worksheets[:10]:
+                linhas = []
+                for linha in ws.iter_rows(max_row=500, max_col=40, values_only=True):
+                    linhas.append(["" if v is None else (fmt_data(v.strftime("%Y-%m-%d")) if hasattr(v, "strftime")
+                                                         else str(v)) for v in linha])
+                while linhas and not any(linhas[-1]):
+                    linhas.pop()
+                largura = max((max((i + 1 for i, v in enumerate(l) if v != ""), default=0) for l in linhas), default=0)
+                linhas = [l[:largura] for l in linhas]
+                abas.append((ws.title, linhas))
+            wb.close()
+            return "planilha", abas
+        if ext == "docx":
+            import zipfile
+            from xml.etree import ElementTree as ET
+            with zipfile.ZipFile(arq) as z:
+                xml = z.read("word/document.xml")
+            ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+            paragrafos = ["".join(t.text or "" for t in p.iter(ns + "t")) for p in ET.fromstring(xml).iter(ns + "p")]
+            return "texto", "\n".join(paragrafos)
+    except Exception:
+        app.logger.exception("Falha ao preparar a visualização do arquivo %s", a["id"])
+    return "nenhum", None
+
+
+@app.route("/arquivos/<int:aid>/ver")
+@login_obrigatorio
+def arquivo_ver(aid):
+    """Tela de visualização (abre em nova aba): mostra o arquivo e o botão para baixar uma cópia."""
+    a = get_db().execute("SELECT a.*, u.nome AS usuario FROM arquivos a LEFT JOIN usuarios u ON u.id = a.enviado_por"
+                         " WHERE a.id = ?", (aid,)).fetchone()
+    if a is None or not os.path.exists(caminho_anexo(a)):
+        abort(404)
+    tipo, conteudo = conteudo_para_visualizar(a)
+    invoice_id, descricao, _volta = info_origem(a)
+    inv = get_db().execute("SELECT numero FROM invoices WHERE id = ?", (invoice_id,)).fetchone() if invoice_id else None
+    return render_template("arquivo_ver.html", a=a, tipo=tipo, conteudo=conteudo, descricao=descricao,
+                           origem=ORIGENS_ARQUIVO.get(a["origem"], a["origem"]), invoice_id=invoice_id,
+                           invoice_numero=inv["numero"] if inv else None)
 
 
 @app.route("/arquivos/<int:aid>/excluir", methods=["POST"])

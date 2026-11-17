@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block titulo %}{{ a.nome }}{% endblock %}
+{% block conteudo %}
+<div class="ver-topo">
+  <div>
+    <h1 class="ver-nome">{{ a.nome }}</h1>
+    <p class="sub">{{ origem[:1]|upper }}{{ origem[1:] }}{% if descricao and descricao != origem %} · {{ descricao }}{% endif %}
+      {% if invoice_id %} · invoice <a href="{{ url_for('invoice_detalhe', id=invoice_id) }}">{{ invoice_numero }}</a>{% endif %}
+      · {{ a.tamanho|tamanho }} · anexado por {{ a.usuario or '—' }} em {{ a.enviado_em|data }}</p>
+  </div>
+  <a class="btn primario" href="{{ url_for('arquivo_baixar', aid=a.id, baixar=1) }}">
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>
+    Baixar cópia</a>
+</div>
+<div class="ver-area">
+{% if tipo == 'pdf' %}
+  <iframe src="{{ url_for('arquivo_baixar', aid=a.id) }}" title="{{ a.nome }}" class="ver-pdf"></iframe>
+{% elif tipo == 'imagem' %}
+  <img src="{{ url_for('arquivo_baixar', aid=a.id) }}" alt="{{ a.nome }}" class="ver-img">
+{% elif tipo == 'texto' %}
+  <pre class="ver-texto">{{ conteudo }}</pre>
+{% elif tipo == 'planilha' %}
+  {% for nome, linhas in conteudo %}
+  <h3>{{ nome }}</h3>
+  <div class="rolagem"><table class="ver-planilha">{% for l in linhas %}<tr>{% for v in l %}<td>{{ v }}</td>{% endfor %}</tr>{% endfor %}</table></div>
+  {% if linhas|length >= 500 %}<small>Mostrando as primeiras 500 linhas. Baixe a cópia para ver tudo.</small>{% endif %}
+  {% endfor %}
+{% else %}
+  <p class="vazio">Este tipo de arquivo não pode ser visualizado no navegador. Use <strong>Baixar cópia</strong> para abrir no computador.</p>
+{% endif %}
+</div>
+{% endblock %}

@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.32)
+# Controle de Invoices e Descontos (v4.33)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -94,6 +94,15 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 | 7 | Pagamento | Financeiro | Pagamento de cada parcela (integral, ou parcial quando há valor segurado), com Swift |
 | 8 | Dedução e liberação | Importação / Financeiro | O desconto é deduzido em próximo(s) invoice(s); quando eles chegam, o Financeiro libera o valor segurado, com Swift |
 
+**DUIMP enviada ao banco (v4.33):** depois de preenchida a data de emissão da DUIMP, o Financeiro marca na etapa Desembaraço
+a caixa **DUIMP enviada ao banco**. Não trava o processo, mas enquanto não for marcada fica uma pendência do Financeiro.
+(Invoices que já tinham chegado à fábrica antes desta versão não geram essa pendência.)
+
+**Aba Importação (v4.33):** lista os invoices em andamento nas etapas 1 a 5 (cadastro até o Transporte Terrestre), com
+contagem por etapa (clique para filtrar), busca, o que falta em cada um e as datas principais (HAWB, ETA, chegada). Ao abrir
+um invoice, todas as informações das etapas 2 a 5 aparecem lado a lado para editar e salvar de uma vez (mesmas regras da tela
+do invoice). Cadastros incompletos levam a "Completar cadastro". Todos veem; só a Importação edita.
+
 **Filtros no painel:** as tabelas de Pendências e de Invoices têm filtro em cada coluna (lista ou texto) e ordenação ao clicar no título da coluna.
 
 **Salvar sempre funciona**: no cadastro basta fornecedor e nº do invoice; nas etapas logísticas, qualquer informação pode ser salva a qualquer momento, **desde que o cadastro esteja completo** (a etapa 2, Coleta, só começa com todas as informações obrigatórias do cadastro). A etapa só é concluída (e o processo só avança) quando todas as informações obrigatórias (*) estão preenchidas. O painel mostra as **pendências de todos os setores** (as do setor de quem está logado no topo, as dos outros setores abaixo; cada setor só preenche a sua parte) com o que falta em cada etapa e também as informações não obrigatórias ainda vazias (exceto Exigências da ANVISA e Grupo de consolidação), até serem preenchidas.
@@ -174,9 +183,10 @@ Em **Fornecedores → Configurar**, a Importação cadastra para cada fornecedor
 ### Anexos: arquivos guardados no sistema (v4.31)
 Todo anexo (invoice assinado, DUIMP, Swift de cada pagamento, documentos dos lançamentos financeiros) é **enviado pelo
 navegador e guardado no servidor** (pasta `instance/arquivos`, fora do GitHub), até 10 MB por arquivo. Ao clicar no nome,
-o sistema entrega uma cópia para visualizar (PDF e imagens abrem no navegador; os demais são baixados).
+o arquivo abre numa **nova aba de visualização** (PDF, imagens, planilhas .xlsx, textos/CSV/XML e Word .docx são
+mostrados na própria tela; os demais tipos mostram só os dados do arquivo), com o botão **Baixar cópia**.
 - **Invoice assinado** é obrigatório para concluir o cadastro (etapa 1); pode ser anexado na criação ou depois, na tela do invoice.
-- Na seção **Pagamentos** do invoice há o botão **Baixar** do invoice assinado, para o Financeiro conferir antes de pagar.
+- Na seção **Pagamentos** do invoice há o botão **Abrir** do invoice assinado, para o Financeiro conferir antes de pagar.
 - Quem anexa pode excluir: Importação (invoice assinado, DUIMP), Financeiro (Swift), quem anexou ou o Administrador (lançamentos).
 - Os caminhos na pasta da rede cadastrados nas versões 4.27 a 4.30 continuam aparecendo (somente consulta, com **Copiar**),
   mas não geram mais pendência de "arquivo não encontrado".

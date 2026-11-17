@@ -627,3 +627,42 @@ tr.linha-atencao td:first-child { box-shadow: inset 3px 0 0 #e0a100; }
 /* v4.32: baixar o invoice assinado na seção de pagamentos */
 .invoice-download { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
 .invoice-download .btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+
+/* v4.33: visualização de arquivos em nova aba */
+.ver-topo { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+.ver-nome { word-break: break-word; margin-bottom: .2rem; }
+.ver-topo .btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.ver-area { margin-top: .8rem; }
+.ver-pdf { width: 100%; height: calc(100vh - 230px); min-height: 500px; border: 1px solid var(--borda); border-radius: var(--raio); background: #fff; }
+.ver-img { max-width: 100%; border: 1px solid var(--borda); border-radius: var(--raio); background: #fff; }
+.ver-texto { white-space: pre-wrap; word-break: break-word; background: var(--sup); border: 1px solid var(--borda); border-radius: var(--raio); padding: 1rem; max-height: 75vh; overflow: auto; font-size: .85rem; }
+.ver-planilha td { border: 1px solid var(--borda); padding: .25rem .5rem; font-size: .82rem; white-space: nowrap; }
+/* v4.33: DUIMP enviada ao banco (Financeiro) */
+.duimp-banco { margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--borda); }
+.duimp-banco form { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+/* v4.33: aba Importação */
+.cards-imp a.fluxo-etapa { text-decoration: none; color: inherit; }
+.etapa-tag { font-size: .75rem; font-weight: 600; padding: .1rem .5rem; border-radius: 999px; background: var(--info-claro, #eef4ff); color: var(--info, #1849a9); white-space: nowrap; }
+.etapa-tag.e-criacao { background: #fff3c4; color: #6b5200; }
+.falta-imp { color: var(--suave); font-size: .8rem; }
+.imp-datas { display: flex; gap: 1rem; font-size: .82rem; color: var(--suave); white-space: nowrap; }
+.imp-datas b { color: var(--txt); font-weight: 600; }
+.imp-grade { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; }
+.imp-etapa { border: 1px solid var(--borda); border-radius: var(--raio); padding: .6rem .7rem; display: flex; flex-direction: column; gap: .45rem; }
+.imp-etapa h3 { font-size: .92rem; margin: 0; }
+.imp-etapa.atual { border-color: var(--pri); box-shadow: 0 0 0 1px var(--pri) inset; }
+.imp-etapa.feita h3 .ok { color: var(--ok); }
+.imp-etapa label { font-size: .82rem; display: flex; flex-direction: column; gap: .15rem; }
+.imp-etapa label.flag-etapa { flex-direction: row; align-items: center; gap: .4rem; font-weight: 600; }
+.imp-etapa input, .imp-etapa select, .imp-etapa textarea { width: 100%; }
+.imp-etapa input[type=checkbox] { width: auto; }
+.imp-obs { color: var(--suave); }
+.form-imp .linha-form { margin-top: .7rem; display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
+@media (max-width: 1000px) { .imp-grade { grid-template-columns: repeat(2, minmax(0, 1fr)); } .imp-datas { display: none; } }
+@media (max-width: 600px) { .imp-grade { grid-template-columns: 1fr; } }
+/* v4.33: mais uma aba (Importação) — abas um pouco mais compactas para caber tudo */
+.abas a.aba { padding-left: .5rem; padding-right: .5rem; gap: .38rem; font-size: .87rem; }
+.abas a.novo-invoice { margin-left: .5rem; }
+@media (max-width: 1250px) { .abas a.aba svg { display: none; } }
+.cards-imp { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+@media (max-width: 800px) { .cards-imp { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
