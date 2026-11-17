@@ -30,6 +30,14 @@
     enquanto ele estiver fora (PythonAnywhere), ela apenas informa que não tem acesso e não altera nada.</p>
   {% if rede_ultima %}<p class="sub">Última verificação: {{ rede_ultima.em|data }} — {{ rede_ultima.ok }} encontrado(s), {{ rede_ultima.nao_encontrado }} não encontrado(s),
     {{ rede_ultima.sem_acesso }} sem acesso à pasta.</p>{% endif %}
+  <form method="post" action="{{ url_for('sistema_rede') }}" class="pastas-padrao">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="pastas">
+    <h3>Pasta padrão de cada documento</h3>
+    <p class="sub">Sugerida na tela de seleção quando a pessoa ainda não tem uma pasta lembrada (o navegador não informa a pasta do arquivo escolhido).</p>
+    <div class="grade">{% for o, pasta in pastas_padrao.items() %}
+      <label>{{ NOME_DOCUMENTO[o]|capitalize }}<input name="pasta_{{ o }}" value="{{ pasta }}" placeholder="\\servidor\pasta\" autocomplete="off"></label>{% endfor %}</div>
+    <button class="btn">Salvar pastas padrão</button>
+  </form>
   <form method="post" action="{{ url_for('sistema_rede') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Mapeamento da pasta (para servidor Linux dentro da rede; um por linha: <code>caminho no Windows = caminho no servidor</code>)

@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.27)
+# Controle de Invoices e Descontos (v4.28)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -176,6 +176,10 @@ Todo documento (Swift de cada pagamento, DUIMP, documentos dos lançamentos fina
 arquivo na pasta compartilhada** (`\\servidor\pasta\arquivo.pdf` ou `Z:\pasta\arquivo.pdf`), com botão **Copiar** para
 colar no Explorador de Arquivos (navegadores não abrem caminhos da rede a partir de um site). Arquivos enviados em versões
 anteriores continuam disponíveis para abrir.
+- **Selecionar arquivo…** abre a janela "Abrir" do Windows. Como os navegadores não revelam a pasta do arquivo escolhido, a tela
+  de confirmação mostra o nome do arquivo e a **pasta na rede** (lembrada da última vez ou a pasta padrão configurada em
+  Sistema); **Confirmar** salva só o caminho completo. Também é guardada a "impressão digital" do arquivo (nome, tamanho,
+  data de modificação e SHA-256), base para a futura leitura/validação do conteúdo (ainda não ativada).
 - **Arquivo sumiu** (renomeado, movido, apagado): o documento fica "não encontrado" e vira **pendência do setor que cadastra**
   (Swift → Financeiro; DUIMP e lançamentos → Importação), até o caminho ser corrigido.
 - **Detecção:** (1) qualquer usuário clica em **Não encontrado**; (2) **verificação automática diária** pelo próprio servidor,

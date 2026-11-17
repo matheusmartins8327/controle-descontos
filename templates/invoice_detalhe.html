@@ -388,7 +388,8 @@
       <label>Valor pago ({{ m }}) *<input name="valor" id="valor-pagamento" inputmode="decimal" required>
         <small>Pode ser parcial.</small></label>
       <label>Banco<input name="banco" value="{{ r.banco_debito or '' }}"></label>
-      <label class="largo">Caminho do Swift na pasta da rede<input name="swift_caminho" placeholder="\\servidor\Financeiro\Swift\arquivo.pdf (pode cadastrar depois)" autocomplete="off">
+      <label class="largo">Caminho do Swift na pasta da rede<span class="campo-com-botao"><input name="swift_caminho" id="swift-caminho" placeholder="\\servidor\Financeiro\Swift\arquivo.pdf (pode cadastrar depois)" autocomplete="off">
+        <button type="button" class="btn pequeno" data-doc-form="" data-alvo="swift-caminho" data-origem="pagamento" data-pasta="{{ pasta_padrao('pagamento') }}" data-rotulo="Swift">Selecionar arquivo…</button></span>
         <small>O processo só é concluído com o Swift de todos os pagamentos.</small></label>
       <label class="largo">Observação<input name="obs" placeholder="Opcional"></label>
     </div>

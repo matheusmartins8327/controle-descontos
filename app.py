@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.27"
+VERSAO = "4.28"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -377,7 +377,12 @@ CREATE TABLE IF NOT EXISTS documentos (
     verificado_em TEXT,
     problema_em TEXT,
     problema_por INTEGER REFERENCES usuarios(id),  -- vazio = verificação automática
-    problema_obs TEXT
+    problema_obs TEXT,
+    -- "impressão digital" do arquivo escolhido na tela (para a futura leitura/validação do conteúdo)
+    nome_arquivo TEXT,
+    tamanho INTEGER,
+    arquivo_modificado_em TEXT,
+    sha256 TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_documentos_origem ON documentos(origem, origem_id);
 -- versão 4.0: e-mails automáticos
@@ -472,6 +477,12 @@ def init_db():
                 db.execute("INSERT INTO arquivos (origem, origem_id, nome, arquivo, tamanho, enviado_por, enviado_em)"
                            " VALUES ('lancamento', ?, ?, ?, ?, ?, ?)", (a[1], a[2], a[3], a[4], a[5], a[6]))
             db.execute("DELETE FROM lancamento_anexos")
+        # versão 4.28: "impressão digital" do arquivo escolhido (base para a futura leitura/validação do arquivo)
+        colunas_doc = {r[1] for r in db.execute("PRAGMA table_info(documentos)")}
+        for col, tipo in (("nome_arquivo", "TEXT"), ("tamanho", "INTEGER"), ("arquivo_modificado_em", "TEXT"),
+                          ("sha256", "TEXT")):
+            if col not in colunas_doc:
+                db.execute(f"ALTER TABLE documentos ADD COLUMN {col} {tipo}")
         # versão 4.9: e-mails podem levar arquivos anexados
         if "anexos" not in {r[1] for r in db.execute("PRAGMA table_info(emails)")}:
             db.execute("ALTER TABLE emails ADD COLUMN anexos TEXT")
@@ -2710,6 +2721,7 @@ def sistema():
                            anexos_qtd=uso[0], anexos_bytes=uso[1], contagem_invoices=contagem_invoices,
                            rede_mapeamentos=config("rede_mapeamentos", ""),
                            rede_ultima=json.loads(config("rede_ultima_verificacao") or "null"),
+                           pastas_padrao={o: pasta_padrao(o) for o in SETOR_DOCUMENTO}, NOME_DOCUMENTO=NOME_DOCUMENTO,
                            docs_contagem={k: n for k, n in get_db().execute(
                                "SELECT status, COUNT(*) FROM documentos GROUP BY status")})
 
@@ -4554,6 +4566,26 @@ def voltar_seguro(padrao):
     return v if v.startswith("/") and not v.startswith("//") else padrao
 
 
+def metadados_arquivo_form():
+    """Nome, tamanho, data de modificação e SHA-256 calculados no navegador ao escolher o arquivo.
+    Ainda não são usados para validar nada: servirão para a futura leitura do arquivo (conferir se é o mesmo)."""
+    f = request.form
+    sha = (f.get("sha256") or "").strip().lower()
+    tam = f.get("tamanho", "").strip()
+    mod = f.get("modificado_em", "").strip()
+    return {"nome_arquivo": (f.get("nome_arquivo") or "").strip()[:255] or None,
+            "tamanho": int(tam) if tam.isdigit() else None,
+            "arquivo_modificado_em": mod[:19] if re.fullmatch(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?.*", mod) else None,
+            "sha256": sha if re.fullmatch(r"[0-9a-f]{64}", sha) else None}
+
+
+def pasta_padrao(origem):
+    return config(f"pasta_padrao_{origem}", "") or ""
+
+
+app.jinja_env.globals["pasta_padrao"] = lambda origem: pasta_padrao(origem)
+
+
 @app.route("/documentos/novo", methods=["POST"])
 @login_obrigatorio
 def documento_novo():
@@ -4572,8 +4604,11 @@ def documento_novo():
               "\\\\servidor\\Importacao\\2026\\Swift 123.pdf ou Z:\\Importacao\\2026\\Swift 123.pdf.", "erro")
         return redirect(volta)
     db = get_db()
-    db.execute("INSERT INTO documentos (origem, origem_id, caminho, status, cadastrado_por, cadastrado_em)"
-               " VALUES (?, ?, ?, 'NAO_VERIFICADO', ?, ?)", (origem, origem_id, caminho, g.usuario["id"], agora()))
+    meta = metadados_arquivo_form()
+    db.execute("INSERT INTO documentos (origem, origem_id, caminho, status, cadastrado_por, cadastrado_em, nome_arquivo,"
+               " tamanho, arquivo_modificado_em, sha256) VALUES (?, ?, ?, 'NAO_VERIFICADO', ?, ?, ?, ?, ?, ?)",
+               (origem, origem_id, caminho, g.usuario["id"], agora(), meta["nome_arquivo"], meta["tamanho"],
+                meta["arquivo_modificado_em"], meta["sha256"]))
     registrar_evento(iid, f"Caminho cadastrado ({NOME_DOCUMENTO[origem]})", caminho)
     db.commit()
     flash("Caminho do documento cadastrado.", "ok")
@@ -4607,6 +4642,11 @@ def documento_acao(did, acao):
         if not RE_CAMINHO_REDE.match(caminho):
             flash("Caminho inválido: use \\\\servidor\\pasta\\arquivo ou Z:\\pasta\\arquivo.", "erro")
             return redirect(volta)
+        meta = metadados_arquivo_form()
+        if meta["nome_arquivo"] or meta["sha256"]:  # outro arquivo escolhido: atualiza a impressão digital
+            db.execute("UPDATE documentos SET nome_arquivo = ?, tamanho = ?, arquivo_modificado_em = ?, sha256 = ?"
+                       " WHERE id = ?", (meta["nome_arquivo"], meta["tamanho"], meta["arquivo_modificado_em"],
+                                         meta["sha256"], did))
         db.execute("UPDATE documentos SET caminho = ?, status = 'NAO_VERIFICADO', problema_em = NULL, problema_por = NULL,"
                    " problema_obs = NULL, verificado_em = NULL WHERE id = ?", (caminho, did))
         if iid:
@@ -4698,6 +4738,19 @@ def texto_verificacao(res):
 def sistema_rede():
     if request.form.get("acao") == "verificar":
         flash(texto_verificacao(verificar_documentos()), "ok")
+    elif request.form.get("acao") == "pastas":
+        erros = []
+        for origem in SETOR_DOCUMENTO:
+            v = normalizar_caminho(request.form.get(f"pasta_{origem}", ""))
+            if v and not RE_CAMINHO_REDE.match(v.rstrip("\\") + "\\x"):
+                erros.append(f"Pasta padrão inválida para {NOME_DOCUMENTO[origem]}: {v}")
+                continue
+            salvar_config(f"pasta_padrao_{origem}", (v.rstrip("\\") + "\\") if v else None)
+        get_db().commit()
+        for e in erros:
+            flash(e, "erro")
+        if not erros:
+            flash("Pastas padrão salvas.", "ok")
     else:
         salvar_config("rede_mapeamentos", request.form.get("mapeamentos", "").strip() or None)
         get_db().commit()

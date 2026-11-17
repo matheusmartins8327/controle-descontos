@@ -596,3 +596,13 @@ th.ordenavel.desc::after { content: " ↓"; opacity: 1; }
 .etapa-card dd, .etapa-card .campo-arquivo { min-width: 0; max-width: 100%; }
 .etapa-card .doc { max-width: 100%; box-sizing: border-box; }
 .etapa-card .doc-caminho { white-space: normal; word-break: break-all; overflow: visible; }
+
+/* v4.28: janela de seleção de documento */
+.modal-doc label { display: block; margin: .7rem 0 0; }
+.modal-doc input { width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: .85rem; }
+.modal-doc small { display: block; color: var(--suave); margin-top: .2rem; }
+.arq-escolhido { background: #eef3fd; border-radius: 8px; padding: .5rem .7rem; margin: .5rem 0; }
+.arq-escolhido small { display: inline; }
+.pastas-padrao { margin-bottom: 1rem; }
+.pastas-padrao h3 { margin: .5rem 0 .2rem; font-size: .95rem; }
+.campo-com-botao { display: flex; gap: .4rem; } .campo-com-botao input { flex: 1; }
