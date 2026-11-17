@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.29"
+VERSAO = "4.30"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -65,7 +65,7 @@ PERFIS_ANTIGOS = {"qualidade": "consulta", "compras": "importacao", "recebimento
 MOEDAS = {"USD": "US$", "EUR": "€", "CHF": "CHF", "BRL": "R$"}
 # Condição de pagamento: uma ou mais parcelas (ex.: 25% antecipado + 75% 60 dias após a HAWB)
 CONDICOES = {"ANTECIPADO": "Antecipado", "PRAZO": "Após a HAWB"}
-PRAZO_ANTECIPADO_DIAS = 5          # pagamento antecipado: data de assinatura + 5 dias úteis
+PRAZO_ANTECIPADO_DIAS = 5          # pagamento antecipado: conclusão do cadastro (etapa 1) + 5 dias úteis
 NACIONALIZACAO_PLANEJADA = (-1, 3)  # impostos de nacionalização: ETA planejado -1 a +3 dias úteis
 NACIONALIZACAO_REAL = (0, 2)        # com o ETA real: ETA real a +2 dias úteis
 PRAZO_LIBERACAO_DIAS_UTEIS = 5     # liberação do segurado: chegada real do invoice deduzido + 5 dias úteis
@@ -90,16 +90,17 @@ CAMPOS_ETAPA = {
                     ("data_desembaraco", "Data de desembaraço", "data", True),
                     ("numero_nf", "Número da NF", "linha", True)],
     "CHEGADA": [("data_prog_chegada", "Data programada de chegada", "data", True),
-                ("data_chegada", "Data real de chegada na fábrica", "data", True)],
+                ("data_chegada", "Data real de chegada na fábrica", "data", True),
+                ("nf_liberada", "NF Liberada", "flag", True)],
 }
-TITULO_ETAPA = {"COLETA": "Coleta", "EMBARQUE": "Embarque", "DESEMBARACO": "Desembaraço", "CHEGADA": "Transporte"}
+TITULO_ETAPA = {"COLETA": "Coleta", "EMBARQUE": "Embarque", "DESEMBARACO": "Desembaraço", "CHEGADA": "Transporte Terrestre"}
 # Situação atual do invoice (calculada) e quem age nela
 SITUACOES = {
     "CRIACAO": ("Cadastro incompleto", "importacao"),
     "COLETA": ("Aguardando coleta", "importacao"),
     "EMBARQUE": ("Em embarque", "importacao"),
     "DESEMBARACO": ("Em desembaraço", "importacao"),
-    "CHEGADA": ("Em transporte para a fábrica", "importacao"),
+    "CHEGADA": ("Em transporte terrestre", "importacao"),
     "INSPECAO": ("Aguardando inspeção", "admin"),
     "PAGAMENTO": ("Aguardando pagamento", "financeiro"),
     "DEDUCAO": ("Desconto aguardando dedução", "importacao"),
@@ -221,7 +222,7 @@ CREATE TABLE IF NOT EXISTS condicao_parcelas (
     invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
     ordem INTEGER NOT NULL,
     percentual REAL NOT NULL,
-    tipo TEXT NOT NULL,                   -- ANTECIPADO (assinatura + 5 dias úteis) | PRAZO (HAWB + dias)
+    tipo TEXT NOT NULL,                   -- ANTECIPADO (conclusão do cadastro + 5 dias úteis) | PRAZO (HAWB + dias)
     dias INTEGER
 );
 -- Desconto por má qualidade de um invoice (no máximo um por invoice)
@@ -447,9 +448,14 @@ def init_db():
         # versão 4.20: número da NF (Desembaraço) e liberação do pagamento após a HAWB pela Engenharia
         colunas_inv = {r[1] for r in db.execute("PRAGMA table_info(invoices)")}
         for col, tipo in (("numero_nf", "TEXT"), ("pagamento_liberado_em", "TEXT"), ("pagamento_liberado_por", "INTEGER"),
-                          ("pagamento_liberado_obs", "TEXT"), ("historico", "INTEGER NOT NULL DEFAULT 0")):
+                          ("pagamento_liberado_obs", "TEXT"), ("historico", "INTEGER NOT NULL DEFAULT 0"),
+                          ("nf_liberada", "INTEGER"), ("cadastro_concluido_em", "TEXT")):
             if col not in colunas_inv:
                 db.execute(f"ALTER TABLE invoices ADD COLUMN {col} {tipo}")
+        # versão 4.30: invoices que já passaram do Transporte não voltam a ficar pendentes da nova "NF Liberada"
+        if db.execute("SELECT 1 FROM configuracoes WHERE chave = 'v430_nf'").fetchone() is None:
+            db.execute("UPDATE invoices SET nf_liberada = 1 WHERE data_chegada IS NOT NULL")
+            db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v430_nf', '1')")
         # versão 4.22: invoices/pagamentos lançados pela carga de histórico (dados do passado)
         if "historico" not in {r[1] for r in db.execute("PRAGMA table_info(pagamentos)")}:
             db.execute("ALTER TABLE pagamentos ADD COLUMN historico INTEGER NOT NULL DEFAULT 0")
@@ -678,10 +684,11 @@ FROM invoices i JOIN fornecedores f ON f.id = i.fornecedor_id
 
 
 def vencimento_parcela(inv, c):
-    """Antecipado: data de assinatura + 5 dias úteis. A prazo: data da HAWB (registrada na Coleta) + dias da condição;
+    """Antecipado: conclusão do cadastro (etapa 1) + 5 dias úteis. A prazo: data da HAWB (registrada na Coleta) + dias da condição;
     antes da HAWB, a parcela a prazo fica sem vencimento (não há estimativa)."""
     if c["tipo"] == "ANTECIPADO":
-        return somar_dias_uteis(inv["data_assinatura"], PRAZO_ANTECIPADO_DIAS)
+        base = inv["cadastro_concluido_em"]
+        return somar_dias_uteis(base[:10], PRAZO_ANTECIPADO_DIAS) if base else None
     return somar_dias(inv["data_hawb"], c["dias"]) if inv["data_hawb"] else None
 
 
@@ -875,10 +882,11 @@ def calcular(inv):
         if r["parcelas"] else r["principal_pendente"]
     r["duimp_arquivos"] = arquivos_de("duimp", [iid]).get(iid, [])
     r["duimp_docs"] = documentos_de("duimp", [iid]).get(iid, [])
+    r["invoice_docs"] = documentos_de("invoice", [iid]).get(iid, [])
     # documentos cujo arquivo não foi encontrado na pasta da rede (pendência do setor que cadastra)
     r["docs_quebrados"] = db.execute(
         "SELECT d.* FROM documentos d WHERE d.status = 'NAO_ENCONTRADO' AND ("
-        " (d.origem = 'duimp' AND d.origem_id = ?) OR"
+        " (d.origem IN ('duimp', 'invoice') AND d.origem_id = ?) OR"
         " (d.origem = 'pagamento' AND d.origem_id IN (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR"
         " (d.origem = 'lancamento' AND d.origem_id IN (SELECT id FROM lancamentos WHERE invoice_id = ?)))",
         (iid, iid, iid)).fetchall()
@@ -1432,7 +1440,69 @@ def criacao_faltando(r):
         falta.append("Itens")
     elif any(not x["codigo"] or not x["quantidade"] or x["valor_unit"] is None for x in itens):
         falta.append("Código, quantidade e preço de todos os itens")
+    # v4.30: o invoice assinado (caminho na rede) é obrigatório para concluir o cadastro.
+    # Não vale para o histórico nem para cadastros já concluídos antes desta regra.
+    if r.get("id") and not r.get("historico") and not r.get("cadastro_concluido_em"):
+        docs = r.get("invoice_docs")
+        if docs is None:
+            docs = get_db().execute("SELECT 1 FROM documentos WHERE origem = 'invoice' AND origem_id = ?",
+                                    (r["id"],)).fetchall()
+        if not docs:
+            falta.append("Invoice assinado (caminho na rede)")
     return falta
+
+
+@app.before_request
+def ajuste_v430_cadastro():
+    """Uma única vez: cadastros que já estavam completos antes da v4.30 ganham como data de conclusão a data de
+    assinatura (o vencimento da parcela antecipada não muda e nenhum e-mail de alteração é gerado)."""
+    if config("v430_cadastro") is not None:
+        return
+    db = get_db()
+    for inv in db.execute(SQL_INVOICE + " WHERE i.cadastro_concluido_em IS NULL").fetchall():
+        r = calcular(inv)
+        if not [f for f in criacao_faltando(r) if not f.startswith("Invoice assinado")]:
+            db.execute("UPDATE invoices SET cadastro_concluido_em = ? WHERE id = ?",
+                       (r["data_assinatura"] or r["criado_em"][:10], r["id"]))
+    salvar_config("v430_cadastro", agora())
+    db.commit()
+
+
+def salvar_invoice_assinado_form(iid):
+    """Campo 'Invoice assinado' da tela de cadastro: grava o caminho (e a impressão digital) como documento."""
+    f = request.form
+    caminho = normalizar_caminho(f.get("invoice_caminho"))
+    if not caminho:
+        return
+    if not RE_CAMINHO_REDE.match(caminho):
+        flash("Invoice assinado: caminho inválido (use o caminho completo na pasta da rede). "
+              "Cadastre o caminho na tela do invoice.", "erro")
+        return
+    db = get_db()
+    if db.execute("SELECT 1 FROM documentos WHERE origem = 'invoice' AND origem_id = ? AND lower(caminho) = lower(?)",
+                  (iid, caminho)).fetchone():
+        return
+    sha = (f.get("invoice_sha256") or "").strip().lower()
+    tam = (f.get("invoice_tamanho") or "").strip()
+    db.execute("INSERT INTO documentos (origem, origem_id, caminho, status, cadastrado_por, cadastrado_em, nome_arquivo,"
+               " tamanho, arquivo_modificado_em, sha256) VALUES ('invoice', ?, ?, 'NAO_VERIFICADO', ?, ?, ?, ?, ?, ?)",
+               (iid, caminho, g.usuario["id"], agora(), (f.get("invoice_nome_arquivo") or "")[:255] or None,
+                int(tam) if tam.isdigit() else None, (f.get("invoice_modificado_em") or "")[:19] or None,
+                sha if re.fullmatch(r"[0-9a-f]{64}", sha) else None))
+    registrar_evento(iid, "Caminho cadastrado (invoice assinado)", caminho)
+    db.commit()
+
+
+def registrar_conclusao_cadastro(iid):
+    """Guarda a data em que a etapa 1 (cadastro) ficou completa: base do vencimento da parcela antecipada."""
+    r = carregar_invoice(iid)
+    if not r["cadastro_concluido_em"] and not criacao_faltando(r):
+        get_db().execute("UPDATE invoices SET cadastro_concluido_em = ? WHERE id = ?", (agora(), iid))
+        registrar_evento(iid, "Cadastro concluído (etapa 1)",
+                         "Base do vencimento da parcela antecipada: + " f"{PRAZO_ANTECIPADO_DIAS} dias úteis")
+        get_db().commit()
+        return True
+    return False
 
 
 def opcionais_faltando(r):
@@ -1455,6 +1525,7 @@ def etapa_faltando(r, etapa):
 
 
 def avisar_cadastro_pendente(iid):
+    registrar_conclusao_cadastro(iid)
     r = carregar_invoice(iid)
     falta = criacao_faltando(r)
     if falta:
@@ -1761,6 +1832,7 @@ def invoice_novo():
                 registrar_evento(origem_id, f"Desconto deduzido no invoice {dados['numero']}: {fmt_moeda(v, dados['moeda'])}")
             db.commit()
             flash("Invoice criado." + (f" {len(deducoes)} desconto(s) deduzido(s)." if deducoes else ""), "ok")
+            salvar_invoice_assinado_form(iid)
             avisar_cadastro_pendente(iid)
             return redirect(url_for("invoice_detalhe", id=iid))
         for e in erros:
@@ -1819,6 +1891,7 @@ def invoice_editar(id):
             registrar_evento(id, "Dados do invoice corrigidos", "; ".join(mudancas) or None)
             db.commit()
             flash("Invoice atualizado.", "ok")
+            salvar_invoice_assinado_form(id)
             avisar_cadastro_pendente(id)
             return redirect(url_for("invoice_detalhe", id=id))
         for e in erros:
@@ -1876,11 +1949,14 @@ def invoice_etapa(id, etapa):
             valor = data_valida(valor)
         elif tipo == "canal":
             valor = valor if valor in CORES_CANAL else None
+        elif tipo == "flag":
+            valor = 1 if valor else None
         else:
             valor = valor or None
         novos[campo] = valor
         if valor != r[campo]:
-            mudancas.append(f"{rotulo}: {fmt_data(valor) if tipo == 'data' else (valor or '—')}")
+            mudancas.append(f"{rotulo}: " + (fmt_data(valor) if tipo == 'data' else
+                                             ('sim' if valor else 'não') if tipo == 'flag' else (valor or '—')))
     if mudancas:
         db = get_db()
         db.execute(f"UPDATE invoices SET {', '.join(c + ' = ?' for c in novos)} WHERE id = ?", (*novos.values(), id))
@@ -2364,7 +2440,7 @@ def excluir_invoice(iid):
     db.execute("DELETE FROM arquivos WHERE (origem = 'duimp' AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
                " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
                " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid))
-    db.execute("DELETE FROM documentos WHERE (origem = 'duimp' AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
+    db.execute("DELETE FROM documentos WHERE (origem IN ('duimp', 'invoice') AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
                " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
                " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid))
     db.execute("DELETE FROM deducoes WHERE invoice_id = ? OR desconto_id IN (SELECT id FROM descontos WHERE invoice_id = ?)",
@@ -3335,7 +3411,7 @@ FLUXOS_EMAIL = {
     # chave: (título, quando é enviado, setor sugerido em "Para", setor sugerido em "Cc")
     "pagamento_programado": (
         "Pagamento programado",
-        "Parcela antecipada (data de assinatura + 5 dias úteis) e parcelas após a HAWB, assim que a data de "
+        "Parcela antecipada (conclusão do cadastro + 5 dias úteis) e parcelas após a HAWB, assim que a data de "
         "vencimento e o valor ficam definidos.", "financeiro", ""),
     "pagamento_liberado": (
         "Pagamento liberado pela Engenharia de Processos",
@@ -3513,7 +3589,8 @@ def estado_previsao(r):
 
 def descrever_parcela(r, p):
     if p["tipo"] == "ANTECIPADO":
-        regra = f"data de assinatura {fmt_data(r['data_assinatura'])} + {PRAZO_ANTECIPADO_DIAS} dias úteis"
+        regra = (f"cadastro concluído em {fmt_data((r['cadastro_concluido_em'] or '')[:10])} + {PRAZO_ANTECIPADO_DIAS} dias úteis"
+                 if r["cadastro_concluido_em"] else "aguardando a conclusão do cadastro")
     else:
         regra = f"HAWB {fmt_data(r['data_hawb'])} + {p['dias']} dias"
     return f"Parcela {p['texto']} ({regra})"
@@ -4314,10 +4391,11 @@ def gravar_carga_historico(d):
     iid = db.execute(
         "INSERT INTO invoices (fornecedor_id, numero, moeda, data_assinatura, condicao_tipo, condicao_dias, data_hawb,"
         " data_fim_inspecao, tem_desconto, obs, historico, pagamento_liberado_em, pagamento_liberado_por,"
-        " pagamento_liberado_obs, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
+        " pagamento_liberado_obs, criado_por, criado_em, cadastro_concluido_em)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
         (fid, d["numero"], d["moeda"], d["data_assinatura"], unica["tipo"] if unica else "MISTA",
          unica["dias"] if unica else None, d["data_hawb"], data_insp, 1 if d["desconto"] else 0, d["obs"],
-         agora(), g.usuario["id"], "Carga de histórico", g.usuario["id"], agora())).lastrowid
+         agora(), g.usuario["id"], "Carga de histórico", g.usuario["id"], agora(), d["data_assinatura"])).lastrowid
     salvar_condicao(iid, d["condicao"])
     db.execute("INSERT INTO invoice_itens (invoice_id, codigo, item, quantidade, valor_unit_original, valor_unit)"
                " VALUES (?, 'HIST', 'Valor total do invoice (carga de histórico)', 1, ?, ?)", (iid, d["valor"], d["valor"]))
@@ -4519,8 +4597,9 @@ def carga_historico_importar():
 # que o cadastra. Detecção: (1) qualquer usuário marca "Não encontrado"; (2) verificação automática diária pelo
 # próprio servidor, que só roda quando o servidor enxerga a pasta da rede (configuração em Sistema).
 # ---------------------------------------------------------------------------
-SETOR_DOCUMENTO = {"lancamento": "importacao", "pagamento": "financeiro", "duimp": "importacao"}
-NOME_DOCUMENTO = {"lancamento": "documento do lançamento financeiro", "pagamento": "Swift", "duimp": "DUIMP"}
+SETOR_DOCUMENTO = {"lancamento": "importacao", "pagamento": "financeiro", "duimp": "importacao", "invoice": "importacao"}
+NOME_DOCUMENTO = {"lancamento": "documento do lançamento financeiro", "pagamento": "Swift", "duimp": "DUIMP",
+                  "invoice": "invoice assinado"}
 RE_CAMINHO_REDE = re.compile(r"^(\\\\[^\\/:*?\"<>|]+\\[^\\/:*?\"<>|]+.*|[A-Za-z]:\\.+)$")
 
 
@@ -4549,14 +4628,14 @@ def documentos_de(origem, ids):
 def pode_cadastrar_documento(origem):
     if origem == "pagamento":
         return pode("financeiro")
-    if origem == "duimp":
+    if origem in ("duimp", "invoice"):
         return pode("importacao")
     return pode_anexar()
 
 
 def invoice_do_documento(origem, origem_id):
     db = get_db()
-    if origem == "duimp":
+    if origem in ("duimp", "invoice"):
         return origem_id
     tabela = "pagamentos" if origem == "pagamento" else "lancamentos"
     r = db.execute(f"SELECT invoice_id FROM {tabela} WHERE id = ?", (origem_id,)).fetchone()
@@ -4586,6 +4665,7 @@ def pasta_padrao(origem):
 
 
 app.jinja_env.globals["pasta_padrao"] = lambda origem: pasta_padrao(origem)
+app.jinja_env.globals["documentos_invoice"] = lambda iid: documentos_de("invoice", [iid]).get(iid, []) if iid else []
 
 
 @app.route("/documentos/novo", methods=["POST"])
@@ -4613,6 +4693,8 @@ def documento_novo():
                 meta["arquivo_modificado_em"], meta["sha256"]))
     registrar_evento(iid, f"Caminho cadastrado ({NOME_DOCUMENTO[origem]})", caminho)
     db.commit()
+    if origem == "invoice" and registrar_conclusao_cadastro(iid):
+        flash("Cadastro do invoice concluído: o vencimento da parcela antecipada conta a partir de hoje.", "ok")
     flash("Caminho do documento cadastrado.", "ok")
     return redirect(volta)
 

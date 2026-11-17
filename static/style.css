@@ -617,3 +617,9 @@ tr.linha-atencao td:first-child { box-shadow: inset 3px 0 0 #e0a100; }
 .caminho-previa { margin-top: .5rem; padding: .4rem .6rem; background: #f3f6fc; border-radius: 6px; font-family: ui-monospace, Consolas, monospace;
   font-size: .8rem; word-break: break-all; color: var(--marinho); }
 .caminho-previa:empty { display: none; }
+
+/* v4.30 */
+.invoice-assinado { margin: .2rem 0 1rem; padding: .6rem .8rem; border: 1px dashed #c9d6ef; border-radius: 10px; }
+.invoice-assinado .docs { margin-top: .4rem; }
+.flag-etapa { display: flex; align-items: center; gap: .45rem; font-size: .88rem; padding: .3rem 0; }
+.flag-etapa input { width: 18px; height: 18px; accent-color: var(--ok); }

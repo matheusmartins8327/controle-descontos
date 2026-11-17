@@ -17,6 +17,16 @@
       {% else %}<select name="moeda" id="moeda" required><option value="" {{ 'selected' if not d.moeda }}>Selecione…</option>{% for k, s in MOEDAS.items() %}<option value="{{ k }}" {{ 'selected' if d.moeda == k }}>{{ k }} ({{ s }})</option>{% endfor %}</select>{% endif %}
     </label>
     <label>Data de assinatura do invoice *<input type="date" name="data_assinatura" value="{{ d.data_assinatura or '' }}"></label>
+    {% set ja_assinado = documentos_invoice(id) if editando else [] %}
+    <label class="largo">Invoice assinado (caminho na pasta da rede) *
+      {% if ja_assinado %}<small class="bloco-linha">Já cadastrado: <code>{{ ja_assinado[0].caminho }}</code> — para trocar, use "Corrigir" na tela do invoice.</small>
+      {% else %}
+      <span class="campo-com-botao"><input name="invoice_caminho" id="invoice-caminho" value="{{ request.form.get('invoice_caminho', '') }}" placeholder="\\servidor\Importacao\Invoices\arquivo.pdf" autocomplete="off">
+        <button type="button" class="btn pequeno" data-doc-form="" data-alvo="invoice-caminho" data-prefixo="invoice" data-origem="invoice" data-pasta="{{ pasta_padrao('invoice') }}" data-rotulo="invoice assinado">Selecionar arquivo…</button></span>
+      <input type="hidden" name="invoice_nome_arquivo" id="invoice-nome_arquivo"><input type="hidden" name="invoice_tamanho" id="invoice-tamanho">
+      <input type="hidden" name="invoice_modificado_em" id="invoice-modificado_em"><input type="hidden" name="invoice_sha256" id="invoice-sha256">
+      <small>Obrigatório para concluir o cadastro. A conclusão do cadastro é a base do vencimento da parcela antecipada.</small>{% endif %}
+    </label>
     <label>Agente de carga<input name="agente_carga" value="{{ d.agente_carga or '' }}"></label>
     <label>Despachante<input name="despachante" value="{{ d.despachante or '' }}"></label>
     <label>Grupo de consolidação<input name="grupo_consolidacao" value="{{ d.grupo_consolidacao or '' }}"></label>
@@ -26,7 +36,7 @@
 
   <h2>Condição de pagamento</h2>
   <p class="sub">Uma ou mais parcelas que somam 100%. Exemplo: 25% antecipado + 75% 60 dias após a HAWB.
-    Antecipado vence na data de assinatura + {{ PRAZO_ANTECIPADO_DIAS }} dias úteis; a prazo vence na data da HAWB (registrada na etapa Coleta) + os dias.</p>
+    Antecipado vence na data de conclusão do cadastro (etapa 1) + {{ PRAZO_ANTECIPADO_DIAS }} dias úteis; a prazo vence na data da HAWB (registrada na etapa Coleta) + os dias.</p>
   <table class="condicao">
     <thead><tr><th class="num">Percentual *</th><th>Tipo *</th><th class="num">Dias após a HAWB</th><th></th></tr></thead>
     <tbody id="parcelas">
@@ -145,7 +155,7 @@
         if (!/^\d+$/.test(diasTxt)) { erros.push(`Parcela ${i + 1}: informe os dias após a HAWB.`); return; }
         linhas.push(`${pct.toLocaleString('pt-BR')}% ${diasTxt} dias após a HAWB`);
       } else {
-        linhas.push(`${pct.toLocaleString('pt-BR')}% antecipado (assinatura + {{ PRAZO_ANTECIPADO_DIAS }} dias úteis)`);
+        linhas.push(`${pct.toLocaleString('pt-BR')}% antecipado (conclusão do cadastro + {{ PRAZO_ANTECIPADO_DIAS }} dias úteis)`);
       }
     });
     if (!erros.length && Math.abs(soma - 100) > 0.01)

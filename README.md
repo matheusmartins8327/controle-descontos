@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.29)
+# Controle de Invoices e Descontos (v4.30)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -85,11 +85,11 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 
 | # | Etapa | Quem informa | Informações |
 |---|-------|--------------|-------------|
-| 1 | Criação do invoice | Importação | Fornecedor, nº, moeda, **data de assinatura**, **condição de pagamento** (uma ou mais parcelas), agente de carga, despachante, grupo de consolidação, coleta programada e itens (código, descrição, quantidade e preço original), digitados ou **carregados de uma planilha Excel**. Aparece a **janela de descontos aprovados** do fornecedor (mesma moeda) para deduzir um ou mais, total ou parcialmente; o **valor final** é calculado após as deduções |
+| 1 | Criação do invoice | Importação | Fornecedor, nº, moeda, **data de assinatura**, **condição de pagamento** (uma ou mais parcelas), agente de carga, despachante, grupo de consolidação, coleta programada e itens (código, descrição, quantidade e preço original) e o **invoice assinado** (caminho do arquivo na pasta da rede, obrigatório), digitados ou **carregados de uma planilha Excel**. Aparece a **janela de descontos aprovados** do fornecedor (mesma moeda) para deduzir um ou mais, total ou parcialmente; o **valor final** é calculado após as deduções |
 | 2 | Coleta | Importação | Data da HAWB e data real de coleta |
 | 3 | Embarque | Importação / Financeiro | ETD e ETA planejados (obrigatórios para salvar), ETD e ETA reais; **banco de débito** (Financeiro, obrigatório para concluir a etapa) |
 | 4 | Desembaraço | Importação | Data de emissão da DUIMP (e o arquivo da DUIMP, opcional) → data de parametrização, canal (Verde, Amarelo ou Vermelho), exigências da ANVISA, data de desembaraço e **número da NF**. DUIMP e boleto do ICMS seguem por e-mail, fora do sistema (não são anexados nem guardados) |
-| 5 | Transporte | Importação | Data programada de chegada (obrigatória) e data real de chegada na fábrica |
+| 5 | Transporte Terrestre | Importação | Data programada de chegada (obrigatória), data real de chegada na fábrica e **NF Liberada** (sem essa marcação o fluxo não segue para a Inspeção) |
 | 6 | Inspeção | Engenharia (administrador) | Fim da inspeção e se há desconto; se sim: valor, data do relatório e aprovação do fornecedor (Enviado → Aprovado) |
 | 7 | Pagamento | Financeiro | Pagamento de cada parcela (integral, ou parcial quando há valor segurado), com Swift |
 | 8 | Dedução e liberação | Importação / Financeiro | O desconto é deduzido em próximo(s) invoice(s); quando eles chegam, o Financeiro libera o valor segurado, com Swift |
@@ -109,7 +109,7 @@ O invoice fica **Concluído** quando está pago, o desconto (se houver) foi dedu
 
 ### Regras de pagamento
 - **Condição de pagamento em parcelas** que somam 100% (ex.: 25% antecipado + 75% 60 dias após a HAWB).
-- **Vencimento de cada parcela**: antecipada = data de assinatura + 5 dias úteis; a prazo = data da HAWB (registrada na Coleta) + dias. **Antes da HAWB, a parcela a prazo fica sem vencimento** (não há estimativa).
+- **Vencimento de cada parcela**: antecipada = data de **conclusão do cadastro (etapa 1)** + 5 dias úteis (antes disso, sem vencimento); a prazo = data da HAWB (registrada na Coleta) + dias. **Antes da HAWB, a parcela a prazo fica sem vencimento** (não há estimativa).
 - Pagamentos são distribuídos nas parcelas por ordem de vencimento; o valor segurado sai das parcelas que vencem por último.
 - **Valor segurado**: com desconto, o invoice é pago menos o valor do desconto. Só é possível segurar o que ainda não foi pago: se o invoice já foi pago (ex.: antecipado), o desconto é apenas deduzido no próximo invoice.
 - **Liberação do segurado**: conforme os invoices com a dedução chegam à fábrica. Se o desconto for revalidado para baixo (ou zerado), a diferença fica disponível na hora. Cada parcela liberada vence na **data real de chegada na fábrica do invoice deduzido + 5 dias úteis**; enquanto esse invoice não chega, não há vencimento ("aguardando a chegada na Quinelato"). A diferença de uma revalidação para baixo vence na data da revalidação + 5 dias úteis.
@@ -213,7 +213,7 @@ destinatários (Para/Cc) e ativação de cada fluxo, horário do resumo diário 
 
 | E-mail | Quando | Sugestão de destino |
 |---|---|---|
-| Pagamento programado | Parcela antecipada (assinatura + 5 dias úteis) ou parcela após a HAWB fica com data e valor definidos | Financeiro |
+| Pagamento programado | Parcela antecipada (conclusão do cadastro + 5 dias úteis) ou parcela após a HAWB fica com data e valor definidos | Financeiro |
 | Pagamento alterado | Muda a data ou o valor de uma parcela já programada (HAWB corrigida, itens, dedução…) ou o invoice é cancelado | Financeiro |
 | Impostos de nacionalização | ETA planejado cadastrado/alterado (pagar entre ETA −1 e +3 dias úteis) e ETA real (ETA real a +2 dias úteis) | Financeiro |
 | Pagamento liberado pela Engenharia de Processos | Engenharia libera o pagamento das parcelas após a HAWB | Financeiro |

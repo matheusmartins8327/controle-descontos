@@ -52,15 +52,22 @@
       const caminho = inComp.value.trim().replace(/^"|"$/g, '').replace(/\//g, '\\');
       if (!RE_REDE.test(caminho)) { fundo.querySelector('[data-erro]').hidden = false; inComp.focus(); return; }
       guardar('pasta_doc_' + origem, pastaDe(caminho));
-      if (botao.dataset.alvo) { document.getElementById(botao.dataset.alvo).value = caminho; fechar(); return; }
-      form.caminho.value = caminho;
+      const meta = {nome_arquivo: '', tamanho: '', modificado_em: '', sha256: ''};
       if (arquivo) {
         e.target.disabled = true; e.target.textContent = 'Salvando…';
-        form.nome_arquivo.value = arquivo.name; form.tamanho.value = arquivo.size;
         const d = new Date(arquivo.lastModified), z = n => String(n).padStart(2, '0');
-        form.modificado_em.value = `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`;
-        try { form.sha256.value = await sha256(arquivo); } catch (err) { form.sha256.value = ''; }
+        meta.nome_arquivo = arquivo.name; meta.tamanho = arquivo.size;
+        meta.modificado_em = `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`;
+        try { meta.sha256 = await sha256(arquivo); } catch (err) { meta.sha256 = ''; }
       }
+      if (botao.dataset.alvo) {  // campo dentro de outro formulário (ex.: cadastro do invoice, registro do pagamento)
+        document.getElementById(botao.dataset.alvo).value = caminho;
+        const pre = botao.dataset.prefixo;
+        if (pre) Object.entries(meta).forEach(([k, v]) => { const el = document.getElementById(`${pre}-${k}`); if (el) el.value = v; });
+        fechar(); return;
+      }
+      form.caminho.value = caminho;
+      Object.entries(meta).forEach(([k, v]) => { if (form[k]) form[k].value = v; });
       form.submit();
     });
   }

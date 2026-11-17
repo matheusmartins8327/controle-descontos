@@ -71,6 +71,8 @@
     <dt>Nº do invoice</dt><dd>{{ r.numero }}</dd>
     <dt>Moeda</dt><dd>{{ m }}</dd>
     <dt>Data de assinatura</dt><dd>{{ r.data_assinatura|data }}</dd>
+    <dt>Cadastro concluído (etapa 1)</dt><dd>{{ r.cadastro_concluido_em|data if r.cadastro_concluido_em else 'Ainda não' }}
+      <small class="bloco-linha">Base do vencimento da parcela antecipada (+ {{ PRAZO_ANTECIPADO_DIAS }} dias úteis)</small></dd>
     <dt>Condição de pagamento</dt><dd>{{ condicao_texto(r) }}</dd>
     <dt>Agente de carga</dt><dd>{{ r.agente_carga or '—' }}</dd>
     <dt>Despachante</dt><dd>{{ r.despachante or '—' }}</dd>
@@ -78,6 +80,11 @@
     <dt>Coleta programada</dt><dd>{{ r.data_prog_coleta|data }}</dd>
     {% if r.obs %}<dt>Observações</dt><dd class="pre">{{ r.obs }}</dd>{% endif %}
   </dl>
+  <div class="invoice-assinado"><strong>Invoice assinado{{ ' *' if not r.historico }}</strong> <small>· caminho na pasta da rede</small>
+    {{ docs(r.invoice_docs, 'invoice', r.id, imp and ativo, request.path, '\\\\servidor\\Importacao\\Invoices\\arquivo.pdf') }}
+    {% if not r.invoice_docs %}<small class="{{ 'erro-texto' if not r.historico and not r.cadastro_concluido_em }}">{{ 'Obrigatório para concluir o cadastro.' if not r.historico and not r.cadastro_concluido_em else 'Não cadastrado.' }}</small>{% endif %}
+  </div>
+  {{ docs_forms(r.invoice_docs, 'invoice', r.id, imp and ativo, request.path) }}
   <div class="rolagem">
   <table>
     {% set com_desc = r.deducoes_aplicadas > 0.005 %}
@@ -153,6 +160,7 @@
           {% elif tipo == 'canal' %}{% set cc = CORES_CANAL.get(r[campo]) %}<select name="{{ campo }}" class="sel-canal" onchange="var o=this.options[this.selectedIndex];this.style.background=o.style.background;this.style.color=o.style.color"{% if cc %} style="background:{{ cc[0] }};color:{{ cc[1] }}"{% endif %}>
             <option value="" style="background:#fff;color:#212529">—</option>{% for c, cor in CORES_CANAL.items() %}<option value="{{ c }}" {{ 'selected' if r[campo] == c }} style="background:{{ cor[0] }};color:{{ cor[1] }}">{{ c }}</option>{% endfor %}</select>
           {% elif tipo == 'linha' %}<input name="{{ campo }}" value="{{ r[campo] or '' }}" autocomplete="off">
+          {% elif tipo == 'flag' %}<span class="flag-etapa"><input type="checkbox" name="{{ campo }}" value="1" {{ 'checked' if r[campo] }}> {{ 'Marcado' if r[campo] else 'Marque quando a NF estiver liberada' }}</span>
           {% else %}<textarea name="{{ campo }}" rows="2">{{ r[campo] or '' }}</textarea>{% endif %}
           </label>
           {% if campo == 'data_registro_br' %}
@@ -165,7 +173,7 @@
         <button class="btn pequeno">Salvar</button>
       </form>
       {% else %}
-      <dl>{% for campo, rotulo, tipo, obrig in CAMPOS_ETAPA[e] %}<dt>{{ rotulo }}</dt><dd>{{ r[campo]|data if tipo == 'data' else (r[campo] or '—') }}</dd>
+      <dl>{% for campo, rotulo, tipo, obrig in CAMPOS_ETAPA[e] %}<dt>{{ rotulo }}</dt><dd>{{ r[campo]|data if tipo == 'data' else (('Sim' if r[campo] else 'Não') if tipo == 'flag' else (r[campo] or '—')) }}</dd>
         {% if campo == 'data_registro_br' %}<dt>DUIMP (caminho)</dt><dd>{% for a in r.duimp_arquivos %}<div class="arq"><a href="{{ url_for('arquivo_baixar', aid=a.id) }}" target="_blank" rel="noopener">📄 <span>{{ a.nome }}</span></a></div>{% endfor %}{{ docs(r.duimp_docs, 'duimp', r.id, False, request.path ~ '#etapa-DESEMBARACO') }}{% if not r.duimp_arquivos and not r.duimp_docs %}—{% endif %}</dd>{% endif %}{% endfor %}</dl>
       {% endif %}
       {% if e == 'EMBARQUE' %}
