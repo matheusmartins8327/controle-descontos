@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.31)
+# Controle de Invoices e Descontos (v4.32)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -176,6 +176,7 @@ Todo anexo (invoice assinado, DUIMP, Swift de cada pagamento, documentos dos lan
 navegador e guardado no servidor** (pasta `instance/arquivos`, fora do GitHub), até 10 MB por arquivo. Ao clicar no nome,
 o sistema entrega uma cópia para visualizar (PDF e imagens abrem no navegador; os demais são baixados).
 - **Invoice assinado** é obrigatório para concluir o cadastro (etapa 1); pode ser anexado na criação ou depois, na tela do invoice.
+- Na seção **Pagamentos** do invoice há o botão **Baixar** do invoice assinado, para o Financeiro conferir antes de pagar.
 - Quem anexa pode excluir: Importação (invoice assinado, DUIMP), Financeiro (Swift), quem anexou ou o Administrador (lançamentos).
 - Os caminhos na pasta da rede cadastrados nas versões 4.27 a 4.30 continuam aparecendo (somente consulta, com **Copiar**),
   mas não geram mais pendência de "arquivo não encontrado".

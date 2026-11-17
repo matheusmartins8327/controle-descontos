@@ -281,6 +281,16 @@
 {# ---------- pagamentos (Financeiro) ---------- #}
 <section class="bloco" id="pagamentos">
   <h2>Pagamentos <small>· Financeiro</small></h2>
+  <div class="invoice-download">
+    <span class="rotulo-arq">Invoice assinado</span>
+    {% for a in r.invoice_arquivos %}
+    <a class="btn pequeno" href="{{ url_for('arquivo_baixar', aid=a.id) }}" download="{{ a.nome }}" title="{{ a.nome }} · {{ a.tamanho|tamanho }}">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>
+      Baixar {{ a.nome }}</a>
+    {% endfor %}
+    {{ docs_antigos(r.invoice_docs) }}
+    {% if not r.invoice_arquivos and not r.invoice_docs %}<small>Nenhum invoice assinado anexado.</small>{% endif %}
+  </div>
   <dl class="dl-colunas">
     <dt>Valor total do invoice</dt><dd>{{ r.itens_total|moeda(m) }}</dd>
     {% if r.deducoes_aplicadas %}<dt>(−) Deduções de descontos</dt><dd>{{ r.deducoes_aplicadas|moeda(m) }}</dd>{% endif %}

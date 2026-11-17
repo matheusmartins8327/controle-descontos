@@ -623,3 +623,7 @@ tr.linha-atencao td:first-child { box-shadow: inset 3px 0 0 #e0a100; }
 .invoice-assinado .docs { margin-top: .4rem; }
 .flag-etapa { display: flex; align-items: center; gap: .45rem; font-size: .88rem; padding: .3rem 0; }
 .flag-etapa input { width: 18px; height: 18px; accent-color: var(--ok); }
+
+/* v4.32: baixar o invoice assinado na seção de pagamentos */
+.invoice-download { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
+.invoice-download .btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
