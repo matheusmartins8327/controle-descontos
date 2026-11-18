@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.39"
+VERSAO = "4.40"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2138,10 +2138,15 @@ def duimp_banco(id):
 ETAPAS_IMPORTACAO = ["CRIACAO"] + ORDEM_LOGISTICA
 
 
+def no_radar_importacao(r):
+    """Invoices da aba Importação: etapas 1 a 5, fora do histórico e ainda sem a NF liberada (v4.40)."""
+    return r["situacao"] in ETAPAS_IMPORTACAO and not r["historico"] and not r["nf_liberada"]
+
+
 @app.route("/importacao")
 @login_obrigatorio
 def importacao():
-    lista = [r for r in todos_invoices() if r["situacao"] in ETAPAS_IMPORTACAO and not r["historico"]]
+    lista = [r for r in todos_invoices() if no_radar_importacao(r)]
     for r in lista:
         r["falta"] = criacao_faltando(r) if r["situacao"] == "CRIACAO" else etapa_faltando(r, r["situacao"])
         r["ultima_info"] = ultima_informacao(r)
@@ -2272,7 +2277,7 @@ def importacao_grupo():
         abort(403)
     chave = chave_grupo(request.form.get("grupo"))
     volta = redirect(url_for("importacao") + "#grupo-" + re.sub(r"[^\w-]", "_", chave))
-    ativos = [r for r in todos_invoices() if r["situacao"] in ETAPAS_IMPORTACAO and not r["historico"]]
+    ativos = [r for r in todos_invoices() if no_radar_importacao(r)]
     membros = membros_grupo(ativos, chave)
     if not membros:
         flash("Nenhum invoice em andamento neste grupo de consolidação.", "erro")
@@ -2338,7 +2343,11 @@ def importacao_salvar(id):
         if erro:
             flash(f"{r['numero']}: {erro} Nada desta etapa foi salvo.", "erro")
     r = carregar_invoice(id)
-    if r["situacao"] in ORDEM_LOGISTICA:
+    if r["nf_liberada"] and r["situacao"] in ORDEM_LOGISTICA:
+        falta = etapa_faltando(r, r["situacao"])
+        flash(f"{r['numero']} salvo com a NF Liberada: saiu desta lista. Etapa atual: {TITULO_ETAPA[r['situacao']]}"
+              + (f" (falta: {', '.join(falta)} — complete na tela do invoice)." if falta else "."), "ok")
+    elif r["situacao"] in ORDEM_LOGISTICA:
         falta = etapa_faltando(r, r["situacao"])
         flash(f"{r['numero']} salvo. Etapa atual: {TITULO_ETAPA[r['situacao']]}"
               + (f" (falta: {', '.join(falta)})." if falta else "."), "ok")
