@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.40)
+# Controle de Invoices e Descontos (v4.41)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -205,6 +205,15 @@ mostrados na própria tela; os demais tipos mostram só os dados do arquivo), co
 - Os caminhos na pasta da rede cadastrados nas versões 4.27 a 4.30 continuam aparecendo (somente consulta, com **Copiar**),
   mas não geram mais pendência de "arquivo não encontrado".
 - O espaço ocupado pelos anexos aparece em **Sistema**.
+
+### Relatório de inspeção obrigatório (v4.41)
+- Ao registrar a inspeção **com desconto**, é obrigatório anexar o **relatório de inspeção em Excel** (.xlsx, .xlsm ou .xls);
+  sem ele o desconto não é cadastrado.
+- Ao **revalidar** o desconto para um valor diferente de 0, além do motivo é obrigatório anexar a **revisão do relatório**
+  em Excel. Revalidar para 0 dispensa o arquivo.
+- Os relatórios ficam na seção Inspeção do invoice (relatório do desconto e, na tabela de revalidações, o relatório de cada
+  revisão), abrem na tela de visualização e não podem ser excluídos (fazem parte do histórico). Descontos registrados antes
+  desta versão mostram "Não anexado" e aceitam o relatório em "Editar inspeção".
 
 ### Descontos avulsos (v4.38)
 Descontos para um fornecedor **sem invoice de origem** (acordo comercial, crédito de frete etc.), cadastrados **somente pela

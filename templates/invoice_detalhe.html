@@ -236,6 +236,7 @@
     <dt>Valor segurado</dt><dd>{{ r.segurado|moeda(m) }}{% if r.segurado + 0.005 < d.valor_final %} <small>(o restante só é deduzido: o invoice já estava pago)</small>{% endif %}</dd>
     <dt>Deduzido em próximos invoices</dt><dd>{{ r.deduzido|moeda(m) }} <small>· saldo a deduzir {{ r.saldo_a_deduzir|moeda(m) }}</small></dd>
     {% if d.obs %}<dt>Observações</dt><dd class="pre">{{ d.obs }}</dd>{% endif %}
+    <dt>Relatório de inspeção</dt><dd class="arquivos">{{ arquivos(r.relatorios, False) }}{% if not r.relatorios %}<small class="erro-texto">Não anexado (desconto registrado antes da v4.41). Anexe em "Editar inspeção".</small>{% endif %}</dd>
     {% endif %}
   </dl>
   {% if d and r.deducoes_do_desconto %}
@@ -251,7 +252,7 @@
   {% if admin and ativo %}
   <details class="revalidar" {{ 'open' if r.tem_desconto is none }}>
     <summary>{{ 'Registrar inspeção' if r.tem_desconto is none else 'Editar inspeção' }}</summary>
-    <form method="post" action="{{ url_for('invoice_inspecao', id=r.id) }}">
+    <form method="post" action="{{ url_for('invoice_inspecao', id=r.id) }}" enctype="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="grade">
         <label>Data real do fim da inspeção *<input type="date" name="data_fim_inspecao" value="{{ r.data_fim_inspecao or hoje }}" required></label>
@@ -265,6 +266,8 @@
         <label class="so-desconto">Data do relatório *<input type="date" name="data_relatorio" value="{{ d.data_relatorio if d else hoje }}"></label>
         <label class="so-desconto">Aprovação do fornecedor
           <select name="status">{% for k, v in STATUS_DESCONTO.items() %}<option value="{{ k }}" {{ 'selected' if d and d.status == k }}>{{ v }}</option>{% endfor %}</select></label>
+        <label class="largo so-desconto">Relatório de inspeção (Excel){{ ' *' if not d }}<input type="file" name="relatorio_arquivo" accept=".xlsx,.xlsm,.xls">
+          <small>{% if d %}{{ 'Opcional: anexe para incluir uma nova versão do relatório.' if r.relatorios else 'Obrigatório: este desconto ainda não tem relatório.' }}{% else %}Obrigatório quando há desconto: o relatório que descreve o desconto (.xlsx, .xlsm ou .xls).{% endif %}</small></label>
         <label class="largo so-desconto">Observações<textarea name="obs" rows="2">{{ d.obs if d and d.obs else '' }}</textarea></label>
       </div>
       <button class="btn primario">Salvar inspeção</button>
@@ -280,12 +283,14 @@
     {% endif %}
     <details class="revalidar">
       <summary>Revalidar o valor do desconto</summary>
-      <form method="post" action="{{ url_for('desconto_revalidar', did=d.id) }}" onsubmit="return confirm('Confirmar o novo valor final?')">
+      <form method="post" action="{{ url_for('desconto_revalidar', did=d.id) }}" enctype="multipart/form-data" onsubmit="return confirm('Confirmar o novo valor final?')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="grade">
           <label>Valor final ({{ m }}) *<input name="valor_final" inputmode="decimal" value="{{ d.valor_final|num }}" required>
             <small>Mínimo: {{ r.deduzido|moeda(m) }} (já deduzido). Use 0 para zerar.</small></label>
           <label class="largo">Motivo *<textarea name="motivo" rows="2" required></textarea></label>
+          <label class="largo">Revisão do relatório de inspeção (Excel) *<input type="file" name="revisao_arquivo" accept=".xlsx,.xlsm,.xls">
+            <small>Obrigatória quando o novo valor não é 0.</small></label>
         </div>
         <button class="btn">Salvar valor final</button>
       </form>
@@ -295,8 +300,9 @@
   {% if revisoes %}
   <h3>Revalidações</h3>
   <table>
-    <thead><tr><th>Data</th><th class="num">De</th><th class="num">Para</th><th>Motivo</th><th>Por</th></tr></thead>
-    <tbody>{% for v in revisoes %}<tr><td>{{ v.criado_em|data }}</td><td class="num">{{ v.valor_anterior|moeda(m) }}</td><td class="num">{{ v.valor_novo|moeda(m) }}</td><td>{{ v.motivo }}</td><td>{{ v.usuario }}</td></tr>{% endfor %}</tbody>
+    <thead><tr><th>Data</th><th class="num">De</th><th class="num">Para</th><th>Motivo</th><th>Relatório revisado</th><th>Por</th></tr></thead>
+    <tbody>{% for v in revisoes %}<tr><td>{{ v.criado_em|data }}</td><td class="num">{{ v.valor_anterior|moeda(m) }}</td><td class="num">{{ v.valor_novo|moeda(m) }}</td><td>{{ v.motivo }}</td>
+      <td class="arquivos">{{ arquivos(r.relatorios_revisao.get(v.id, []), False) }}{% if not r.relatorios_revisao.get(v.id) %}<small>—</small>{% endif %}</td><td>{{ v.usuario }}</td></tr>{% endfor %}</tbody>
   </table>
   {% endif %}
   {% endif %}

@@ -43,10 +43,10 @@ DB_PATH = os.environ.get("DESCONTOS_DB", os.path.join(INSTANCE_DIR, "descontos.d
 ARQUIVOS_DIR = os.path.join(os.path.dirname(DB_PATH), "arquivos")
 ANEXOS_DIR_V49 = os.path.join(os.path.dirname(DB_PATH), "anexos_lancamentos")  # pasta da versão 4.9 (migrada)
 ANEXO_MAX_MB = 10                       # por arquivo
-EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
+EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.40"
+VERSAO = "4.41"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2039,6 +2039,8 @@ def invoice_detalhe(id):
     revisoes = db.execute(
         "SELECT v.*, u.nome AS usuario FROM revisoes_desconto v LEFT JOIN usuarios u ON u.id = v.usuario_id"
         " WHERE v.desconto_id = ? ORDER BY v.id", (r["desconto"]["id"],)).fetchall() if r["desconto"] else []
+    r["relatorios"] = relatorios_desconto(r["desconto"]["id"]) if r["desconto"] else []
+    r["relatorios_revisao"] = arquivos_de("revisao", [v["id"] for v in revisoes])
     disponiveis = descontos_disponiveis(r["fornecedor_id"], r["moeda"], excluir_invoice_id=id)
     nomes = {u["id"]: u["nome"] for u in db.execute("SELECT id, nome FROM usuarios")}
     return render_template("invoice_detalhe.html", r=r, eventos=eventos, revisoes=revisoes, disponiveis=disponiveis,
@@ -2603,15 +2605,22 @@ def invoice_inspecao(id):
                     "SELECT 1 FROM revisoes_desconto WHERE desconto_id = ?", (d["id"],)).fetchone():
                 flash("O desconto já tem deduções, liberações ou revalidações: para zerar, use a revalidação.", "erro")
                 return volta
+            rel_apagar = excluir_arquivos_de("relatorio", d["id"])
             db.execute("DELETE FROM descontos WHERE id = ?", (d["id"],))
             registrar_evento(id, "Desconto removido")
+            g.remover_depois = rel_apagar
         db.execute("UPDATE invoices SET data_fim_inspecao = ?, tem_desconto = 0 WHERE id = ?", (data_insp, id))
         registrar_evento(id, "Inspeção registrada: sem desconto", f"Fim da inspeção: {fmt_data(data_insp)}")
         db.commit()
+        remover_arquivos(g.pop("remover_depois", []))
         flash("Inspeção registrada sem desconto. O invoice segue para pagamento integral.", "ok")
         return volta
     data_rel = data_valida(f.get("data_relatorio"))
     status = f.get("status") if f.get("status") in STATUS_DESCONTO else "ENVIADO"
+    relatorio, erro_rel = arquivo_excel_form("relatorio_arquivo")
+    if erro_rel:
+        flash(erro_rel, "erro")
+        return volta
     obs = f.get("obs", "").strip() or None
     if not data_rel:
         flash("Informe a data do relatório.", "erro")
@@ -2621,6 +2630,14 @@ def invoice_inspecao(id):
         db.execute("UPDATE invoices SET data_fim_inspecao = ?, tem_desconto = 1 WHERE id = ?", (data_insp, id))
         if status != d["status"]:
             alterar_status_desconto(r, d, status)
+        if relatorio:  # nova versão do relatório (ou relatório de desconto anterior à v4.41)
+            salvos, erros = salvar_arquivos("relatorio", d["id"], [relatorio])
+            if not salvos:
+                db.rollback()
+                for e in erros:
+                    flash(e, "erro")
+                return volta
+            registrar_evento(id, "Relatório de inspeção anexado", ", ".join(salvos))
         registrar_evento(id, "Inspeção/desconto atualizados")
         db.commit()
         flash("Inspeção atualizada.", "ok")
@@ -2633,16 +2650,27 @@ def invoice_inspecao(id):
     if valor > r["valor_invoice"] + TOLERANCIA:
         flash("O desconto não pode ser maior que o valor do invoice.", "erro")
         return volta
+    if not relatorio:
+        flash("Anexe o relatório de inspeção (arquivo Excel) referente ao desconto.", "erro")
+        return volta
     segurado = segurado_possivel(r, valor)
-    db.execute("INSERT INTO descontos (invoice_id, valor_inicial, valor_final, valor_segurado, data_relatorio, status,"
-               " aprovado_em, aprovado_por, obs, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-               (id, valor, valor, segurado, data_rel, status, agora() if status == "APROVADO" else None,
-                g.usuario["id"] if status == "APROVADO" else None, obs, g.usuario["id"], agora()))
+    did = db.execute("INSERT INTO descontos (invoice_id, valor_inicial, valor_final, valor_segurado, data_relatorio, status,"
+                     " aprovado_em, aprovado_por, obs, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (id, valor, valor, segurado, data_rel, status, agora() if status == "APROVADO" else None,
+                      g.usuario["id"] if status == "APROVADO" else None, obs, g.usuario["id"], agora())).lastrowid
+    salvos, erros = salvar_arquivos("relatorio", did, [relatorio])
+    if not salvos:
+        db.rollback()
+        for e in erros:
+            flash(e, "erro")
+        flash("O desconto não foi cadastrado: anexe um relatório de inspeção válido.", "erro")
+        return volta
     db.execute("UPDATE invoices SET data_fim_inspecao = ?, tem_desconto = 1 WHERE id = ?", (data_insp, id))
     detalhe = f"Valor: {fmt_moeda(valor, r['moeda'])} · segurado: {fmt_moeda(segurado, r['moeda'])}"
     if segurado + TOLERANCIA < valor:
         detalhe += " (o invoice já estava pago em parte: o restante será apenas deduzido no próximo invoice)"
-    registrar_evento(id, f"Inspeção registrada com desconto · {STATUS_DESCONTO[status]}", detalhe)
+    registrar_evento(id, f"Inspeção registrada com desconto · {STATUS_DESCONTO[status]}",
+                     detalhe + f" · relatório: {salvos[0]}")
     db.commit()
     flash("Desconto cadastrado. " + (f"Valor segurado: {fmt_moeda(segurado, r['moeda'])}." if segurado > TOLERANCIA
                                      else "O invoice já foi pago: o desconto será apenas deduzido no próximo invoice."),
@@ -2700,6 +2728,12 @@ def desconto_revalidar(did):
                 f"({fmt_moeda(r['deduzido'], r['moeda'])}).")
     elif novo > r["valor_invoice"] + TOLERANCIA:
         erro = "O desconto não pode ser maior que o valor do invoice."
+    revisao, erro_rev = arquivo_excel_form("revisao_arquivo")
+    if not erro:
+        if erro_rev:
+            erro = erro_rev
+        elif novo > TOLERANCIA and not revisao:
+            erro = "Anexe a revisão do relatório de inspeção (arquivo Excel). Só a revalidação para 0 dispensa o relatório."
     if erro:
         flash(erro, "erro")
         return volta
@@ -2707,8 +2741,17 @@ def desconto_revalidar(did):
     segurado = d["valor_segurado"]
     if r["principal_pago"] < r["principal_devido"] - TOLERANCIA or r["principal_pago"] <= TOLERANCIA:
         segurado = max(segurado_possivel(r, novo), r["liberado"])
-    db.execute("INSERT INTO revisoes_desconto (desconto_id, valor_anterior, valor_novo, motivo, usuario_id, criado_em)"
-               " VALUES (?, ?, ?, ?, ?, ?)", (did, d["valor_final"], novo, motivo, g.usuario["id"], agora()))
+    vid = db.execute("INSERT INTO revisoes_desconto (desconto_id, valor_anterior, valor_novo, motivo, usuario_id, criado_em)"
+                     " VALUES (?, ?, ?, ?, ?, ?)", (did, d["valor_final"], novo, motivo, g.usuario["id"], agora())).lastrowid
+    if revisao:
+        salvos, erros = salvar_arquivos("revisao", vid, [revisao])
+        if not salvos:
+            db.rollback()
+            for e in erros:
+                flash(e, "erro")
+            flash("A revalidação não foi salva: anexe uma revisão do relatório válida.", "erro")
+            return volta
+        motivo += f" · relatório revisado: {salvos[0]}"
     db.execute("UPDATE descontos SET valor_final = ?, valor_segurado = ? WHERE id = ?", (novo, segurado, did))
     obs = motivo
     if abs(segurado - d["valor_segurado"]) > TOLERANCIA:
@@ -2906,13 +2949,13 @@ def excluir_invoice(iid):
             registrar_evento(outro, f"Dedução removida pela exclusão do invoice {inv['numero']}",
                              f"{fmt_moeda(x['valor'], inv['moeda'])} (desconto do invoice {x['origem_numero']} "
                              f"deduzido no invoice {x['destino_numero']})")
-    arquivos = db.execute(
-        "SELECT * FROM arquivos WHERE (origem IN ('duimp', 'invoice') AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
-        " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
-        " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid)).fetchall()
-    db.execute("DELETE FROM arquivos WHERE (origem IN ('duimp', 'invoice') AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
-               " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
-               " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid))
+    filtro_arq = ("(origem IN ('duimp', 'invoice') AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
+                  " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
+                  " (SELECT id FROM lancamentos WHERE invoice_id = ?)) OR (origem = 'relatorio' AND origem_id IN"
+                  " (SELECT id FROM descontos WHERE invoice_id = ?)) OR (origem = 'revisao' AND origem_id IN"
+                  " (SELECT v.id FROM revisoes_desconto v JOIN descontos d ON d.id = v.desconto_id WHERE d.invoice_id = ?))")
+    arquivos = db.execute("SELECT * FROM arquivos WHERE " + filtro_arq, (iid,) * 5).fetchall()
+    db.execute("DELETE FROM arquivos WHERE " + filtro_arq, (iid,) * 5)
     db.execute("DELETE FROM documentos WHERE (origem IN ('duimp', 'invoice') AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
                " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
                " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid))
@@ -3324,12 +3367,12 @@ def sistema_apagar_invoices():
     db.commit()  # nenhuma transação aberta antes de desligar a verificação de chaves
     backup = backup_banco("-antes-de-apagar-invoices")
     qtd = db.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
-    arquivos = db.execute("SELECT * FROM arquivos WHERE origem IN ('lancamento', 'pagamento', 'duimp', 'invoice')").fetchall()
+    arquivos = db.execute("SELECT * FROM arquivos WHERE origem IN ('lancamento', 'pagamento', 'duimp', 'invoice', 'relatorio', 'revisao')").fetchall()
     extras = sorted(tabelas_dependentes(db, TABELAS_INVOICES))
     removidos_fornecedores = 0
     db.execute("PRAGMA foreign_keys = OFF")  # apaga tudo de uma vez, sem esbarrar na ordem das ligações
     try:
-        db.execute("DELETE FROM arquivos WHERE origem IN ('lancamento', 'pagamento', 'duimp', 'invoice')")
+        db.execute("DELETE FROM arquivos WHERE origem IN ('lancamento', 'pagamento', 'duimp', 'invoice', 'relatorio', 'revisao')")
         db.execute("DELETE FROM documentos")
         for t in extras + TABELAS_INVOICES:
             db.execute(f'DELETE FROM "{t}"')
@@ -3571,7 +3614,24 @@ def lancamento_erp(lid):
 # Os arquivos são enviados pelo navegador e ficam no servidor (pasta ARQUIVOS_DIR, fora do GitHub).
 # origem: 'lancamento' (custos da aba Lançamentos Financeiros) | 'pagamento' (Swift de cada pagamento)
 ORIGENS_ARQUIVO = {"lancamento": "lançamento financeiro", "pagamento": "pagamento (Swift)", "duimp": "DUIMP",
-                   "invoice": "invoice assinado"}
+                   "invoice": "invoice assinado", "relatorio": "relatório de inspeção",
+                   "revisao": "revisão do relatório de inspeção"}
+# v4.41: relatório de inspeção (desconto) e revisão do relatório (revalidação) — obrigatórios, somente Excel
+EXTENSOES_EXCEL = ("xlsx", "xlsm", "xls")
+
+
+def arquivo_excel_form(campo):
+    """(arquivo, erro) do campo de upload que precisa ser uma planilha Excel."""
+    f = request.files.get(campo)
+    if not f or not f.filename:
+        return None, None
+    if f.filename.rsplit(".", 1)[-1].lower() not in EXTENSOES_EXCEL:
+        return None, f"{f.filename}: o relatório deve ser um arquivo Excel (.xlsx, .xlsm ou .xls)."
+    return f, None
+
+
+def relatorios_desconto(did):
+    return arquivos_de("relatorio", [did]).get(did, []) if did else []
 
 
 def arquivos_de(origem, ids=None):
@@ -3669,6 +3729,13 @@ def info_origem(a):
         return a["origem_id"], "DUIMP", url_for("invoice_detalhe", id=a["origem_id"]) + "#etapa-DESEMBARACO"
     if a["origem"] == "invoice":
         return a["origem_id"], "invoice assinado", url_for("invoice_detalhe", id=a["origem_id"])
+    if a["origem"] in ("relatorio", "revisao"):
+        sql = ("SELECT invoice_id FROM descontos WHERE id = ?" if a["origem"] == "relatorio" else
+               "SELECT d.invoice_id FROM revisoes_desconto v JOIN descontos d ON d.id = v.desconto_id WHERE v.id = ?")
+        x = db.execute(sql, (a["origem_id"],)).fetchone()
+        if x is None:
+            return None, "", url_for("descontos")
+        return x["invoice_id"], ORIGENS_ARQUIVO[a["origem"]], url_for("invoice_detalhe", id=x["invoice_id"]) + "#inspecao"
     p = db.execute("SELECT invoice_id, data_pagamento FROM pagamentos WHERE id = ?", (a["origem_id"],)).fetchone()
     if p is None:
         return None, "", url_for("painel")
@@ -3833,8 +3900,8 @@ def conteudo_para_visualizar(a):
             ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
             paragrafos = ["".join(t.text or "" for t in p.iter(ns + "t")) for p in ET.fromstring(xml).iter(ns + "p")]
             return "texto", "\n".join(paragrafos)
-    except Exception:
-        app.logger.exception("Falha ao preparar a visualização do arquivo %s", a["id"])
+    except Exception as e:  # arquivo corrompido ou num formato que não dá para ler: só o download fica disponível
+        app.logger.warning("Visualização indisponível para o arquivo %s: %s", a["id"], e)
     return "nenhum", None
 
 
@@ -3868,6 +3935,10 @@ def arquivo_excluir(aid):
         permitido = pode("financeiro")
     elif a["origem"] in ("duimp", "invoice"):
         permitido = pode("importacao")
+    elif a["origem"] in ("relatorio", "revisao"):  # histórico do desconto: o relatório não é excluído
+        flash("O relatório de inspeção faz parte do histórico do desconto e não pode ser excluído. "
+              "Para corrigir, anexe a versão certa na edição da inspeção ou numa revalidação.", "erro")
+        return voltar()
     else:
         permitido = g.usuario["perfil"] == "admin" or (pode_anexar() and a["enviado_por"] == g.usuario["id"])
     if not permitido:
