@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.38"
+VERSAO = "4.39"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -1305,9 +1305,57 @@ def painel():
     if busca:
         lista = [r for r in lista if busca in r["numero"].lower() or busca in r["fornecedor"].lower()]
     fornecedores = get_db().execute("SELECT id, nome FROM fornecedores ORDER BY nome").fetchall()
-    return render_template("painel.html", invoices=lista, pendencias=listar_pendencias(invoices),
-                           contagem=contagem, fornecedores=fornecedores, filtro_sit=filtro_sit,
-                           filtro_forn=filtro_forn, filtro_moeda=filtro_moeda, busca=busca, hoje=hj)
+    for r in lista:
+        r["progresso"] = progresso_fluxo(r)
+    return render_template("painel.html", invoices=lista, contagem=contagem, fornecedores=fornecedores,
+                           filtro_sit=filtro_sit, filtro_forn=filtro_forn, filtro_moeda=filtro_moeda, busca=busca,
+                           hoje=hj, ETAPAS_PAINEL=ETAPAS_PAINEL)
+
+
+@app.route("/pendencias")
+@login_obrigatorio
+def pendencias():
+    """Pendências de todos os setores (as do setor de quem está logado no topo)."""
+    pend = listar_pendencias(todos_invoices(incluir_cancelados=True))
+    por_setor = {k: sum(1 for p in pend if p["quem"] == k) for k in SETORES}
+    return render_template("pendencias.html", pendencias=pend, por_setor=por_setor,
+                           vencidas=sum(1 for p in pend if p["alerta"]), atencao=sum(1 for p in pend if p["atencao"]))
+
+
+# Etapas do fluxo completo mostradas no Painel (uma coluna por etapa)
+ETAPAS_PAINEL = [("Cadastro", "Cadastro"), ("Coleta", "Coleta"), ("Embarque", "Embarque"), ("Desembaraço", "Desemb."),
+                 ("Transporte Terrestre", "Transp. terrestre"), ("Inspeção", "Inspeção"), ("Pagamento", "Pagto."),
+                 ("Dedução e liberação", "Dedução / liberação"), ("Concluído", "Concluído")]
+
+
+def progresso_fluxo(r):
+    """[(etapa, estado, data)] do fluxo completo do invoice. estado: feito | atual | pendente | na (não se aplica)."""
+    sit = r["situacao"]
+    pagos = [p["data_pagamento"] for p in r["pagamentos"] if p["tipo"] == "PRINCIPAL"]
+    antes_pagamento = ("CRIACAO", "COLETA", "EMBARQUE", "DESEMBARACO", "CHEGADA", "INSPECAO", "PAGAMENTO")
+    passos = [("Cadastro", etapa_concluida(r, "CRIACAO"), (r["cadastro_concluido_em"] or "")[:10] or None)]
+    datas = {"COLETA": r["data_coleta"], "EMBARQUE": r["eta_real"], "DESEMBARACO": r["data_desembaraco"],
+             "CHEGADA": r["data_chegada"]}
+    for e in ORDEM_LOGISTICA:
+        passos.append((TITULO_ETAPA[e], etapa_concluida(r, e) and not (r["historico"] and not datas[e]), datas[e]))
+    passos.append(("Inspeção", r["tem_desconto"] is not None and bool(r["data_fim_inspecao"]), r["data_fim_inspecao"]))
+    passos.append(("Pagamento", sit not in antes_pagamento + ("CANCELADO",), max(pagos) if pagos else None))
+    # sem desconto confirmado na inspeção (ou histórico sem desconto), a etapa de dedução/liberação não se aplica
+    sem_desconto = not r["desconto"] and (r["tem_desconto"] == 0 or (r["historico"] and sit in ("SWIFT", "CONCLUIDO")))
+    passos.append(("Dedução e liberação", None if sem_desconto else (bool(r["desconto"]) and sit in ("SWIFT", "CONCLUIDO")), None))
+    passos.append(("Concluído", sit == "CONCLUIDO", None))
+    res, achou_atual = [], sit == "CANCELADO"
+    for nome, feito, data in passos:
+        if feito is None:
+            res.append((nome, "na", None))
+        elif feito:
+            res.append((nome, "feito", data))
+        elif not achou_atual:
+            achou_atual = True
+            res.append((nome, "atual", None))
+        else:
+            res.append((nome, "pendente", None))
+    return res
 
 
 # ---------------------------------------------------------------------------

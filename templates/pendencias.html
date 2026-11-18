@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block titulo %}Pendências{% endblock %}
+{% block conteudo %}
+<h1>Pendências</h1>
+<p class="sub">Pendências de todos os setores. As do seu setor aparecem no topo; cada setor só preenche as informações da sua parte.</p>
+
+<section class="fluxo cards-pend">
+  {% for k, nome in SETORES.items() %}
+  <div class="fluxo-etapa {{ 'sel' if g.usuario.perfil == k }}"><span class="n">{{ por_setor[k] }} <small>pendência{{ 's' if por_setor[k] != 1 }}</small></span><span class="rot">{{ nome }}</span></div>
+  {% endfor %}
+  <div class="fluxo-etapa {{ 'alerta-card' if vencidas }}"><span class="n">{{ vencidas }} <small>vencida{{ 's' if vencidas != 1 }}</small></span><span class="rot">Vencidas</span><small>{{ atencao }} vencem em até 7 dias ou precisam de correção</small></div>
+</section>
+
+{% if pendencias %}
+{% set minhas = pendencias|selectattr('minha')|list %}
+{% set outras = pendencias|rejectattr('minha')|list %}
+<section class="bloco destaque">
+  <h2>Pendências <span class="cont">{{ pendencias|length }}</span></h2>
+  <div class="rolagem">
+  <table class="tabela-filtro" data-rotulo="pendências">
+    <thead><tr><th data-filtro="lista">Fornecedor</th><th data-filtro="texto">Invoice</th><th data-filtro="texto">O que fazer</th><th data-filtro="lista">Setor</th><th data-filtro="texto" data-tipo="data">Data</th><th class="num" data-filtro="lista" data-tipo="numero">Valor</th><th data-filtro="nenhum"></th></tr></thead>
+    {% for grupo, titulo in [(minhas, 'Minhas pendências · ' ~ SETORES.get(g.usuario.perfil, '')), (outras, 'Pendências de outros setores' if minhas or g.usuario.perfil in SETORES else 'Pendências dos setores')] if grupo %}
+    <tbody class="grupo-pend {{ 'outras' if grupo is sameas outras }}">
+      <tr class="titulo-grupo"><th colspan="7">{{ titulo }} <span class="cont">{{ grupo|length }}</span></th></tr>
+    {% for p in grupo %}
+      <tr class="{{ 'linha-alerta' if p.alerta }}{{ 'linha-atencao' if p.atencao }}">
+        <td>{{ p.r.fornecedor }}</td>
+        <td>{{ p.r.numero }}</td>
+        <td>{{ p.acao }}</td>
+        <td><small>{{ SETORES[p.quem] }}</small></td>
+        <td data-ordem="{{ p.data or '' }}">{{ p.data|data if p.data else '—' }}</td>
+        <td class="num" data-ordem="{{ p.valor if p.valor is not none else '' }}" data-filtro="{{ p.r.moeda if p.valor is not none else '—' }}">{{ p.valor|moeda(p.r.moeda) if p.valor is not none else '—' }}</td>
+        <td><a class="btn pequeno {{ 'primario' if p.minha }}" href="{{ url_for('invoice_detalhe', id=p.r.id) }}">Abrir</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    {% endfor %}
+  </table>
+  </div>
+  <p class="sub dica">Todos os setores veem todas as pendências; cada setor só preenche as informações da sua parte.
+    <span class="legenda"><span class="cor vermelho"></span> vencido <span class="cor amarelo"></span> vence em até 7 dias ou precisa de correção</span></p>
+</section>
+{% endif %}
+{% if not pendencias %}<section class="bloco"><p class="vazio">Nenhuma pendência. Tudo em dia!</p></section>{% endif %}
+{% endblock %}

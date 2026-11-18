@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.38)
+# Controle de Invoices e Descontos (v4.39)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -110,6 +110,11 @@ Embarque (ETD/ETA planejados e reais) em todos os invoices do grupo em andamento
 
 **Grupo de consolidação no cadastro (v4.34):** ao clicar no campo aparece a lista dos grupos já usados, do maior para o menor,
 com a quantidade de invoices e os fornecedores de cada um. Clique para escolher ou digite um novo.
+
+**Painel e Pendências (v4.39):** o **Painel** mostra o desenvolvimento do fluxo completo de cada invoice: uma coluna por etapa
+(Cadastro, Coleta, Embarque, Desembaraço, Transporte Terrestre, Inspeção, Pagamento, Dedução/liberação, Concluído) com ✓ e a
+data quando concluída, ● na etapa atual, ○ a fazer e – quando não se aplica (sem desconto). A aba **Pendências** reúne as
+pendências de todos os setores (as do seu setor no topo), com a contagem por setor e de vencidas.
 
 **Filtros no painel:** as tabelas de Pendências e de Invoices têm filtro em cada coluna (lista ou texto) e ordenação ao clicar no título da coluna.
 

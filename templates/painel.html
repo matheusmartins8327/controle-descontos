@@ -2,6 +2,7 @@
 {% block titulo %}Painel{% endblock %}
 {% block conteudo %}
 <h1>Painel</h1>
+<p class="sub">Desenvolvimento do fluxo completo de cada invoice. As pendências de cada setor estão na aba <a href="{{ url_for('pendencias') }}">Pendências</a>.</p>
 
 <section class="fluxo cards6">
   {% set cards = [
@@ -22,39 +23,8 @@
   {% endfor %}
 </section>
 
-{% if pendencias %}
-{% set minhas = pendencias|selectattr('minha')|list %}
-{% set outras = pendencias|rejectattr('minha')|list %}
-<section class="bloco destaque">
-  <h2>Pendências <span class="cont">{{ pendencias|length }}</span></h2>
-  <div class="rolagem">
-  <table class="tabela-filtro" data-rotulo="pendências">
-    <thead><tr><th data-filtro="lista">Fornecedor</th><th data-filtro="texto">Invoice</th><th data-filtro="texto">O que fazer</th><th data-filtro="lista">Setor</th><th data-filtro="texto" data-tipo="data">Data</th><th class="num" data-filtro="lista" data-tipo="numero">Valor</th><th data-filtro="nenhum"></th></tr></thead>
-    {% for grupo, titulo in [(minhas, 'Minhas pendências · ' ~ SETORES.get(g.usuario.perfil, '')), (outras, 'Pendências de outros setores' if minhas or g.usuario.perfil in SETORES else 'Pendências dos setores')] if grupo %}
-    <tbody class="grupo-pend {{ 'outras' if grupo is sameas outras }}">
-      <tr class="titulo-grupo"><th colspan="7">{{ titulo }} <span class="cont">{{ grupo|length }}</span></th></tr>
-    {% for p in grupo %}
-      <tr class="{{ 'linha-alerta' if p.alerta }}{{ 'linha-atencao' if p.atencao }}">
-        <td>{{ p.r.fornecedor }}</td>
-        <td>{{ p.r.numero }}</td>
-        <td>{{ p.acao }}</td>
-        <td><small>{{ SETORES[p.quem] }}</small></td>
-        <td data-ordem="{{ p.data or '' }}">{{ p.data|data if p.data else '—' }}</td>
-        <td class="num" data-ordem="{{ p.valor if p.valor is not none else '' }}" data-filtro="{{ p.r.moeda if p.valor is not none else '—' }}">{{ p.valor|moeda(p.r.moeda) if p.valor is not none else '—' }}</td>
-        <td><a class="btn pequeno {{ 'primario' if p.minha }}" href="{{ url_for('invoice_detalhe', id=p.r.id) }}">Abrir</a></td>
-      </tr>
-    {% endfor %}
-    </tbody>
-    {% endfor %}
-  </table>
-  </div>
-  <p class="sub dica">Todos os setores veem todas as pendências; cada setor só preenche as informações da sua parte.
-    <span class="legenda"><span class="cor vermelho"></span> vencido <span class="cor amarelo"></span> vence em até 7 dias ou precisa de correção</span></p>
-</section>
-{% endif %}
-
 <section class="bloco">
-  <h2>Invoices</h2>
+  <h2>Fluxo por invoice</h2>
   <form class="filtros" method="get">
     <select name="situacao">
       <option value="">Todas as situações</option>
@@ -65,22 +35,24 @@
     <button class="btn">Filtrar</button>
     {% if filtro_sit or filtro_forn or filtro_moeda or busca %}<a class="btn link" href="{{ url_for('painel') }}">Limpar</a>{% endif %}
     <small class="dica-filtros">Use também os filtros de cada coluna da tabela e clique no título para ordenar.</small>
+    <span class="legenda-fluxo"><span class="marca m-feito">✓</span> concluída (data) <span class="marca m-atual">●</span> etapa atual <span class="marca m-pend"></span> a fazer <span class="marca m-na">–</span> não se aplica</span>
   </form>
   {% if invoices %}
   <div class="rolagem">
   <table class="tabela-filtro" data-rotulo="invoices">
-    <thead><tr><th data-filtro="lista">Fornecedor</th><th data-filtro="texto">Invoice</th><th class="num" data-filtro="lista" data-tipo="numero">Valor</th><th data-filtro="lista">Condição</th><th data-filtro="texto" data-tipo="data">Vencimento</th><th data-filtro="texto" data-tipo="data">Previsão de chegada</th><th data-filtro="lista">Desconto</th><th data-filtro="lista">Situação</th></tr></thead>
+    <thead><tr><th data-filtro="lista">Fornecedor</th><th data-filtro="texto">Invoice</th><th class="num" data-filtro="lista" data-tipo="numero">Valor</th>
+      {% for etp, curto in ETAPAS_PAINEL %}<th class="col-etapa" data-filtro="nenhum" title="{{ etp }}">{{ curto }}</th>{% endfor %}
+      <th data-filtro="lista">Situação</th></tr></thead>
     <tbody>
     {% for r in invoices %}
-      <tr class="clicavel" onclick="location='{{ url_for('invoice_detalhe', id=r.id) }}'">
+      <tr class="clicavel {{ 'cancelado' if r.situacao == 'CANCELADO' }}" onclick="location='{{ url_for('invoice_detalhe', id=r.id) }}'">
         <td>{{ r.fornecedor }}</td>
         <td><a href="{{ url_for('invoice_detalhe', id=r.id) }}">{{ r.numero }}</a></td>
         <td class="num" data-ordem="{{ r.itens_total }}" data-filtro="{{ r.moeda }}">{{ r.itens_total|moeda(r.moeda) }}</td>
-        <td><small>{{ condicao_texto(r) }}</small></td>
-        <td data-ordem="{{ r.vencimento or '' }}">{% if r.vencimento %}{{ r.vencimento|data }}{% if r.vencimento_estimado %} <small>(est.)</small>{% endif %}{% else %}—{% endif %}</td>
-        {% set chegada = r.data_chegada or r.data_prog_chegada or r.eta_real or r.eta_planejado %}
-        <td data-ordem="{{ chegada or '' }}">{{ chegada|data }}</td>
-        <td data-ordem="{{ r.desconto.valor_final if r.desconto else '' }}" data-filtro="{{ STATUS_DESCONTO[r.desconto.status] if r.desconto else ('Sem desconto' if r.tem_desconto == 0 else 'Não inspecionado') }}">{% if r.desconto %}{{ r.desconto.valor_final|moeda(r.moeda) }}<small class="bloco-linha">{{ STATUS_DESCONTO[r.desconto.status] }}</small>{% elif r.tem_desconto == 0 %}<small>Sem desconto</small>{% else %}—{% endif %}</td>
+        {% for nome, estado, data in r.progresso %}
+        <td class="passo p-{{ estado }}" title="{{ nome }}: {{ {'feito': 'concluído' ~ (' em ' ~ (data|data) if data else ''), 'atual': 'etapa atual', 'pendente': 'a fazer', 'na': 'não se aplica (sem desconto)'}[estado] }}">
+          <span class="marca">{{ {'feito': '✓', 'atual': '●', 'pendente': '', 'na': '–'}[estado] }}</span>{% if estado == 'feito' and data %}<small>{{ (data|data)[:5] }}</small>{% endif %}</td>
+        {% endfor %}
         <td data-filtro="{{ SITUACOES[r.situacao][0] if r.situacao in SITUACOES else r.situacao }}">{% with sit=r.situacao %}{% include "_situacao.html" %}{% endwith %}</td>
       </tr>
     {% endfor %}

@@ -703,3 +703,22 @@ tr.linha-atencao td:first-child { box-shadow: inset 3px 0 0 #e0a100; }
 .avulso-novo > summary::-webkit-details-marker { display: none; }
 .avulso-novo form { margin-top: .7rem; padding: .8rem; border: 1px solid var(--borda); border-radius: var(--raio); background: var(--sup); }
 #avulsos td.pre { white-space: pre-wrap; max-width: 320px; }
+
+/* v4.39: Painel com o fluxo completo por invoice; aba Pendências */
+.cards-pend { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 800px) { .cards-pend { grid-template-columns: 1fr 1fr; } }
+th.col-etapa { text-align: center; font-size: .68rem; line-height: 1.15; white-space: normal; min-width: 62px; max-width: 80px; padding-left: .25rem; padding-right: .25rem; }
+td.passo { text-align: center; padding-left: .2rem; padding-right: .2rem; white-space: nowrap; }
+td.passo small { display: block; font-size: .68rem; color: var(--suave); }
+td.passo .marca, .legenda-fluxo .marca { display: inline-grid; place-items: center; width: 1.25rem; height: 1.25rem; border-radius: 50%; font-size: .72rem; font-weight: 700; }
+td.p-feito .marca, .m-feito { background: var(--ok-claro); color: var(--ok); }
+td.p-atual .marca, .m-atual { background: var(--pri); color: #fff; box-shadow: 0 0 0 3px var(--pri-claro, #dbe7fd); }
+td.p-pendente .marca, .m-pend { border: 1.5px solid var(--borda); }
+td.p-na .marca, .m-na { color: var(--suave); }
+.legenda-fluxo { display: inline-flex; align-items: center; gap: .35rem; font-size: .78rem; color: var(--suave); margin-left: auto; flex-wrap: wrap; }
+tr.cancelado td { opacity: .55; }
+th.col-etapa { min-width: 54px; max-width: 70px; }
+.tabela-filtro th.col-etapa { vertical-align: bottom; }
+/* v4.39: mais uma aba (Pendências): barra de abas um pouco mais larga e ícones só em telas grandes */
+.abas-inner { max-width: 1360px; }
+@media (max-width: 1450px) { .abas a.aba svg { display: none; } }
