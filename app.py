@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.33"
+VERSAO = "4.34"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2024,10 +2024,60 @@ def importacao():
         lista = [r for r in lista if r["situacao"] == etapa]
     busca = (request.args.get("q") or "").strip().lower()
     if busca:
-        lista = [r for r in lista if busca in r["numero"].lower() or busca in (r["fornecedor"] or "").lower()]
-    return render_template("importacao.html", lista=lista, contagem=contagem, total=total, etapa=etapa, busca=busca,
+        lista = [r for r in lista if busca in r["numero"].lower() or busca in (r["fornecedor"] or "").lower()
+                 or busca == (r["grupo_consolidacao"] or "").strip().lower()]
+    return render_template("importacao.html", lista=lista, blocos=agrupar_consolidacao(lista), contagem=contagem, total=total, etapa=etapa, busca=busca,
                            ETAPAS_IMPORTACAO=ETAPAS_IMPORTACAO, aberto=request.args.get("aberto", type=int),
                            editar=pode("importacao"))
+
+
+def chave_grupo(valor):
+    return " ".join((valor or "").split()).lower()
+
+
+def agrupar_consolidacao(lista):
+    """Blocos [(grupo ou None, [invoices])]: invoices do mesmo grupo de consolidação ficam juntos, no lugar do
+    primeiro deles na ordem da lista (a ordem original é mantida dentro do grupo)."""
+    membros = {}
+    for r in lista:
+        k = chave_grupo(r["grupo_consolidacao"])
+        if k:
+            membros.setdefault(k, []).append(r)
+    blocos, vistos = [], set()
+    for r in lista:
+        k = chave_grupo(r["grupo_consolidacao"])
+        if not k:
+            blocos.append((None, [r]))
+        elif k not in vistos:
+            vistos.add(k)
+            blocos.append((r["grupo_consolidacao"].strip(), membros[k]))
+    return blocos
+
+
+def grupos_consolidacao():
+    """Grupos de consolidação já usados, do maior para o menor (números em ordem numérica), com a quantidade de
+    invoices e os fornecedores de cada um. Usado na lista do campo no cadastro do invoice."""
+    grupos = {}
+    for row in get_db().execute(
+            "SELECT i.grupo_consolidacao AS g, f.nome AS fornecedor FROM invoices i"
+            " LEFT JOIN fornecedores f ON f.id = i.fornecedor_id"
+            " WHERE i.grupo_consolidacao IS NOT NULL AND trim(i.grupo_consolidacao) <> '' AND i.cancelado_em IS NULL"):
+        k = chave_grupo(row["g"])
+        item = grupos.setdefault(k, {"valor": " ".join(row["g"].split()), "qtd": 0, "fornecedores": []})
+        item["qtd"] += 1
+        if row["fornecedor"] and row["fornecedor"] not in item["fornecedores"]:
+            item["fornecedores"].append(row["fornecedor"])
+
+    def ordem(item):
+        v = item["valor"].replace(",", ".")
+        try:
+            return (1, float(v), "")
+        except ValueError:
+            return (0, 0.0, item["valor"].lower())
+    return sorted(grupos.values(), key=ordem, reverse=True)
+
+
+app.jinja_env.globals["grupos_consolidacao"] = grupos_consolidacao
 
 
 @app.route("/importacao/<int:id>", methods=["POST"])

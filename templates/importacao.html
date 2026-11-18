@@ -1,35 +1,12 @@
 {% extends "base.html" %}
 {% block titulo %}Importação{% endblock %}
 {% block conteudo %}
-{% set NOME_ETAPA = {'CRIACAO': 'Cadastro (1)', 'COLETA': 'Coleta (2)', 'EMBARQUE': 'Embarque (3)', 'DESEMBARACO': 'Desembaraço (4)', 'CHEGADA': 'Transporte Terrestre (5)'} %}
-<h1>Importação</h1>
-<p class="sub">Invoices em andamento nas etapas 1 a 5 (do cadastro ao transporte terrestre). Clique num invoice para ver e
-  editar as informações das etapas de uma vez; o botão <strong>Salvar</strong> grava tudo com as mesmas regras da tela do invoice.
-  Ao concluir o Transporte Terrestre (com <strong>NF Liberada</strong>), o invoice segue para a Inspeção e sai desta lista.
-  {% if not editar %}<br><strong>Somente leitura.</strong>{% endif %}</p>
-
-<section class="fluxo cards-imp">
-  {% for e in ETAPAS_IMPORTACAO %}
-  <a class="fluxo-etapa {{ 'sel' if etapa == e }}" href="{{ url_for('importacao', etapa=None if etapa == e else e) }}">
-    <span class="n">{{ contagem[e] }} <small>invoice{{ 's' if contagem[e] != 1 }}</small></span><span class="rot">{{ NOME_ETAPA[e] }}</span></a>
-  {% endfor %}
-</section>
-
-<form class="filtros" method="get">
-  {% if etapa %}<input type="hidden" name="etapa" value="{{ etapa }}">{% endif %}
-  <input name="q" value="{{ busca }}" placeholder="Buscar invoice ou fornecedor">
-  <button class="btn">Buscar</button>
-  {% if busca or etapa %}<a class="btn link" href="{{ url_for('importacao') }}">Limpar ({{ total }} em andamento)</a>{% endif %}
-  <span class="espaco"></span>
-  <button type="button" class="btn link" id="expandir">Expandir todos</button>
-  <button type="button" class="btn link" id="recolher">Recolher todos</button>
-</form>
-
-{% for r in lista %}
+{% macro painel(r) %}{% set NOME_ETAPA = {'CRIACAO': 'Cadastro (1)', 'COLETA': 'Coleta (2)', 'EMBARQUE': 'Embarque (3)', 'DESEMBARACO': 'Desembaraço (4)', 'CHEGADA': 'Transporte Terrestre (5)'} %}
 <details class="painel-lanc painel-imp" id="inv-{{ r.id }}" {{ 'open' if aberto == r.id }}>
   <summary>
     <span class="pl-titulo"><strong>{{ r.numero }}</strong><span class="pl-forn">{{ r.fornecedor }}</span>
       <span class="etapa-tag e-{{ r.situacao|lower }}">{{ NOME_ETAPA[r.situacao] }}</span>
+      {% if r.grupo_consolidacao %}<span class="grupo-mini" title="Grupo de consolidação">Grupo {{ r.grupo_consolidacao }}</span>{% endif %}
       {% if r.falta %}<small class="falta-imp">falta: {{ r.falta|join(', ') }}</small>{% endif %}</span>
     <span class="imp-datas">
       <span title="Data da HAWB">HAWB <b>{{ r.data_hawb|data }}</b></span>
@@ -76,6 +53,40 @@
     {% endif %}
   </div>
 </details>
+{% endmacro %}
+
+{% set NOME_ETAPA = {'CRIACAO': 'Cadastro (1)', 'COLETA': 'Coleta (2)', 'EMBARQUE': 'Embarque (3)', 'DESEMBARACO': 'Desembaraço (4)', 'CHEGADA': 'Transporte Terrestre (5)'} %}
+<h1>Importação</h1>
+<p class="sub">Invoices em andamento nas etapas 1 a 5 (do cadastro ao transporte terrestre). Clique num invoice para ver e
+  editar as informações das etapas de uma vez; o botão <strong>Salvar</strong> grava tudo com as mesmas regras da tela do invoice.
+  Ao concluir o Transporte Terrestre (com <strong>NF Liberada</strong>), o invoice segue para a Inspeção e sai desta lista.
+  {% if not editar %}<br><strong>Somente leitura.</strong>{% endif %}</p>
+
+<section class="fluxo cards-imp">
+  {% for e in ETAPAS_IMPORTACAO %}
+  <a class="fluxo-etapa {{ 'sel' if etapa == e }}" href="{{ url_for('importacao', etapa=None if etapa == e else e) }}">
+    <span class="n">{{ contagem[e] }} <small>invoice{{ 's' if contagem[e] != 1 }}</small></span><span class="rot">{{ NOME_ETAPA[e] }}</span></a>
+  {% endfor %}
+</section>
+
+<form class="filtros" method="get">
+  {% if etapa %}<input type="hidden" name="etapa" value="{{ etapa }}">{% endif %}
+  <input name="q" value="{{ busca }}" placeholder="Buscar invoice, fornecedor ou grupo" style="min-width: 270px">
+  <button class="btn">Buscar</button>
+  {% if busca or etapa %}<a class="btn link" href="{{ url_for('importacao') }}">Limpar ({{ total }} em andamento)</a>{% endif %}
+  <span class="espaco"></span>
+  <button type="button" class="btn link" id="expandir">Expandir todos</button>
+  <button type="button" class="btn link" id="recolher">Recolher todos</button>
+</form>
+
+{% for grupo, rs in blocos %}
+{% if grupo %}
+<section class="grupo-consol">
+  <div class="grupo-consol-topo"><span class="grupo-tag">Grupo de consolidação {{ grupo }}</span>
+    <small>{{ rs|length }} invoice{{ 's' if rs|length != 1 }} nesta lista · carga consolidada</small></div>
+  {% for r in rs %}{{ painel(r) }}{% endfor %}
+</section>
+{% else %}{{ painel(rs[0]) }}{% endif %}
 {% else %}
 <p class="vazio">Nenhum invoice {{ 'nesta etapa' if etapa else 'em andamento nas etapas 1 a 5' }}{{ ' para a busca' if busca }}.</p>
 {% endfor %}

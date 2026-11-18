@@ -666,3 +666,20 @@ tr.linha-atencao td:first-child { box-shadow: inset 3px 0 0 #e0a100; }
 @media (max-width: 1250px) { .abas a.aba svg { display: none; } }
 .cards-imp { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 @media (max-width: 800px) { .cards-imp { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* v4.34: grupo de consolidação — lista ao clicar no campo e agrupamento na aba Importação */
+.combo-grupo { position: relative; display: block; }
+.combo-lista { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 2px); max-height: 260px; overflow-y: auto;
+  background: var(--sup, #fff); border: 1px solid var(--borda); border-radius: var(--raio); box-shadow: 0 6px 18px rgba(16,24,40,.12); padding: .25rem; }
+.combo-lista.oculto { display: none; }
+.combo-op { display: flex; width: 100%; align-items: baseline; gap: .6rem; text-align: left; background: none; border: 0; border-radius: 6px;
+  padding: .4rem .55rem; cursor: pointer; font: inherit; color: var(--txt); }
+.combo-op:hover, .combo-op.atual { background: #f3f7ff; }
+.combo-op strong { min-width: 2.2rem; color: var(--marinho); }
+.combo-op small { color: var(--suave); }
+.combo-vazio { display: block; padding: .4rem .55rem; color: var(--suave); font-size: .85rem; }
+.grupo-consol { border: 1px dashed var(--pri); border-radius: var(--raio); padding: .5rem .6rem .1rem; margin-bottom: .7rem; background: #f7faff; }
+.grupo-consol-topo { display: flex; align-items: center; gap: .7rem; margin: 0 0 .45rem .2rem; flex-wrap: wrap; }
+.grupo-tag { font-weight: 700; color: var(--pri-escuro); font-size: .9rem; }
+.grupo-consol-topo small { color: var(--suave); }
+.grupo-mini { font-size: .72rem; font-weight: 600; padding: .05rem .45rem; border-radius: 999px; border: 1px solid var(--pri); color: var(--pri-escuro); white-space: nowrap; }

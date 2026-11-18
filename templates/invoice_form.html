@@ -27,7 +27,33 @@
     </label>
     <label>Agente de carga<input name="agente_carga" value="{{ d.agente_carga or '' }}"></label>
     <label>Despachante<input name="despachante" value="{{ d.despachante or '' }}"></label>
-    <label>Grupo de consolidação<input name="grupo_consolidacao" value="{{ d.grupo_consolidacao or '' }}"></label>
+    {% set grupos = grupos_consolidacao() %}
+    <label>Grupo de consolidação
+      <span class="combo-grupo"><input name="grupo_consolidacao" id="grupo-consolidacao" value="{{ d.grupo_consolidacao or '' }}" autocomplete="off">
+        <span class="combo-lista oculto" id="grupo-lista" role="listbox">
+          {% for gr in grupos %}<button type="button" class="combo-op" data-valor="{{ gr.valor }}"><strong>{{ gr.valor }}</strong>
+            <small>{{ gr.qtd }} invoice{{ 's' if gr.qtd != 1 }}{% if gr.fornecedores %} · {{ gr.fornecedores[:3]|join(', ') }}{% if gr.fornecedores|length > 3 %}…{% endif %}{% endif %}</small></button>{% endfor %}
+          {% if not grupos %}<span class="combo-vazio">Nenhum grupo cadastrado ainda.</span>{% endif %}
+        </span></span>
+      <small>Invoices com o mesmo grupo têm a carga consolidada.</small></label>
+    <script>
+    (function () {
+      var inp = document.getElementById('grupo-consolidacao'), lista = document.getElementById('grupo-lista');
+      var ops = Array.prototype.slice.call(lista.querySelectorAll('.combo-op'));
+      function mostrar(filtrar) {
+        var t = filtrar ? inp.value.trim().toLowerCase() : '', n = 0;
+        ops.forEach(function (b) { var ok = !t || b.dataset.valor.toLowerCase().indexOf(t) === 0; b.hidden = !ok; if (ok) n++;
+          b.classList.toggle('atual', b.dataset.valor.toLowerCase() === inp.value.trim().toLowerCase()); });
+        lista.classList.toggle('oculto', ops.length > 0 && n === 0);
+      }
+      inp.addEventListener('focus', function () { mostrar(false); });
+      inp.addEventListener('click', function () { mostrar(false); });
+      inp.addEventListener('input', function () { mostrar(true); });
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Escape') lista.classList.add('oculto'); });
+      ops.forEach(function (b) { b.addEventListener('mousedown', function (e) { e.preventDefault(); inp.value = b.dataset.valor; lista.classList.add('oculto'); }); });
+      inp.addEventListener('blur', function () { setTimeout(function () { lista.classList.add('oculto'); }, 120); });
+    })();
+    </script>
     <label>Data programada de coleta<input type="date" name="data_prog_coleta" value="{{ d.data_prog_coleta or '' }}"></label>
     <label class="largo">Observações<textarea name="obs" rows="2">{{ d.obs or '' }}</textarea></label>
   </div>

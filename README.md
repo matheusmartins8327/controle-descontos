@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.33)
+# Controle de Invoices e Descontos (v4.34)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -102,6 +102,11 @@ a caixa **DUIMP enviada ao banco**. Não trava o processo, mas enquanto não for
 contagem por etapa (clique para filtrar), busca, o que falta em cada um e as datas principais (HAWB, ETA, chegada). Ao abrir
 um invoice, todas as informações das etapas 2 a 5 aparecem lado a lado para editar e salvar de uma vez (mesmas regras da tela
 do invoice). Cadastros incompletos levam a "Completar cadastro". Todos veem; só a Importação edita.
+Invoices com o mesmo **grupo de consolidação** (carga consolidada) aparecem juntos, um embaixo do outro, num quadro
+"Grupo de consolidação N"; a busca também aceita o número do grupo.
+
+**Grupo de consolidação no cadastro (v4.34):** ao clicar no campo aparece a lista dos grupos já usados, do maior para o menor,
+com a quantidade de invoices e os fornecedores de cada um. Clique para escolher ou digite um novo.
 
 **Filtros no painel:** as tabelas de Pendências e de Invoices têm filtro em cada coluna (lista ou texto) e ordenação ao clicar no título da coluna.
 
