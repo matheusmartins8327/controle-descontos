@@ -2,12 +2,58 @@
 {% block titulo %}Descontos{% endblock %}
 {% block conteudo %}
 <h1>Descontos</h1>
-<p class="sub">Descontos por má qualidade registrados na inspeção dos invoices.</p>
+<p class="sub">Descontos por má qualidade registrados na inspeção dos invoices e descontos avulsos (sem invoice), cadastrados pela Engenharia de Processos.</p>
 <div class="filtros">
-  {% for k, v in [('abertos', 'Em aberto'), ('ENVIADO', 'Aguardando aprovação do fornecedor'), ('APROVADO', 'Aprovados'), ('todos', 'Todos')] %}
+  {% for k, v in [('abertos', 'Em aberto'), ('ENVIADO', 'Aguardando aprovação do fornecedor'), ('APROVADO', 'Aprovados'), ('todos', 'Todos'), ('avulsos', 'Descontos avulsos')] %}
   <a class="btn {{ 'primario' if filtro == k }}" href="{{ url_for('descontos', f=k) }}">{{ v }}</a>
   {% endfor %}
 </div>
+{% if filtro == 'avulsos' %}
+<section class="bloco" id="avulsos">
+  <h2>Descontos avulsos <small>· sem invoice de origem</small></h2>
+  <p class="sub">Descontos para um fornecedor que não nasceram da inspeção de um invoice. Aparecem para a Importação na janela de descontos
+    ao cadastrar o próximo invoice do fornecedor (mesma moeda) e ficam aqui com todo o histórico de deduções.</p>
+  {% if g.usuario.perfil == 'admin' %}
+  <details class="avulso-novo" {{ 'open' if not avulsos }}>
+    <summary class="btn primario pequeno">+ Novo desconto avulso</summary>
+    <form method="post" action="{{ url_for('desconto_avulso_novo') }}" class="grade">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Fornecedor *<select name="fornecedor_id" required><option value="">Selecione…</option>
+        {% for f in fornecedores_lista %}<option value="{{ f.id }}">{{ f.nome }}</option>{% endfor %}</select></label>
+      <label>Moeda *<select name="moeda" required><option value="">Selecione…</option>{% for k, sm in MOEDAS.items() %}<option value="{{ k }}">{{ k }} ({{ sm }})</option>{% endfor %}</select></label>
+      <label>Valor *<input name="valor" inputmode="decimal" placeholder="0,00" required></label>
+      <label class="largo">Justificativa * <small>(do que se trata o desconto)</small>
+        <textarea name="justificativa" rows="2" minlength="10" maxlength="1000" required placeholder="Ex.: acordo comercial pela devolução de lote com defeito, crédito de frete cobrado a mais…"></textarea></label>
+      <div class="largo"><button class="btn primario">Cadastrar desconto avulso</button></div>
+    </form>
+  </details>
+  {% endif %}
+  {% if avulsos %}
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>#</th><th>Fornecedor</th><th>Justificativa</th><th>Cadastro</th><th class="num">Valor</th><th class="num">Deduzido</th><th class="num">Saldo</th><th>Deduções (histórico)</th><th>Situação</th></tr></thead>
+    <tbody>
+    {% for a in avulsos %}
+      <tr id="avulso-{{ a.id }}"><td>{{ a.id }}</td><td>{{ a.fornecedor }}</td><td class="pre">{{ a.justificativa }}</td>
+        <td><small>{{ a.autor or '—' }}<br>{{ a.criado_em|data }}</small></td>
+        <td class="num">{{ a.valor|moeda(a.moeda) }}</td><td class="num">{{ a.deduzido|moeda(a.moeda) }}</td>
+        <td class="num"><strong>{{ a.saldo|moeda(a.moeda) }}</strong></td>
+        <td>{% for x in a.deducoes %}<div><a href="{{ url_for('invoice_detalhe', id=x.invoice_id) }}#deducoes">{{ x.numero }}</a> · {{ x.valor|moeda(a.moeda) }} <small>{{ x.criado_em|data }}</small></div>{% else %}<small>—</small>{% endfor %}</td>
+        <td>{% if a.encerrado_em %}<span class="ciencia">Encerrado</span><small class="bloco-linha">{{ a.encerrado_por_nome or '—' }} em {{ a.encerrado_em|data }}: {{ a.encerrado_motivo }}</small>
+          {% elif a.saldo <= 0.005 %}<span class="ciencia c-ok">Totalmente deduzido</span>
+          {% else %}<span class="ciencia c-pendente">Disponível</span>
+            {% if g.usuario.perfil == 'admin' %}<details class="admin-desfazer"><summary>Encerrar saldo</summary>
+              <form method="post" action="{{ url_for('desconto_avulso_encerrar', aid=a.id) }}" class="linha-mini" onsubmit="return confirm('Encerrar o saldo deste desconto avulso? Ele deixa de aparecer para dedução.')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="motivo" placeholder="Motivo *" required>
+                <button class="btn pequeno perigo">Encerrar</button></form></details>{% endif %}
+          {% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="vazio">Nenhum desconto avulso cadastrado.</p>{% endif %}
+</section>
+{% else %}
 <section class="bloco">
   {% if lista %}
   <div class="rolagem">
@@ -29,4 +75,5 @@
   </div>
   {% else %}<p class="vazio">Nenhum desconto encontrado.</p>{% endif %}
 </section>
+{% endif %}
 {% endblock %}

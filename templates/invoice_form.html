@@ -120,10 +120,10 @@
 
   {% if not editando %}
   <section id="janela-descontos" class="janela-descontos" hidden>
-    <h2>Descontos aprovados deste fornecedor</h2>
-    <p class="sub">Defina quanto deduzir de cada desconto neste invoice (um ou mais, total ou parcialmente). O valor final é calculado após as deduções.</p>
+    <h2>Descontos disponíveis deste fornecedor</h2>
+    <p class="sub">Descontos aprovados de invoices anteriores e descontos avulsos cadastrados pela Engenharia de Processos. Defina quanto deduzir de cada um neste invoice (um ou mais, total ou parcialmente). O valor final é calculado após as deduções.</p>
     <table>
-      <thead><tr><th>Invoice de origem</th><th>Relatório</th><th class="num">Saldo a deduzir</th><th class="num">Deduzir neste invoice</th><th></th></tr></thead>
+      <thead><tr><th>Origem do desconto</th><th>Data</th><th class="num">Saldo a deduzir</th><th class="num">Deduzir neste invoice</th><th></th></tr></thead>
       <tbody id="lista-descontos"></tbody>
     </table>
   </section>
@@ -356,7 +356,8 @@
       tr.innerHTML = `<td></td><td>${d.data_relatorio_fmt}</td><td class="num">${d.saldo_fmt}</td>
         <td class="num"><input name="ded_${d.id}" class="num" inputmode="decimal" placeholder="0,00" value="${valor}"></td>
         <td><button type="button" class="btn pequeno usar">Usar saldo</button></td>`;
-      tr.cells[0].textContent = d.invoice;
+      tr.cells[0].textContent = d.avulso ? d.invoice : 'Invoice ' + d.invoice;
+      if (d.avulso) { const j = document.createElement('small'); j.className = 'bloco-linha'; j.textContent = d.justificativa; tr.cells[0].appendChild(j); }
       tr.querySelector('.usar').addEventListener('click', () => { tr.querySelector('input').value = d.saldo_num; valorFinal(); });
       corpo.appendChild(tr);
     });

@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.37)
+# Controle de Invoices e Descontos (v4.38)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -199,6 +199,18 @@ mostrados na própria tela; os demais tipos mostram só os dados do arquivo), co
 - Os caminhos na pasta da rede cadastrados nas versões 4.27 a 4.30 continuam aparecendo (somente consulta, com **Copiar**),
   mas não geram mais pendência de "arquivo não encontrado".
 - O espaço ocupado pelos anexos aparece em **Sistema**.
+
+### Descontos avulsos (v4.38)
+Descontos para um fornecedor **sem invoice de origem** (acordo comercial, crédito de frete etc.), cadastrados **somente pela
+Engenharia de Processos** na aba **Descontos → Descontos avulsos**: fornecedor, moeda, valor e **justificativa obrigatória**
+(do que se trata).
+- Aparecem para a Importação na janela de descontos ao cadastrar o próximo invoice do fornecedor (mesma moeda), junto com os
+  descontos aprovados de invoices, e também em "Descontos deduzidos neste invoice" para deduzir depois. Podem ser usados
+  total ou parcialmente, em um ou mais invoices.
+- O histórico fica na aba: valor, quem cadastrou e quando, cada dedução (invoice, valor, data) e o saldo. No invoice, a dedução
+  mostra a justificativa e fica no histórico do invoice.
+- A Engenharia pode **encerrar o saldo** (com motivo): o restante deixa de aparecer para dedução; as deduções já feitas permanecem.
+- Não têm valor segurado nem liberação (não há invoice de origem retido).
 
 ### Correções
 Quem lança cada informação pode corrigi-la: a Importação corrige dados, itens, condição, etapas e deduções; o Financeiro corrige pagamentos, Swifts e banco de débito; o Administrador corrige a inspeção (o valor do desconto, pela revalidação). Toda correção fica no histórico com o valor anterior e o novo.

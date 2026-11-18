@@ -111,12 +111,12 @@
 {# ---------- deduções recebidas ---------- #}
 <section class="bloco" id="deducoes">
   <h2>Descontos deduzidos neste invoice</h2>
-  {% if r.deducoes_recebidas %}
+  {% if r.deducoes_recebidas or r.deducoes_avulsas %}
   <table>
-    <thead><tr><th>Desconto do invoice</th><th class="num">Valor deduzido</th><th></th></tr></thead>
+    <thead><tr><th>Origem do desconto</th><th class="num">Valor deduzido</th><th></th></tr></thead>
     <tbody>
     {% for x in r.deducoes_recebidas %}
-      <tr><td><a href="{{ url_for('invoice_detalhe', id=x.origem_id) }}">{{ x.invoice_origem }}</a></td><td class="num">{{ x.valor|moeda(m) }}</td>
+      <tr><td>Invoice <a href="{{ url_for('invoice_detalhe', id=x.origem_id) }}">{{ x.invoice_origem }}</a></td><td class="num">{{ x.valor|moeda(m) }}</td>
         <td>{% if imp and not r.data_chegada and not r.principal_pago %}
           <details class="admin-desfazer"><summary>Corrigir</summary>
             <form method="post" action="{{ url_for('deducao_editar', xid=x.id) }}" class="linha-mini">
@@ -126,14 +126,26 @@
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn pequeno link">Remover dedução</button></form>
           </details>{% endif %}</td></tr>
     {% endfor %}
+    {% for x in r.deducoes_avulsas %}
+      <tr><td><a href="{{ url_for('descontos', f='avulsos') }}#avulso-{{ x.avulso_id }}">Desconto avulso #{{ x.avulso_id }}</a>
+          <small class="bloco-linha">{{ x.justificativa }}</small></td><td class="num">{{ x.valor|moeda(m) }}</td>
+        <td>{% if imp and not r.data_chegada and not r.principal_pago %}
+          <details class="admin-desfazer"><summary>Corrigir</summary>
+            <form method="post" action="{{ url_for('deducao_avulsa_acao', xid=x.id, acao='editar') }}" class="linha-mini">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="valor" inputmode="decimal" value="{{ x.valor|num }}" required>
+              <button class="btn pequeno">Salvar</button></form>
+            <form method="post" action="{{ url_for('deducao_avulsa_acao', xid=x.id, acao='remover') }}" onsubmit="return confirm('Remover esta dedução?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn pequeno link">Remover dedução</button></form>
+          </details>{% endif %}</td></tr>
+    {% endfor %}
     </tbody>
   </table>
   {% else %}<p class="vazio">Nenhum desconto deduzido neste invoice.</p>{% endif %}
   {% if imp and disponiveis and not r.principal_pago %}
   <form method="post" action="{{ url_for('deducao_nova', id=r.id) }}" class="linha-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>Desconto aprovado disponível
-      <select name="desconto_id">{% for x in disponiveis %}<option value="{{ x.id }}">Invoice {{ x.invoice }} · saldo {{ x.saldo|moeda(m) }}</option>{% endfor %}</select></label>
+    <label>Desconto disponível
+      <select name="desconto_id">{% for x in disponiveis %}<option value="{{ x.id }}">{{ x.invoice if x.avulso else 'Invoice ' ~ x.invoice }} · saldo {{ x.saldo|moeda(m) }}{% if x.avulso %} · {{ x.justificativa|truncate(60) }}{% endif %}</option>{% endfor %}</select></label>
     <label>Valor a deduzir<input name="valor" inputmode="decimal" placeholder="0,00" required></label>
     <button class="btn">Deduzir</button>
   </form>

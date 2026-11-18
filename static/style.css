@@ -696,3 +696,10 @@ tr.linha-atencao td:first-child { box-shadow: inset 3px 0 0 #e0a100; }
 .grupo-form .linha-form { margin-top: .6rem; display: flex; gap: .8rem; align-items: center; flex-wrap: wrap; }
 @media (max-width: 800px) { .grupo-campos { grid-template-columns: 1fr; } }
 .falta-imp b { color: var(--txt); font-weight: 600; }
+
+/* v4.38: descontos avulsos */
+.avulso-novo { margin: .4rem 0 1rem; }
+.avulso-novo > summary { list-style: none; display: inline-flex; cursor: pointer; }
+.avulso-novo > summary::-webkit-details-marker { display: none; }
+.avulso-novo form { margin-top: .7rem; padding: .8rem; border: 1px solid var(--borda); border-radius: var(--raio); background: var(--sup); }
+#avulsos td.pre { white-space: pre-wrap; max-width: 320px; }

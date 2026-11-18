@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.37"
+VERSAO = "4.38"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -258,6 +258,29 @@ CREATE TABLE IF NOT EXISTS deducoes (
     criado_por INTEGER REFERENCES usuarios(id),
     criado_em TEXT NOT NULL,
     UNIQUE (desconto_id, invoice_id)
+);
+-- versão 4.38: descontos avulsos (sem invoice de origem), cadastrados pela Engenharia de Processos para um fornecedor,
+-- com justificativa; a Importação os deduz nos próximos invoices do fornecedor (mesma moeda)
+CREATE TABLE IF NOT EXISTS descontos_avulsos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fornecedor_id INTEGER NOT NULL REFERENCES fornecedores(id),
+    moeda TEXT NOT NULL,
+    valor REAL NOT NULL,
+    justificativa TEXT NOT NULL,
+    criado_por INTEGER REFERENCES usuarios(id),
+    criado_em TEXT NOT NULL,
+    encerrado_em TEXT,                    -- saldo restante cancelado pela Engenharia
+    encerrado_por INTEGER REFERENCES usuarios(id),
+    encerrado_motivo TEXT
+);
+CREATE TABLE IF NOT EXISTS deducoes_avulsas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    avulso_id INTEGER NOT NULL REFERENCES descontos_avulsos(id),
+    invoice_id INTEGER NOT NULL REFERENCES invoices(id),
+    valor REAL NOT NULL,
+    criado_por INTEGER REFERENCES usuarios(id),
+    criado_em TEXT NOT NULL,
+    UNIQUE (avulso_id, invoice_id)
 );
 -- Pagamentos registrados pelo Financeiro
 CREATE TABLE IF NOT EXISTS pagamentos (
@@ -836,7 +859,12 @@ def calcular(inv):
         "SELECT x.*, o.numero AS invoice_origem, o.id AS origem_id FROM deducoes x"
         " JOIN descontos d ON d.id = x.desconto_id JOIN invoices o ON o.id = d.invoice_id"
         " WHERE x.invoice_id = ? ORDER BY x.id", (iid,)).fetchall()
-    r["deducoes_aplicadas"] = round(sum(x["valor"] for x in r["deducoes_recebidas"]), 2)
+    # deduções de descontos avulsos (v4.38: sem invoice de origem)
+    r["deducoes_avulsas"] = db.execute(
+        "SELECT x.*, a.justificativa, a.valor AS valor_avulso FROM deducoes_avulsas x"
+        " JOIN descontos_avulsos a ON a.id = x.avulso_id WHERE x.invoice_id = ? ORDER BY x.id", (iid,)).fetchall()
+    r["deducoes_aplicadas"] = round(sum(x["valor"] for x in r["deducoes_recebidas"])
+                                    + sum(x["valor"] for x in r["deducoes_avulsas"]), 2)
     r["valor_invoice"] = round(r["itens_total"] - r["deducoes_aplicadas"], 2)
     # com deduções, cada item recebe o desconto proporcional ao seu valor (apenas exibição)
     linhas, _t, _td = itens_com_desconto([dict(x) for x in r["itens"]], r["deducoes_aplicadas"])
@@ -956,7 +984,62 @@ def descontos_disponiveis(fornecedor_id, moeda, excluir_invoice_id=None):
         if saldo > TOLERANCIA:
             lista.append({"id": d["id"], "invoice": d["numero"], "valor_final": d["valor_final"], "saldo": saldo,
                           "data_relatorio": d["data_relatorio"]})
+    # descontos avulsos do fornecedor (id "a<número>" para não confundir com os descontos de invoices)
+    for a in avulsos_com_saldo(fornecedor_id, moeda):
+        lista.append({"id": f"a{a['id']}", "invoice": f"Avulso #{a['id']}", "valor_final": a["valor"], "saldo": a["saldo"],
+                      "data_relatorio": a["criado_em"][:10], "avulso": True, "justificativa": a["justificativa"]})
     return lista
+
+
+def avulsos_de(fornecedor_id=None, moeda=None):
+    """Descontos avulsos com o total deduzido e o saldo."""
+    sql = ("SELECT a.*, f.nome AS fornecedor, u.nome AS autor, e.nome AS encerrado_por_nome,"
+           " COALESCE((SELECT SUM(valor) FROM deducoes_avulsas x WHERE x.avulso_id = a.id), 0) AS deduzido"
+           " FROM descontos_avulsos a JOIN fornecedores f ON f.id = a.fornecedor_id"
+           " LEFT JOIN usuarios u ON u.id = a.criado_por LEFT JOIN usuarios e ON e.id = a.encerrado_por WHERE 1 = 1")
+    params = []
+    if fornecedor_id is not None:
+        sql += " AND a.fornecedor_id = ?"
+        params.append(fornecedor_id)
+    if moeda is not None:
+        sql += " AND a.moeda = ?"
+        params.append(moeda)
+    lista = []
+    for a in get_db().execute(sql + " ORDER BY a.id DESC", params).fetchall():
+        a = dict(a)
+        a["saldo"] = 0 if a["encerrado_em"] else round(a["valor"] - a["deduzido"], 2)
+        lista.append(a)
+    return lista
+
+
+def avulsos_com_saldo(fornecedor_id, moeda):
+    return sorted([a for a in avulsos_de(fornecedor_id, moeda) if a["saldo"] > TOLERANCIA], key=lambda a: a["id"])
+
+
+def id_desconto(txt):
+    """'12' -> 12 (desconto de invoice); 'a3' -> 'a3' (desconto avulso); inválido -> None."""
+    txt = (txt or "").strip()
+    if txt.isdigit():
+        return int(txt)
+    if re.fullmatch(r"a\d+", txt):
+        return txt
+    return None
+
+
+def gravar_deducao(did, iid, numero_destino, valor, moeda, origem_txt):
+    """Grava a dedução (de invoice ou avulsa) e os eventos. Não faz commit."""
+    db = get_db()
+    if isinstance(did, str):
+        aid = int(did[1:])
+        db.execute("INSERT INTO deducoes_avulsas (avulso_id, invoice_id, valor, criado_por, criado_em) VALUES (?, ?, ?, ?, ?)",
+                   (aid, iid, valor, g.usuario["id"], agora()))
+        registrar_evento(iid, f"Dedução de {fmt_moeda(valor, moeda)} do desconto avulso #{aid}", origem_txt)
+        return
+    db.execute("INSERT INTO deducoes (desconto_id, invoice_id, valor, criado_por, criado_em) VALUES (?, ?, ?, ?, ?)",
+               (did, iid, valor, g.usuario["id"], agora()))
+    registrar_evento(iid, f"Dedução de {fmt_moeda(valor, moeda)} do desconto do invoice {origem_txt}")
+    origem_id = db.execute("SELECT invoice_id FROM descontos WHERE id = ?", (did,)).fetchone()[0]
+    registrar_evento(origem_id, f"Desconto deduzido no invoice {numero_destino}: {fmt_moeda(valor, moeda)}")
 
 
 app.jinja_env.globals.update(
@@ -1715,6 +1798,8 @@ def exportar_itens(id):
                  ("Data de assinatura", fmt_data(r["data_assinatura"])), ("Condição de pagamento", condicao_texto(r))]
     for x in r["deducoes_recebidas"]:
         cabecalho.append((f"Desconto deduzido (invoice {x['invoice_origem']})", x["valor"]))
+    for x in r["deducoes_avulsas"]:
+        cabecalho.append((f"Desconto avulso #{x['avulso_id']} deduzido", x["valor"]))
     return resposta_xlsx(planilha_itens(itens, r["deducoes_aplicadas"], r["moeda"], cabecalho),
                          f"itens-{r['fornecedor']}-{r['numero']}.xlsx")
 
@@ -1793,13 +1878,13 @@ def invoice_novo():
         disponiveis = {d["id"]: d for d in descontos_disponiveis(fid, dados["moeda"])} if fid else {}
         for chave, valor in request.form.items():
             if chave.startswith("ded_") and valor.strip():
-                did, v = int(chave[4:]), parse_num(valor)
-                if v is None or v <= 0:
+                did, v = id_desconto(chave[4:]), parse_num(valor)
+                if did is None or v is None or v <= 0:
                     continue
                 if did not in disponiveis:
                     erros.append("Um dos descontos escolhidos não está mais disponível.")
                 elif v > disponiveis[did]["saldo"] + TOLERANCIA:
-                    erros.append(f"A dedução do desconto do invoice {disponiveis[did]['invoice']} é maior que o saldo"
+                    erros.append(f"A dedução do desconto {disponiveis[did]['invoice']} é maior que o saldo"
                                  f" ({fmt_moeda(disponiveis[did]['saldo'], dados['moeda'])}).")
                 else:
                     deducoes.append((did, round(v, 2)))
@@ -1819,12 +1904,8 @@ def invoice_novo():
             salvar_condicao(iid, dados["condicao"])
             registrar_evento(iid, "Invoice criado", f"{len(itens)} item(ns) · {fmt_moeda(total_itens, dados['moeda'])}")
             for did, v in deducoes:
-                db.execute("INSERT INTO deducoes (desconto_id, invoice_id, valor, criado_por, criado_em)"
-                           " VALUES (?, ?, ?, ?, ?)", (did, iid, v, g.usuario["id"], agora()))
-                origem = disponiveis[did]["invoice"]
-                registrar_evento(iid, f"Dedução de {fmt_moeda(v, dados['moeda'])} do desconto do invoice {origem}")
-                origem_id = db.execute("SELECT invoice_id FROM descontos WHERE id = ?", (did,)).fetchone()[0]
-                registrar_evento(origem_id, f"Desconto deduzido no invoice {dados['numero']}: {fmt_moeda(v, dados['moeda'])}")
+                origem = disponiveis[did].get("justificativa") if disponiveis[did].get("avulso") else disponiveis[did]["invoice"]
+                gravar_deducao(did, iid, dados["numero"], v, dados["moeda"], origem)
             db.commit()
             flash("Invoice criado." + (f" {len(deducoes)} desconto(s) deduzido(s)." if deducoes else ""), "ok")
             salvar_invoice_assinado_form(iid)
@@ -1833,7 +1914,7 @@ def invoice_novo():
         for e in erros:
             flash(e, "erro")
         return render_template("invoice_form.html", d=dados, itens=itens, fornecedores=fornecedores, editando=False,
-                               deducoes_escolhidas=dict(deducoes))
+                               deducoes_escolhidas={str(k): v for k, v in deducoes})
     return render_template("invoice_form.html", d={"moeda": "", "condicao": [{"percentual": 100, "tipo": "PRAZO"}]},
                            itens=[],
                            fornecedores=fornecedores, editando=False, deducoes_escolhidas={})
@@ -1850,7 +1931,7 @@ def invoice_editar(id):
     db = get_db()
     # quem lançou pode corrigir tudo; só fornecedor e moeda ficam travados quando há desconto ou deduções
     # (que dependem deles), e os itens não podem baixar o valor abaixo do que já foi pago
-    chave_travada = bool(r["desconto"] or r["deducoes_recebidas"])
+    chave_travada = bool(r["desconto"] or r["deducoes_recebidas"] or r["deducoes_avulsas"])
     fornecedores = db.execute("SELECT * FROM fornecedores WHERE ativo = 1 ORDER BY nome").fetchall()
     if request.method == "POST":
         dados, itens, erros = ler_form_invoice()
@@ -2244,7 +2325,7 @@ def deducao_nova(id):
         abort(403)
     r = carregar_invoice(id)
     volta = redirect(url_for("invoice_detalhe", id=id) + "#deducoes")
-    did = request.form.get("desconto_id", type=int)
+    did = id_desconto(request.form.get("desconto_id"))
     valor = parse_num(request.form.get("valor"))
     disponiveis = {d["id"]: d for d in descontos_disponiveis(r["fornecedor_id"], r["moeda"], excluir_invoice_id=id)}
     erro = None
@@ -2254,7 +2335,8 @@ def deducao_nova(id):
         erro = "Este invoice já tem pagamento registrado: não é possível incluir deduções."
     elif did not in disponiveis:
         erro = "Selecione um desconto disponível."
-    elif any(x["desconto_id"] == did for x in r["deducoes_recebidas"]):
+    elif any(x["desconto_id"] == did for x in r["deducoes_recebidas"]) \
+            or any(f"a{x['avulso_id']}" == did for x in r["deducoes_avulsas"]):
         erro = "Este desconto já foi deduzido neste invoice."
     elif valor is None or valor <= 0:
         erro = "Informe o valor a deduzir."
@@ -2267,12 +2349,8 @@ def deducao_nova(id):
         return volta
     db = get_db()
     valor = round(valor, 2)
-    db.execute("INSERT INTO deducoes (desconto_id, invoice_id, valor, criado_por, criado_em) VALUES (?, ?, ?, ?, ?)",
-               (did, id, valor, g.usuario["id"], agora()))
-    origem = disponiveis[did]["invoice"]
-    registrar_evento(id, f"Dedução de {fmt_moeda(valor, r['moeda'])} do desconto do invoice {origem}")
-    origem_id = db.execute("SELECT invoice_id FROM descontos WHERE id = ?", (did,)).fetchone()[0]
-    registrar_evento(origem_id, f"Desconto deduzido no invoice {r['numero']}: {fmt_moeda(valor, r['moeda'])}")
+    origem = disponiveis[did].get("justificativa") if disponiveis[did].get("avulso") else disponiveis[did]["invoice"]
+    gravar_deducao(did, id, r["numero"], valor, r["moeda"], origem)
     db.commit()
     flash("Dedução registrada.", "ok")
     return volta
@@ -2339,6 +2417,101 @@ def deducao_remover(xid):
         db.commit()
         flash("Dedução removida.", "ok")
     return volta
+
+
+@app.route("/deducoes-avulsas/<int:xid>/<acao>", methods=["POST"])
+@login_obrigatorio
+def deducao_avulsa_acao(xid, acao):
+    """A Importação corrige ou remove a dedução de um desconto avulso enquanto o invoice não chegou nem foi pago."""
+    if not pode("importacao"):
+        abort(403)
+    db = get_db()
+    x = db.execute("SELECT x.*, a.valor AS valor_avulso, a.encerrado_em FROM deducoes_avulsas x"
+                   " JOIN descontos_avulsos a ON a.id = x.avulso_id WHERE x.id = ?", (xid,)).fetchone()
+    if x is None or acao not in ("editar", "remover"):
+        abort(404)
+    destino = carregar_invoice(x["invoice_id"])
+    volta = redirect(url_for("invoice_detalhe", id=destino["id"]) + "#deducoes")
+    if destino["data_chegada"] or any(p["tipo"] == "PRINCIPAL" for p in destino["pagamentos"]):
+        flash("O invoice já chegou ou tem pagamento: a dedução não pode mais ser alterada.", "erro")
+        return volta
+    if acao == "remover":
+        db.execute("DELETE FROM deducoes_avulsas WHERE id = ?", (xid,))
+        registrar_evento(destino["id"], f"Dedução removida: {fmt_moeda(x['valor'], destino['moeda'])} do desconto "
+                                        f"avulso #{x['avulso_id']}")
+        db.commit()
+        flash("Dedução removida." + (" O desconto avulso está encerrado: o valor não volta a ficar disponível."
+                                     if x["encerrado_em"] else ""), "ok")
+        return volta
+    valor = parse_num(request.form.get("valor"))
+    outras = db.execute("SELECT COALESCE(SUM(valor), 0) FROM deducoes_avulsas WHERE avulso_id = ? AND id <> ?",
+                        (x["avulso_id"], xid)).fetchone()[0]
+    saldo = round(x["valor_avulso"] - outras, 2) if not x["encerrado_em"] else x["valor"]
+    if valor is None or valor <= 0:
+        flash("Informe o valor deduzido (para retirar a dedução, use Remover).", "erro")
+    elif valor > saldo + TOLERANCIA:
+        flash(f"O valor é maior que o saldo do desconto avulso ({fmt_moeda(saldo, destino['moeda'])}).", "erro")
+    elif valor > destino["itens_total"] - (destino["deducoes_aplicadas"] - x["valor"]) + TOLERANCIA:
+        flash("O valor é maior que o valor restante do invoice.", "erro")
+    else:
+        valor = round(valor, 2)
+        db.execute("UPDATE deducoes_avulsas SET valor = ? WHERE id = ?", (valor, xid))
+        registrar_evento(destino["id"], f"Dedução do desconto avulso #{x['avulso_id']} corrigida",
+                         f"{fmt_moeda(x['valor'], destino['moeda'])} → {fmt_moeda(valor, destino['moeda'])}")
+        db.commit()
+        flash("Dedução corrigida.", "ok")
+    return volta
+
+
+@app.route("/descontos/avulsos", methods=["POST"])
+@somente_admin
+def desconto_avulso_novo():
+    """A Engenharia de Processos cadastra um desconto avulso para um fornecedor (sem invoice), com justificativa."""
+    f = request.form
+    fid = f.get("fornecedor_id", type=int)
+    moeda = f.get("moeda", "")
+    valor = parse_num(f.get("valor"))
+    justificativa = " ".join(f.get("justificativa", "").split())[:1000]
+    db = get_db()
+    erro = None
+    if not fid or not db.execute("SELECT 1 FROM fornecedores WHERE id = ?", (fid,)).fetchone():
+        erro = "Selecione o fornecedor."
+    elif moeda not in MOEDAS:
+        erro = "Selecione a moeda."
+    elif valor is None or valor <= 0:
+        erro = "Informe o valor do desconto."
+    elif len(justificativa) < 10:
+        erro = "Escreva a justificativa: do que se trata o desconto (pelo menos 10 caracteres)."
+    if erro:
+        flash(erro, "erro")
+        return redirect(url_for("descontos", f="avulsos") + "#avulsos")
+    db.execute("INSERT INTO descontos_avulsos (fornecedor_id, moeda, valor, justificativa, criado_por, criado_em)"
+               " VALUES (?, ?, ?, ?, ?, ?)", (fid, moeda, round(valor, 2), justificativa, g.usuario["id"], agora()))
+    db.commit()
+    flash(f"Desconto avulso de {fmt_moeda(valor, moeda)} cadastrado. Ele aparecerá para a Importação deduzir no "
+          "próximo invoice deste fornecedor (mesma moeda).", "ok")
+    return redirect(url_for("descontos", f="avulsos") + "#avulsos")
+
+
+@app.route("/descontos/avulsos/<int:aid>/encerrar", methods=["POST"])
+@somente_admin
+def desconto_avulso_encerrar(aid):
+    """Cancela o saldo ainda não deduzido (as deduções já feitas continuam no histórico)."""
+    db = get_db()
+    a = db.execute("SELECT * FROM descontos_avulsos WHERE id = ?", (aid,)).fetchone()
+    if a is None:
+        abort(404)
+    motivo = " ".join(request.form.get("motivo", "").split())[:300]
+    if a["encerrado_em"]:
+        flash("Este desconto avulso já está encerrado.", "erro")
+    elif not motivo:
+        flash("Informe o motivo para encerrar o desconto avulso.", "erro")
+    else:
+        db.execute("UPDATE descontos_avulsos SET encerrado_em = ?, encerrado_por = ?, encerrado_motivo = ? WHERE id = ?",
+                   (agora(), g.usuario["id"], motivo, aid))
+        db.commit()
+        flash(f"Desconto avulso #{aid} encerrado: o saldo restante não aparece mais para dedução.", "ok")
+    return redirect(url_for("descontos", f="avulsos") + "#avulsos")
 
 
 # ---------------------------------------------------------------------------
@@ -2686,6 +2859,7 @@ def excluir_invoice(iid):
     db.execute("DELETE FROM documentos WHERE (origem IN ('duimp', 'invoice') AND origem_id = ?) OR (origem = 'pagamento' AND origem_id IN"
                " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
                " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid))
+    db.execute("DELETE FROM deducoes_avulsas WHERE invoice_id = ?", (iid,))
     db.execute("DELETE FROM deducoes WHERE invoice_id = ? OR desconto_id IN (SELECT id FROM descontos WHERE invoice_id = ?)",
                (iid, iid))
     db.execute("DELETE FROM revisoes_desconto WHERE desconto_id IN (SELECT id FROM descontos WHERE invoice_id = ?)", (iid,))
@@ -2724,7 +2898,7 @@ def invoice_cancelar(id):
     motivo = request.form.get("motivo", "").strip()
     if r["cancelado_em"]:
         flash("Este invoice já está cancelado.", "erro")
-    elif r["pagamentos"] or r["deducoes_recebidas"] or r["desconto"]:
+    elif r["pagamentos"] or r["deducoes_recebidas"] or r["deducoes_avulsas"] or r["desconto"]:
         flash("O invoice tem pagamentos, deduções ou desconto: remova-os antes de cancelar.", "erro")
     elif not motivo:
         flash("Informe o motivo do cancelamento.", "erro")
@@ -2748,11 +2922,20 @@ def descontos():
         "SELECT d.invoice_id FROM descontos d JOIN invoices i ON i.id = d.invoice_id ORDER BY d.id DESC")]
     lista = [carregar_invoice(i) for i in ids]
     filtro = request.args.get("f", "abertos")
+    avulsos = avulsos_de()
+    for a in avulsos:
+        a["deducoes"] = get_db().execute(
+            "SELECT x.*, i.numero, i.cancelado_em FROM deducoes_avulsas x JOIN invoices i ON i.id = x.invoice_id"
+            " WHERE x.avulso_id = ? ORDER BY x.id", (a["id"],)).fetchall()
+    if filtro == "avulsos":
+        return render_template("descontos.html", lista=[], filtro=filtro, avulsos=avulsos,
+                               fornecedores_lista=get_db().execute("SELECT id, nome FROM fornecedores WHERE ativo = 1"
+                                                                   " ORDER BY nome").fetchall())
     if filtro == "abertos":
         lista = [r for r in lista if r["situacao"] not in ("CONCLUIDO", "CANCELADO")]
     elif filtro in STATUS_DESCONTO:
         lista = [r for r in lista if r["desconto"]["status"] == filtro]
-    return render_template("descontos.html", lista=lista, filtro=filtro)
+    return render_template("descontos.html", lista=lista, filtro=filtro, avulsos=avulsos)
 
 
 # ---------------------------------------------------------------------------
@@ -3049,7 +3232,7 @@ def sistema():
 
 # Tabelas com dados de invoices (na ordem de exclusão). Usuários, fornecedores, configurações (e-mails,
 # destinatários, agendador) e a conta de envio são mantidos.
-TABELAS_INVOICES = ["revisoes_desconto", "deducoes", "descontos", "pagamentos", "invoice_itens", "condicao_parcelas",
+TABELAS_INVOICES = ["revisoes_desconto", "deducoes", "deducoes_avulsas", "descontos", "pagamentos", "invoice_itens", "condicao_parcelas",
                     "anexos", "lancamento_anexos", "lancamentos", "eventos", "notificacoes_estado", "invoices"]
 
 
