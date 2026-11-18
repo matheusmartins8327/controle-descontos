@@ -7,7 +7,7 @@
     <span class="pl-titulo"><strong>{{ r.numero }}</strong><span class="pl-forn">{{ r.fornecedor }}</span>
       <span class="etapa-tag e-{{ r.situacao|lower }}">{{ NOME_ETAPA[r.situacao] }}</span>
       {% if r.grupo_consolidacao %}<span class="grupo-mini" title="Grupo de consolidação">Grupo {{ r.grupo_consolidacao }}</span>{% endif %}
-      {% if r.falta %}<small class="falta-imp">falta: {{ r.falta|join(', ') }}</small>{% endif %}</span>
+      {% if r.ultima_info %}<small class="falta-imp" title="Última informação adicionada no cronograma do fluxo">último: <b>{{ r.ultima_info }}</b></small>{% endif %}</span>
     <span class="imp-datas">
       <span title="Data da HAWB">HAWB <b>{{ r.data_hawb|data }}</b></span>
       <span title="ETA real ou planejado">ETA <b>{{ (r.eta_real or r.eta_planejado)|data }}</b>{% if r.eta_planejado and not r.eta_real %}<small> plan.</small>{% endif %}</span>

@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.36)
+# Controle de Invoices e Descontos (v4.37)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -99,7 +99,7 @@ a caixa **DUIMP enviada ao banco**. Não trava o processo, mas enquanto não for
 (Invoices que já tinham chegado à fábrica antes desta versão não geram essa pendência.)
 
 **Aba Importação (v4.33):** lista os invoices em andamento nas etapas 1 a 5 (cadastro até o Transporte Terrestre), com
-contagem por etapa (clique para filtrar), busca, o que falta em cada um e as datas principais (HAWB, ETA, chegada). Ao abrir
+contagem por etapa (clique para filtrar), busca, a **última informação adicionada** no cronograma do fluxo e as datas principais (HAWB, ETA, chegada). Ao abrir
 um invoice, todas as informações das etapas 2 a 5 aparecem lado a lado para editar e salvar de uma vez (mesmas regras da tela
 do invoice). Cadastros incompletos levam a "Completar cadastro". Todos veem; só a Importação edita.
 Invoices com o mesmo **grupo de consolidação** (carga consolidada) aparecem juntos, um embaixo do outro, num quadro

@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.36"
+VERSAO = "4.37"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2015,6 +2015,7 @@ def importacao():
     lista = [r for r in todos_invoices() if r["situacao"] in ETAPAS_IMPORTACAO and not r["historico"]]
     for r in lista:
         r["falta"] = criacao_faltando(r) if r["situacao"] == "CRIACAO" else etapa_faltando(r, r["situacao"])
+        r["ultima_info"] = ultima_informacao(r)
     ordem = {e: i for i, e in enumerate(ETAPAS_IMPORTACAO)}
     lista.sort(key=lambda r: (ordem[r["situacao"]], r["data_prog_chegada"] or r["eta_planejado"] or "9999", r["id"]))
     contagem = {e: sum(1 for r in lista if r["situacao"] == e) for e in ETAPAS_IMPORTACAO}
@@ -2031,6 +2032,30 @@ def importacao():
                            CAMPOS_GRUPO=CAMPOS_GRUPO, chave_grupo=chave_grupo, contagem=contagem, total=total, etapa=etapa, busca=busca,
                            ETAPAS_IMPORTACAO=ETAPAS_IMPORTACAO, aberto=request.args.get("aberto", type=int),
                            editar=pode("importacao"))
+
+
+def ultima_informacao(r):
+    """Última informação preenchida no cronograma do fluxo (cadastro → coleta → embarque → desembaraço →
+    transporte terrestre), em texto curto para a lista da aba Importação."""
+    ultima = None
+    if r["cadastro_concluido_em"]:
+        ultima = f"Cadastro concluído {fmt_data(r['cadastro_concluido_em'][:10])}"
+    elif r["criado_em"]:
+        ultima = f"Cadastro iniciado {fmt_data(r['criado_em'][:10])}"
+    for etapa in ORDEM_LOGISTICA:
+        for campo, rotulo, tipo, _obrig in CAMPOS_ETAPA[etapa]:
+            v = r[campo]
+            if not v or tipo == "texto":
+                continue
+            if tipo == "data":
+                ultima = f"{rotulo} {fmt_data(v)}"
+            elif tipo == "flag":
+                ultima = rotulo
+            elif tipo == "canal":
+                ultima = f"Canal {v}"
+            else:
+                ultima = f"{rotulo} {v}"
+    return ultima
 
 
 def chave_grupo(valor):

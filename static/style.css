@@ -695,3 +695,4 @@ tr.linha-atencao td:first-child { box-shadow: inset 3px 0 0 #e0a100; }
 .grupo-campos label { font-size: .82rem; display: flex; flex-direction: column; gap: .15rem; }
 .grupo-form .linha-form { margin-top: .6rem; display: flex; gap: .8rem; align-items: center; flex-wrap: wrap; }
 @media (max-width: 800px) { .grupo-campos { grid-template-columns: 1fr; } }
+.falta-imp b { color: var(--txt); font-weight: 600; }
