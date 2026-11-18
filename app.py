@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.34"
+VERSAO = "4.35"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
 CREATE TABLE IF NOT EXISTS fornecedores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nome TEXT NOT NULL UNIQUE,
-    cidade TEXT,
+    cidade TEXT,                          -- desde a v4.35 guarda o PAÍS do fornecedor (campo "País")
     contato TEXT,
     ativo INTEGER NOT NULL DEFAULT 1,
     criado_em TEXT NOT NULL

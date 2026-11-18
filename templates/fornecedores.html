@@ -8,7 +8,7 @@
   <h2>Novo fornecedor</h2>
   <div class="grade">
     <label>Nome *<input name="nome" required></label>
-    <label>Cidade<input name="cidade" placeholder="Sialkot, Karachi…"></label>
+    <label>País<input name="cidade" placeholder="Paquistão, Alemanha, Suíça…"></label>
     <label>Contato<input name="contato" placeholder="Nome / e-mail / telefone"></label>
   </div>
   <button class="btn primario">Cadastrar</button>
@@ -18,7 +18,7 @@
   {% if fornecedores %}
   <div class="rolagem">
   <table>
-    <thead><tr><th>Nome</th><th>Cidade</th><th>Contato</th><th>Condição padrão</th><th>Lembretes</th><th class="num">Invoices</th><th>Situação</th><th></th></tr></thead>
+    <thead><tr><th>Nome</th><th>País</th><th>Contato</th><th>Condição padrão</th><th>Lembretes</th><th class="num">Invoices</th><th>Situação</th><th></th></tr></thead>
     <tbody>
     {% for f in fornecedores %}
     {% if pode_editar %}
