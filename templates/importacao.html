@@ -81,9 +81,31 @@
 
 {% for grupo, rs in blocos %}
 {% if grupo %}
-<section class="grupo-consol">
+{% set k = chave_grupo(grupo) %}{% set gi = grupos_info[k] %}
+<section class="grupo-consol" id="grupo-{{ k|replace(' ', '_') }}">
   <div class="grupo-consol-topo"><span class="grupo-tag">Grupo de consolidação {{ grupo }}</span>
-    <small>{{ rs|length }} invoice{{ 's' if rs|length != 1 }} nesta lista · carga consolidada</small></div>
+    <small>{{ rs|length }} invoice{{ 's' if rs|length != 1 }} nesta lista{% if gi.qtd != rs|length %} ({{ gi.qtd }} em andamento no grupo){% endif %} · carga consolidada</small></div>
+  {% if editar %}
+  <details class="grupo-form">
+    <summary>Preencher Coleta e Embarque para todo o grupo</summary>
+    <form method="post" action="{{ url_for('importacao_grupo') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="grupo" value="{{ grupo }}">
+      <div class="grupo-campos">
+      {% for e in ['COLETA', 'EMBARQUE'] %}
+        <fieldset><legend>{{ TITULO_ETAPA[e] }}</legend>
+        {% for et, campo, rotulo in CAMPOS_GRUPO if et == e %}
+          <label>{{ rotulo }}<input type="date" name="{{ campo }}" value="{{ gi.valores[campo] or '' }}">
+            {% if campo in gi.diferentes %}<small class="erro-texto">Diferente entre os invoices</small>{% endif %}</label>
+        {% endfor %}
+        </fieldset>
+      {% endfor %}
+      </div>
+      <div class="linha-form"><button class="btn primario pequeno">Aplicar aos {{ gi.qtd }} invoice{{ 's' if gi.qtd != 1 }} do grupo</button>
+        <small>Os campos preenchidos são gravados em todos os invoices do grupo em andamento; campos vazios não alteram nada.
+          O banco de débito continua por invoice (Financeiro).{% if gi.incompletos %} Com cadastro incompleto (não recebem): {{ gi.incompletos|join(', ') }}.{% endif %}</small></div>
+    </form>
+  </details>
+  {% endif %}
   {% for r in rs %}{{ painel(r) }}{% endfor %}
 </section>
 {% else %}{{ painel(rs[0]) }}{% endif %}

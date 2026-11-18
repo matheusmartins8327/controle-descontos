@@ -683,3 +683,15 @@ tr.linha-atencao td:first-child { box-shadow: inset 3px 0 0 #e0a100; }
 .grupo-tag { font-weight: 700; color: var(--pri-escuro); font-size: .9rem; }
 .grupo-consol-topo small { color: var(--suave); }
 .grupo-mini { font-size: .72rem; font-weight: 600; padding: .05rem .45rem; border-radius: 999px; border: 1px solid var(--pri); color: var(--pri-escuro); white-space: nowrap; }
+
+/* v4.36: preencher Coleta e Embarque pelo grupo de consolidação */
+.grupo-form { background: var(--sup); border: 1px solid var(--borda); border-radius: var(--raio); margin: 0 0 .55rem; }
+.grupo-form > summary { cursor: pointer; padding: .5rem .8rem; font-weight: 600; color: var(--pri-escuro); font-size: .88rem; }
+.grupo-form form { padding: .2rem .8rem .7rem; }
+.grupo-campos { display: grid; grid-template-columns: 1fr 2fr; gap: .7rem; }
+.grupo-campos fieldset { border: 1px solid var(--borda); border-radius: var(--raio); padding: .4rem .7rem .6rem; margin: 0;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .5rem; }
+.grupo-campos legend { font-weight: 600; font-size: .85rem; padding: 0 .3rem; }
+.grupo-campos label { font-size: .82rem; display: flex; flex-direction: column; gap: .15rem; }
+.grupo-form .linha-form { margin-top: .6rem; display: flex; gap: .8rem; align-items: center; flex-wrap: wrap; }
+@media (max-width: 800px) { .grupo-campos { grid-template-columns: 1fr; } }

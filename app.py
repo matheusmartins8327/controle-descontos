@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.35"
+VERSAO = "4.36"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2019,6 +2019,7 @@ def importacao():
     lista.sort(key=lambda r: (ordem[r["situacao"]], r["data_prog_chegada"] or r["eta_planejado"] or "9999", r["id"]))
     contagem = {e: sum(1 for r in lista if r["situacao"] == e) for e in ETAPAS_IMPORTACAO}
     total = len(lista)
+    grupos_info = info_grupos(lista)
     etapa = request.args.get("etapa")
     if etapa in ETAPAS_IMPORTACAO:
         lista = [r for r in lista if r["situacao"] == etapa]
@@ -2026,7 +2027,8 @@ def importacao():
     if busca:
         lista = [r for r in lista if busca in r["numero"].lower() or busca in (r["fornecedor"] or "").lower()
                  or busca == (r["grupo_consolidacao"] or "").strip().lower()]
-    return render_template("importacao.html", lista=lista, blocos=agrupar_consolidacao(lista), contagem=contagem, total=total, etapa=etapa, busca=busca,
+    return render_template("importacao.html", lista=lista, blocos=agrupar_consolidacao(lista), grupos_info=grupos_info,
+                           CAMPOS_GRUPO=CAMPOS_GRUPO, chave_grupo=chave_grupo, contagem=contagem, total=total, etapa=etapa, busca=busca,
                            ETAPAS_IMPORTACAO=ETAPAS_IMPORTACAO, aberto=request.args.get("aberto", type=int),
                            editar=pode("importacao"))
 
@@ -2078,6 +2080,89 @@ def grupos_consolidacao():
 
 
 app.jinja_env.globals["grupos_consolidacao"] = grupos_consolidacao
+
+
+# Coleta e Embarque são iguais para todos os invoices de um grupo de consolidação (o banco de débito não entra)
+ETAPAS_GRUPO = ["COLETA", "EMBARQUE"]
+CAMPOS_GRUPO = [(e, campo, rotulo) for e in ETAPAS_GRUPO for campo, rotulo, _t, _o in CAMPOS_ETAPA[e]]
+
+
+def membros_grupo(lista, chave):
+    return [r for r in lista if chave and chave_grupo(r["grupo_consolidacao"]) == chave]
+
+
+def info_grupos(lista):
+    """{chave do grupo: {qtd, valores comuns de Coleta/Embarque (None se diferentes), diferentes}} considerando todos
+    os invoices do grupo em andamento (etapas 1 a 5), mesmo os escondidos por filtro/busca."""
+    info = {}
+    for k in {chave_grupo(r["grupo_consolidacao"]) for r in lista} - {""}:
+        ms = membros_grupo(lista, k)
+        recebem = [m for m in ms if m["situacao"] != "CRIACAO"] or ms  # cadastro incompleto não recebe as datas
+        valores, diferentes = {}, set()
+        for _e, campo, _rot in CAMPOS_GRUPO:
+            vs = {m[campo] for m in recebem}
+            valores[campo] = next(iter(vs)) if len(vs) == 1 else None
+            if len(vs) > 1:
+                diferentes.add(campo)
+        info[k] = {"qtd": len(ms), "valores": valores, "diferentes": diferentes,
+                   "incompletos": [m["numero"] for m in ms if m["situacao"] == "CRIACAO"]}
+    return info
+
+
+@app.route("/importacao/grupo", methods=["POST"])
+@login_obrigatorio
+def importacao_grupo():
+    """Preenche Coleta e Embarque de uma vez para todos os invoices do grupo de consolidação em andamento.
+    Só os campos preenchidos no formulário são aplicados (os vazios mantêm o que cada invoice já tem)."""
+    if not pode("importacao"):
+        abort(403)
+    chave = chave_grupo(request.form.get("grupo"))
+    volta = redirect(url_for("importacao") + "#grupo-" + re.sub(r"[^\w-]", "_", chave))
+    ativos = [r for r in todos_invoices() if r["situacao"] in ETAPAS_IMPORTACAO and not r["historico"]]
+    membros = membros_grupo(ativos, chave)
+    if not membros:
+        flash("Nenhum invoice em andamento neste grupo de consolidação.", "erro")
+        return volta
+    informados = {}
+    for _e, campo, rotulo in CAMPOS_GRUPO:
+        v = request.form.get(campo, "").strip()
+        if v:
+            if not data_valida(v):
+                flash(f"{rotulo}: data inválida. Nada foi salvo.", "erro")
+                return volta
+            informados[campo] = data_valida(v)
+    if not informados:
+        flash("Preencha ao menos uma data para aplicar ao grupo.", "erro")
+        return volta
+    atualizados, pulados = [], []
+    for r in membros:
+        if criacao_faltando(r):
+            pulados.append(r["numero"])
+            continue
+        mudou = False
+        for etapa in ETAPAS_GRUPO:
+            campos = {c for c, _r, _t, _o in CAMPOS_ETAPA[etapa]}
+            if not campos & informados.keys():
+                continue
+            form = {c: (informados.get(c) or r[c] or "") for c in campos}
+            if any(form[c] != (r[c] or "") for c in campos):
+                mudou = True
+            erro, _novos = aplicar_etapa(r, etapa, form)
+            if erro:
+                flash(f"{r['numero']}: {erro}", "erro")
+        if mudou:
+            registrar_evento(r["id"], "Coleta/Embarque preenchidos pelo grupo de consolidação",
+                             f"Grupo {r['grupo_consolidacao'].strip()}")
+            get_db().commit()
+            atualizados.append(r["numero"])
+    grupo = membros[0]["grupo_consolidacao"].strip()
+    if atualizados:
+        flash(f"Grupo {grupo}: Coleta/Embarque atualizados em {len(atualizados)} invoice(s): {', '.join(atualizados)}.", "ok")
+    else:
+        flash(f"Grupo {grupo}: nenhuma alteração (os invoices já tinham essas datas).", "ok")
+    if pulados:
+        flash(f"Não atualizados por estarem com o cadastro incompleto: {', '.join(pulados)}.", "erro")
+    return volta
 
 
 @app.route("/importacao/<int:id>", methods=["POST"])
