@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.41"
+VERSAO = "4.42"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -1608,7 +1608,9 @@ def ajuste_v430_cadastro():
 
 def salvar_invoice_assinado_form(iid):
     """Campo 'Invoice assinado' da tela de cadastro: guarda o arquivo enviado no sistema."""
-    arquivos = [f for f in request.files.getlist("invoice_arquivo") if f and f.filename]
+    # v4.42: até dois arquivos na criação (o primeiro obrigatório para concluir o cadastro, o segundo opcional)
+    arquivos = [f for campo in ("invoice_arquivo", "invoice_arquivo2") for f in request.files.getlist(campo)
+                if f and f.filename]
     if not arquivos:
         return
     salvos, erros = salvar_arquivos("invoice", iid, arquivos)

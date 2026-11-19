@@ -722,3 +722,11 @@ th.col-etapa { min-width: 54px; max-width: 70px; }
 /* v4.39: mais uma aba (Pendências): barra de abas um pouco mais larga e ícones só em telas grandes */
 .abas-inner { max-width: 1360px; }
 @media (max-width: 1450px) { .abas a.aba svg { display: none; } }
+
+/* v4.42: dois arquivos do invoice assinado no cadastro */
+.campo-invoice-arquivos { display: flex; flex-direction: column; gap: .35rem; }
+.campo-invoice-arquivos .rotulo-campo { font-size: .85rem; color: var(--suave); }
+.campo-invoice-arquivos { margin-bottom: .8rem; }
+.campo-invoice-arquivos .grade-2 label { margin-bottom: 0; }
+.campo-invoice-arquivos .grade-2 { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
+@media (max-width: 700px) { .campo-invoice-arquivos .grade-2 { grid-template-columns: 1fr; } }

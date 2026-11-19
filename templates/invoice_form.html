@@ -18,13 +18,18 @@
     </label>
     <label>Data de assinatura do invoice *<input type="date" name="data_assinatura" value="{{ d.data_assinatura or '' }}"></label>
     {% set ja_assinado = (arquivos_invoice(id) + documentos_invoice(id)) if editando else [] %}
-    <label class="largo">Invoice assinado (arquivo) *
-      {% if ja_assinado %}<small class="bloco-linha">Já anexado: <strong>{{ ja_assinado[0].nome or ja_assinado[0].caminho }}</strong> — para trocar ou incluir outro, use a tela do invoice.</small>
+    <div class="largo campo-invoice-arquivos">
+      <span class="rotulo-campo">Invoice assinado (arquivos)</span>
+      {% if ja_assinado %}<small class="bloco-linha">Já anexado: {% for a in ja_assinado %}<strong>{{ a.nome or a.caminho }}</strong>{{ ', ' if not loop.last }}{% endfor %}.
+        Para trocar ou incluir outros, use a tela do invoice.</small>
       {% else %}
-      <input type="file" name="invoice_arquivo" id="invoice-arquivo">
-      <small>PDF ou imagem, até {{ ANEXO_MAX_MB }} MB. Obrigatório para concluir o cadastro (base do vencimento da parcela antecipada).
-        Se o formulário voltar com algum erro, selecione o arquivo de novo.</small>{% endif %}
-    </label>
+      <div class="grade-2">
+        <label>Arquivo 1 *<input type="file" name="invoice_arquivo" id="invoice-arquivo"></label>
+        <label>Arquivo 2 <small>(opcional)</small><input type="file" name="invoice_arquivo2" id="invoice-arquivo2"></label>
+      </div>
+      <small>PDF ou imagem, até {{ ANEXO_MAX_MB }} MB cada. O primeiro arquivo é obrigatório para concluir o cadastro (base do vencimento da
+        parcela antecipada); o segundo é opcional (ex.: packing list, outra página). Se o formulário voltar com algum erro, selecione os arquivos de novo.</small>{% endif %}
+    </div>
     <label>Agente de carga<input name="agente_carga" value="{{ d.agente_carga or '' }}"></label>
     <label>Despachante<input name="despachante" value="{{ d.despachante or '' }}"></label>
     {% set grupos = grupos_consolidacao() %}
