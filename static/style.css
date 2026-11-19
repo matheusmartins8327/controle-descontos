@@ -730,3 +730,22 @@ th.col-etapa { min-width: 54px; max-width: 70px; }
 .campo-invoice-arquivos .grade-2 label { margin-bottom: 0; }
 .campo-invoice-arquivos .grade-2 { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
 @media (max-width: 700px) { .campo-invoice-arquivos .grade-2 { grid-template-columns: 1fr; } }
+
+/* v4.44: fator de importação e dados da DUIMP */
+.fator-valor { display: inline-block; margin-left: .5rem; padding: .1rem .6rem; border-radius: 99px; font-size: 1.05rem; font-weight: 700; }
+.fator-valor.final { background: var(--ok-claro); color: var(--ok); }
+.fator-valor.provisorio { background: #fff3c4; color: #6b5200; }
+.fator-grade { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+@media (max-width: 900px) { .fator-grade { grid-template-columns: 1fr; } }
+.fator-grade h3 { margin: .3rem 0 .4rem; font-size: .95rem; }
+.tabela-fator td, .tabela-fator th { padding: .3rem .5rem; }
+.tabela-fator tr.recuperavel td { color: var(--suave); }
+.tabela-fator tfoot th { font-weight: 600; }
+.aviso-fator { margin: .4rem 0 0; font-size: .82rem; color: #8a5a00; }
+.aviso-fator::before { content: "⚠ "; }
+.tabela-duimp input { width: 140px; }
+.ler-pdf { gap: .5rem; flex-wrap: wrap; margin-bottom: .6rem; }
+select.tipo-antigo { border-color: #e0a800; background: #fffbea; }
+.fator-final { font-weight: 700; color: var(--ok); }
+.fator-prov { font-style: italic; color: var(--suave); }
+.duimp-aviso { background: #fff8e1; border: 1px solid #f3d27a; color: #6b5200; border-radius: var(--raio); padding: .55rem .8rem; margin: 0 0 .6rem; font-size: .88rem; }

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block titulo %}DUIMP · {{ r.numero }}{% endblock %}
+{% block conteudo %}
+{% set m = r.moeda %}
+<p class="voltar"><a href="{{ url_for('invoice_detalhe', id=r.id) }}#fator">← {{ r.fornecedor }} · {{ r.numero }}</a></p>
+<h1>Dados da DUIMP</h1>
+<p class="sub">{% if lidos %}Valores lidos do PDF da DUIMP. <strong>Confira cada campo</strong> (corrija o que for preciso) e salve.
+  {% elif atual %}Dados já conferidos em {{ atual.conferido_em|data }}. Corrija se necessário.
+  {% else %}Preencha os dados da DUIMP (ou leia de um PDF anexado).{% endif %}
+  Eles são a base do <strong>fator de importação</strong>: a taxa da DUIMP é a da nacionalização e os tributos viram lançamentos financeiros do invoice.</p>
+
+{% if arquivos_pdf %}
+<div class="linha-form ler-pdf">
+  <span>Ler de um PDF da DUIMP anexado:</span>
+  {% for a in arquivos_pdf %}<a class="btn pequeno {{ 'primario' if arquivo_id == a.id and lidos }}" href="{{ url_for('duimp_dados', id=r.id, arquivo=a.id) }}">{{ a.nome }}</a>
+  <a class="btn pequeno link" href="{{ url_for('arquivo_ver', aid=a.id) }}" target="_blank" rel="noopener">ver</a>{% endfor %}
+</div>
+{% endif %}
+
+{% for a in avisos %}<div class="duimp-aviso">{{ a }}</div>{% endfor %}
+
+<form method="post" class="bloco">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="arquivo_id" value="{{ arquivo_id or '' }}">
+  <h2>Identificação e câmbio</h2>
+  <div class="grade">
+    <label>Número da DUIMP<input name="numero" value="{{ d.numero or '' }}" placeholder="26BR0000000000-0"></label>
+    <label>Data de registro<input type="date" name="data_registro" value="{{ d.data_registro or '' }}"></label>
+    <label>Moeda<select name="moeda">{% for k in MOEDAS %}<option value="{{ k }}" {{ 'selected' if (d.moeda or m) == k }}>{{ k }}</option>{% endfor %}</select></label>
+    <label>Taxa de câmbio da DUIMP {{ '*' if m != 'BRL' }}<input name="taxa_cambio" inputmode="decimal" value="{{ d.taxa_cambio|num(4) if d.taxa_cambio else '' }}"></label>
+    <label>FOB na moeda<input name="fob_moeda" inputmode="decimal" value="{{ d.fob_moeda|num if d.fob_moeda is not none else '' }}">
+      <small>Valor final do invoice no sistema: {{ r.valor_invoice|moeda(m) }}</small></label>
+    <label>FOB em R$ (DUIMP)<input name="fob_brl" inputmode="decimal" value="{{ d.fob_brl|num if d.fob_brl is not none else '' }}"></label>
+    <label>Valor aduaneiro / CIF (R$)<input name="valor_aduaneiro" inputmode="decimal" value="{{ d.valor_aduaneiro|num if d.valor_aduaneiro is not none else '' }}"></label>
+  </div>
+
+  <h2>Tributos e valores em R$ <small>· viram lançamentos financeiros do invoice</small></h2>
+  <div class="rolagem">
+  <table class="tabela-duimp">
+    <thead><tr><th>Categoria</th><th class="num">Valor da DUIMP (R$)</th><th>Lançamento já existente</th><th>O que fazer</th></tr></thead>
+    <tbody>
+    {% for l in linhas %}
+      <tr>
+        <td>{{ l.categoria }} <small class="bloco-linha">{{ 'recuperável (não entra no fator)' if l.recuperavel else 'entra no fator' }}</small></td>
+        <td class="num"><input name="{{ l.campo }}" inputmode="decimal" class="num" value="{{ l.valor|num if l.valor is not none else '' }}" placeholder="—"></td>
+        <td>{% for x in l.existentes %}<div>{{ x.valor|moeda('BRL') if x.valor is not none else 'sem valor' }} <small>{{ x.data_pagamento|data if x.data_pagamento else '' }}{{ ' · lançado no MEGA' if x.lancado_erp }}</small></div>{% else %}<small>—</small>{% endfor %}</td>
+        <td><select name="acao_{{ l.campo }}">
+          {% if not l.existentes %}<option value="criar" {{ 'selected' if l.padrao == 'criar' }}>Criar lançamento</option>{% endif %}
+          {% if l.existentes|length == 1 %}<option value="atualizar" {{ 'selected' if l.padrao == 'atualizar' }}>Atualizar o valor do lançamento</option>{% endif %}
+          {% if l.existentes|length > 1 %}<option value="criar">Criar mais um lançamento</option>{% endif %}
+          <option value="nada" {{ 'selected' if l.padrao == 'nada' }}>Não mexer nos lançamentos</option>
+        </select>
+        {% if l.campo == 'frete_brl' %}<small class="bloco-linha">O frete da DUIMP é só o declarado; a fatura do agente (com as taxas) pode ser lançada em vez dele.</small>{% endif %}
+        {% if l.existentes|length == 1 and l.existentes[0].lancado_erp %}<small class="bloco-linha">Se atualizar, volta para conferência do Financeiro no MEGA.</small>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="sub">Os demais custos (armazenagem, fretes nacionais, despachante, AFRMM, LI/LPCO…) são lançados na aba
+    <a href="{{ url_for('lancamentos', q=r.numero) }}">Lançamentos Financeiros</a>, escolhendo a categoria.</p>
+  <button class="btn primario">Salvar dados da DUIMP</button>
+  <a class="btn link" href="{{ url_for('invoice_detalhe', id=r.id) }}#fator">Cancelar</a>
+</form>
+{% endblock %}

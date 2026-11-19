@@ -42,7 +42,7 @@
   <table class="tabela-filtro" data-rotulo="invoices">
     <thead><tr><th data-filtro="lista">Fornecedor</th><th data-filtro="texto">Invoice</th><th class="num" data-filtro="lista" data-tipo="numero">Valor</th>
       {% for etp, curto in ETAPAS_PAINEL %}<th class="col-etapa" data-filtro="nenhum" title="{{ etp }}">{{ curto }}</th>{% endfor %}
-      <th data-filtro="lista">Situação</th></tr></thead>
+      <th data-filtro="lista">Situação</th><th class="num" data-filtro="nenhum" data-tipo="numero" title="Fator de importação (provisório em itálico)">Fator</th></tr></thead>
     <tbody>
     {% for r in invoices %}
       <tr class="clicavel {{ 'cancelado' if r.situacao == 'CANCELADO' }}" onclick="location='{{ url_for('invoice_detalhe', id=r.id) }}'">
@@ -54,6 +54,7 @@
           <span class="marca">{{ {'feito': '✓', 'atual': '●', 'pendente': '', 'na': '–'}[estado] }}</span>{% if estado == 'feito' and data %}<small>{{ (data|data)[:5] }}</small>{% endif %}</td>
         {% endfor %}
         <td data-filtro="{{ SITUACOES[r.situacao][0] if r.situacao in SITUACOES else r.situacao }}">{% with sit=r.situacao %}{% include "_situacao.html" %}{% endwith %}</td>
+        <td class="num" data-ordem="{{ r.fator or '' }}">{% if r.fator %}<span class="{{ 'fator-final' if r.fator_final else 'fator-prov' }}" title="{{ 'Fator final' if r.fator_final else 'Fator provisório' }}">{{ r.fator|num(2) }}</span>{% else %}<small>—</small>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>

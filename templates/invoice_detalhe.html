@@ -180,6 +180,7 @@
           <div class="campo-arquivo arquivos"><span class="rotulo-arq">DUIMP (arquivo)</span>
             {{ arquivos(r.duimp_arquivos, imp, 'DUIMP') }}{{ docs_antigos(r.duimp_docs) }}
             {{ botao_anexar('f-duimp-' ~ r.id, 'Anexar DUIMP' if not r.duimp_arquivos else 'Anexar outro') }}
+            {% if r.duimp_arquivos %}<a class="btn pequeno link" href="{{ url_for('invoice_detalhe', id=r.id) }}#fator">Dados da DUIMP / fator</a>{% endif %}
           </div>
           {% endif %}
         {% endfor %}
@@ -456,6 +457,51 @@
     <button class="btn primario">Registrar pagamento</button>
   </form>
   {% endif %}
+</section>
+
+{# ---------- fator de importação (v4.44) ---------- #}
+{% set fi = fator %}
+<section class="bloco" id="fator">
+  <h2>Fator de importação {% if fi.fator %}<span class="fator-valor {{ 'final' if fi.final else 'provisorio' }}">{{ fi.fator|num(4) }}</span>
+    <small>{{ 'final' if fi.final else 'provisório' }}</small>{% endif %}</h2>
+  <p class="sub">Fator = 1 + custos não recuperáveis ÷ FOB em R$. FOB = valor final do invoice; impostos recuperáveis (IPI, PIS, COFINS, ICMS) não entram.</p>
+  <div class="fator-grade">
+    <div>
+      <h3>FOB</h3>
+      <dl class="dl-colunas">
+        <dt>FOB final ({{ m }})</dt><dd>{{ fi.fob|moeda(m) }}</dd>
+        <dt>Câmbio do FOB</dt><dd>{{ fi.taxa|num(4) if fi.taxa else '—' }} <small>{{ fi.origem_taxa or 'sem pagamento com cotação nem DUIMP conferida' }}</small></dd>
+        <dt>FOB em R$</dt><dd><strong>{{ fi.fob_brl|moeda('BRL') if fi.fob_brl else '—' }}</strong>
+          {% if fi.fob_brl_duimp and fi.fob_brl_duimp != fi.fob_brl %}<small class="bloco-linha">pela taxa da DUIMP: {{ fi.fob_brl_duimp|moeda('BRL') }}</small>{% endif %}</dd>
+      </dl>
+      <h3>DUIMP</h3>
+      {% if fi.duimp %}
+      <dl class="dl-colunas">
+        <dt>Número</dt><dd>{{ fi.duimp.numero or '—' }} <small>registro {{ fi.duimp.data_registro|data }}</small></dd>
+        <dt>Taxa da DUIMP</dt><dd>{{ fi.duimp.taxa_cambio|num(4) if fi.duimp.taxa_cambio else '—' }}</dd>
+        <dt>Conferido</dt><dd><small>{{ nomes.get(fi.duimp.conferido_por, '—') }} em {{ fi.duimp.conferido_em|data }}</small></dd>
+      </dl>
+      {% else %}<p class="vazio">Dados da DUIMP ainda não conferidos.</p>{% endif %}
+      {% if imp %}<a class="btn pequeno {{ 'primario' if not fi.duimp }}" href="{{ url_for('duimp_dados', id=r.id, arquivo=fi.pdf_id if not fi.duimp else None) }}">{{ 'Conferir dados da DUIMP' if not fi.duimp else 'Corrigir dados da DUIMP' }}</a>{% endif %}
+    </div>
+    <div>
+      <h3>Custos <small>· lançamentos financeiros (R$)</small></h3>
+      <table class="tabela-fator">
+        <tbody>
+        {% for cat, recup, valor in fi.categorias %}{% if valor %}
+          <tr class="{{ 'recuperavel' if recup }}"><td>{{ cat }}{% if recup %} <small>(recuperável)</small>{% endif %}</td><td class="num">{{ valor|moeda('BRL') }}</td></tr>
+        {% endif %}{% endfor %}
+        </tbody>
+        <tfoot>
+          <tr><th>Custos não recuperáveis</th><th class="num">{{ fi.nao_rec|moeda('BRL') }}{% if fi.pct_nao_rec is not none %} <small>({{ (fi.pct_nao_rec * 100)|num(1) }}% do FOB)</small>{% endif %}</th></tr>
+          <tr><th>Impostos recuperáveis</th><th class="num">{{ fi.rec|moeda('BRL') }}{% if fi.pct_rec is not none %} <small>({{ (fi.pct_rec * 100)|num(1) }}% do FOB)</small>{% endif %}</th></tr>
+          <tr><th>Total geral (FOB + custos)</th><th class="num">{{ fi.total_brl|moeda('BRL') }}</th></tr>
+        </tfoot>
+      </table>
+      <p><a class="btn pequeno link" href="{{ url_for('lancamentos', q=r.numero, aberto=r.id) }}#inv-{{ r.id }}">Lançamentos Financeiros deste invoice</a></p>
+    </div>
+  </div>
+  {% for a in fi.avisos %}<p class="aviso-fator">{{ a }}</p>{% endfor %}
 </section>
 
 <section class="bloco">

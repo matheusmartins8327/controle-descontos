@@ -75,7 +75,10 @@
       {% for l in p.lancamentos %}
         <tr class="{{ 'lancado' if l.lancado_erp }} {{ 'conferir' if l.alterado_apos_erp and not l.lancado_erp }}">
           {% if editar %}
-          <td><input form="f{{ l.id }}" name="tipo" value="{{ l.tipo or '' }}" list="tipos-lancamento" placeholder="Ex.: COFINS"></td>
+          <td><select form="f{{ l.id }}" name="tipo" class="{{ 'tipo-antigo' if l.tipo and l.tipo not in sugestoes }}">
+            <option value="">—</option>
+            {% if l.tipo and l.tipo not in sugestoes %}<option value="{{ l.tipo }}" selected>{{ l.tipo }} (antigo: escolha uma categoria)</option>{% endif %}
+            {% for t in sugestoes %}<option value="{{ t }}" {{ 'selected' if l.tipo == t }}>{{ t }}</option>{% endfor %}</select></td>
           <td><input form="f{{ l.id }}" name="valor" class="num" inputmode="decimal" value="{{ l.valor|num if l.valor is not none else '' }}" placeholder="0,00"></td>
           <td><input form="f{{ l.id }}" type="date" name="data_pagamento" value="{{ l.data_pagamento or '' }}"></td>
           {% else %}
@@ -134,7 +137,7 @@
       {% endfor %}
       {% if editar %}
         <tr class="linha-nova">
-          <td><input form="n{{ inv.id }}" name="tipo" list="tipos-lancamento" placeholder="Ex.: COFINS, ICMS, PIS…"></td>
+          <td><select form="n{{ inv.id }}" name="tipo"><option value="">Categoria…</option>{% for t in sugestoes %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select></td>
           <td><input form="n{{ inv.id }}" name="valor" class="num" inputmode="decimal" placeholder="0,00"></td>
           <td><input form="n{{ inv.id }}" type="date" name="data_pagamento"></td>
           <td><small class="dica-arq">Anexe depois de adicionar</small></td><td></td><td></td>

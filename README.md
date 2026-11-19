@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.43)
+# Controle de Invoices e Descontos (v4.44)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -213,6 +213,23 @@ mostrados na própria tela; os demais tipos mostram só os dados do arquivo), co
 - Os caminhos na pasta da rede cadastrados nas versões 4.27 a 4.30 continuam aparecendo (somente consulta, com **Copiar**),
   mas não geram mais pendência de "arquivo não encontrado".
 - O espaço ocupado pelos anexos aparece em **Sistema**.
+
+### Fator de importação (v4.44)
+**Fator = 1 + custos não recuperáveis ÷ FOB em R$** (mesma conta da planilha de Follow Up de Importação).
+- **FOB**: valor final do invoice (depois das deduções de desconto), convertido pelo **câmbio dos pagamentos** registrados
+  (média ponderada das cotações). Enquanto não há pagamento com cotação, usa a **taxa da DUIMP** como estimativa.
+- **Custos**: lançamentos financeiros do invoice, por **categoria fixa** (aba Lançamentos Financeiros): II, Taxa Siscomex, frete
+  internacional + taxas, AFRMM, armazenagens, fretes de remoção e nacional, GRU/Anuência, LI/LPCO, sindicato, honorários e ISS do
+  despachante, multa. **IPI, PIS, COFINS e ICMS são recuperáveis** e não entram no fator (aparecem como % do FOB).
+- **DUIMP**: ao anexar o PDF da DUIMP, o sistema lê número, data de registro, taxa de câmbio, FOB, frete, valor aduaneiro e os
+  tributos e abre a tela **Dados da DUIMP** para a Importação conferir. Ao salvar, os tributos viram lançamentos financeiros (sem
+  duplicar: se já existir, oferece atualizar). Os tributos federais vêm do "Demonstrativo dos Débitos" (extrato completo da
+  DUIMP); taxa, frete e ICMS vêm do texto do despachante (modelos M3 e Fischer/FER já reconhecidos). O que não for lido é digitado.
+- O fator aparece na seção **Fator de importação** do invoice (com o detalhamento) e na coluna **Fator** do Painel: em negrito
+  verde quando final (invoice concluído, DUIMP conferida, pagamentos com cotação e todos os custos com categoria), em itálico
+  quando provisório.
+- Lançamentos antigos com tipo livre foram convertidos para a categoria correspondente quando possível; os demais (ex.:
+  Capatazia, Seguro) ficam marcados para escolher a categoria e não entram no fator até isso.
 
 ### Relatório de inspeção obrigatório (v4.41)
 - Ao registrar a inspeção **com desconto**, é obrigatório anexar o **relatório de inspeção em Excel** (.xlsx, .xlsm ou .xls);

@@ -25,6 +25,7 @@ import ssl
 import socket
 import sqlite3
 import subprocess
+import sys
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -34,6 +35,8 @@ from markupsafe import escape
 
 from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
+
+import duimp as leitor_duimp  # leitura do extrato da DUIMP (PDF) para o fator de importação
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,7 +49,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.43"
+VERSAO = "4.44"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -282,6 +285,22 @@ CREATE TABLE IF NOT EXISTS deducoes_avulsas (
     criado_em TEXT NOT NULL,
     UNIQUE (avulso_id, invoice_id)
 );
+-- versão 4.44: dados da DUIMP de cada invoice (lidos do PDF e conferidos pela Importação) — base do fator de importação
+CREATE TABLE IF NOT EXISTS duimp_dados (
+    invoice_id INTEGER PRIMARY KEY REFERENCES invoices(id),
+    numero TEXT,
+    data_registro TEXT,
+    moeda TEXT,
+    taxa_cambio REAL,                     -- taxa da DUIMP (nacionalização)
+    fob_moeda REAL,
+    fob_brl REAL,
+    frete_brl REAL,
+    valor_aduaneiro REAL,
+    ii REAL, ipi REAL, pis REAL, cofins REAL, icms REAL, taxa_siscomex REAL, multa REAL,
+    arquivo_id INTEGER,                   -- PDF de onde os dados foram lidos (vazio = digitado)
+    conferido_por INTEGER REFERENCES usuarios(id),
+    conferido_em TEXT
+);
 -- Pagamentos registrados pelo Financeiro
 CREATE TABLE IF NOT EXISTS pagamentos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -493,6 +512,11 @@ def init_db():
             db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v443_duimp', '1')")
         if "cotacao" not in {r[1] for r in db.execute("PRAGMA table_info(pagamentos)")}:
             db.execute("ALTER TABLE pagamentos ADD COLUMN cotacao REAL")  # v4.43: R$ por unidade da moeda no pagamento
+        # versão 4.44: tipos livres dos lançamentos que correspondem a uma categoria de custo passam a usar o nome dela
+        if db.execute("SELECT 1 FROM configuracoes WHERE chave = 'v444_categorias'").fetchone() is None:
+            for antigo, novo in MAPA_TIPOS_ANTIGOS.items():
+                db.execute("UPDATE lancamentos SET tipo = ? WHERE lower(trim(tipo)) = ?", (novo, antigo))
+            db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v444_categorias', '1')")
         # versão 4.22: invoices/pagamentos lançados pela carga de histórico (dados do passado)
         if "historico" not in {r[1] for r in db.execute("PRAGMA table_info(pagamentos)")}:
             db.execute("ALTER TABLE pagamentos ADD COLUMN historico INTEGER NOT NULL DEFAULT 0")
@@ -1315,6 +1339,7 @@ def painel():
     fornecedores = get_db().execute("SELECT id, nome FROM fornecedores ORDER BY nome").fetchall()
     for r in lista:
         r["progresso"] = progresso_fluxo(r)
+        r["fator"], r["fator_final"] = fator_resumido(r["id"], r) if r["situacao"] != "CANCELADO" else (None, False)
     return render_template("painel.html", invoices=lista, contagem=contagem, fornecedores=fornecedores,
                            filtro_sit=filtro_sit, filtro_forn=filtro_forn, filtro_moeda=filtro_moeda, busca=busca,
                            hoje=hj, ETAPAS_PAINEL=ETAPAS_PAINEL)
@@ -2065,10 +2090,11 @@ def invoice_detalhe(id):
         "SELECT v.*, u.nome AS usuario FROM revisoes_desconto v LEFT JOIN usuarios u ON u.id = v.usuario_id"
         " WHERE v.desconto_id = ? ORDER BY v.id", (r["desconto"]["id"],)).fetchall() if r["desconto"] else []
     r["relatorios"] = relatorios_desconto(r["desconto"]["id"]) if r["desconto"] else []
+    fator = fator_importacao(r)
     r["relatorios_revisao"] = arquivos_de("revisao", [v["id"] for v in revisoes])
     disponiveis = descontos_disponiveis(r["fornecedor_id"], r["moeda"], excluir_invoice_id=id)
     nomes = {u["id"]: u["nome"] for u in db.execute("SELECT id, nome FROM usuarios")}
-    return render_template("invoice_detalhe.html", r=r, eventos=eventos, revisoes=revisoes, disponiveis=disponiveis,
+    return render_template("invoice_detalhe.html", r=r, eventos=eventos, revisoes=revisoes, disponiveis=disponiveis, fator=fator,
                            nomes=nomes, hoje=hoje())
 
 
@@ -2995,6 +3021,7 @@ def excluir_invoice(iid):
                " (SELECT id FROM pagamentos WHERE invoice_id = ?)) OR (origem = 'lancamento' AND origem_id IN"
                " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid))
     db.execute("DELETE FROM deducoes_avulsas WHERE invoice_id = ?", (iid,))
+    db.execute("DELETE FROM duimp_dados WHERE invoice_id = ?", (iid,))
     db.execute("DELETE FROM deducoes WHERE invoice_id = ? OR desconto_id IN (SELECT id FROM descontos WHERE invoice_id = ?)",
                (iid, iid))
     db.execute("DELETE FROM revisoes_desconto WHERE desconto_id IN (SELECT id FROM descontos WHERE invoice_id = ?)", (iid,))
@@ -3339,10 +3366,20 @@ def sistema():
             return redirect(url_for("sistema"))
         backup_banco("-antes-atualizacao")
         # o servidor não deve ter alterações locais no código: fica idêntico ao GitHub
+        req_antes = git("rev-parse", "HEAD:requirements.txt")[1]
         cod, saida = git("reset", "--hard", "origin/main")
         if cod != 0:
             flash(f"Falha ao atualizar: {saida}", "erro")
             return redirect(url_for("sistema"))
+        if git("rev-parse", "HEAD:requirements.txt")[1] != req_antes:  # bibliotecas novas: instala antes de reiniciar
+            cmd = [sys.executable, "-m", "pip", "install", "-q", "--disable-pip-version-check", "-r",
+                   os.path.join(BASE_DIR, "requirements.txt")]
+            if sys.prefix == getattr(sys, "base_prefix", sys.prefix):
+                cmd.insert(4, "--user")
+            try:
+                subprocess.run(cmd, capture_output=True, timeout=300)
+            except Exception:
+                app.logger.exception("Falha ao instalar as dependências")
         wsgi = arquivo_wsgi()
         if wsgi:
             os.utime(wsgi, None)
@@ -3367,7 +3404,7 @@ def sistema():
 
 # Tabelas com dados de invoices (na ordem de exclusão). Usuários, fornecedores, configurações (e-mails,
 # destinatários, agendador) e a conta de envio são mantidos.
-TABELAS_INVOICES = ["revisoes_desconto", "deducoes", "deducoes_avulsas", "descontos", "pagamentos", "invoice_itens", "condicao_parcelas",
+TABELAS_INVOICES = ["duimp_dados", "revisoes_desconto", "deducoes", "deducoes_avulsas", "descontos", "pagamentos", "invoice_itens", "condicao_parcelas",
                     "anexos", "lancamento_anexos", "lancamentos", "eventos", "notificacoes_estado", "invoices"]
 
 
@@ -3445,9 +3482,24 @@ def sistema_apagar_invoices():
 # armazenagem...) que o Financeiro deve lançar no MEGA; o Financeiro marca cada um quando já lançou no MEGA.
 # Todos os campos são opcionais; não geram pendências nem e-mails.
 # ---------------------------------------------------------------------------
-TIPOS_LANCAMENTO_SUGERIDOS = ["II", "IPI", "PIS", "COFINS", "ICMS", "Taxa Siscomex", "AFRMM", "Armazenagem",
-                              "Capatazia", "Frete internacional", "Frete rodoviário", "Seguro", "Despachante",
-                              "Honorários", "Outros"]
+# v4.44: categorias fixas de custo (base do fator de importação). True = imposto recuperável (não entra no fator).
+CATEGORIAS_CUSTO = [
+    ("II", False), ("IPI", True), ("PIS", True), ("COFINS", True), ("ICMS", True), ("Taxa Siscomex", False),
+    ("Frete internacional + taxas", False), ("Marinha Mercante (AFRMM)", False),
+    ("Armazenagem zona primária", False), ("Armazenagem zona secundária", False),
+    ("Frete remoção (zona primária → secundária)", False), ("Frete nacional", False), ("GRU / Anuência", False),
+    ("Emissão de LI / LPCO", False), ("Sindicato dos despachantes", False), ("Honorários do despachante", False),
+    ("ISS despachante", False), ("Multa / taxas adicionais", False),
+]
+NOMES_CATEGORIA = [c for c, _r in CATEGORIAS_CUSTO]
+RECUPERAVEL = dict(CATEGORIAS_CUSTO)
+# tipos digitados livremente antes da v4.44 que correspondem a uma categoria (em minúsculas)
+MAPA_TIPOS_ANTIGOS = {"ii": "II", "ipi": "IPI", "pis": "PIS", "pis/pasep": "PIS", "cofins": "COFINS", "icms": "ICMS",
+                      "taxa siscomex": "Taxa Siscomex", "siscomex": "Taxa Siscomex", "afrmm": "Marinha Mercante (AFRMM)",
+                      "marinha mercante": "Marinha Mercante (AFRMM)", "frete internacional": "Frete internacional + taxas",
+                      "frete rodoviário": "Frete nacional", "frete nacional": "Frete nacional",
+                      "despachante": "Honorários do despachante", "honorários": "Honorários do despachante",
+                      "multa": "Multa / taxas adicionais"}
 
 
 def pode_lancar():
@@ -3460,9 +3512,12 @@ def pode_marcar_erp():
     return pode("financeiro")
 
 
-def ler_lancamento(f):
-    """Lê um lançamento do formulário. Tudo é opcional, mas a linha não pode ficar totalmente vazia."""
+def ler_lancamento(f, tipo_atual=None):
+    """Lê um lançamento do formulário. Tudo é opcional, mas a linha não pode ficar totalmente vazia.
+    O tipo é uma das categorias fixas (v4.44); um tipo antigo, fora da lista, só é aceito se não mudou."""
     tipo = " ".join(f.get("tipo", "").split())[:80]
+    if tipo and tipo not in NOMES_CATEGORIA and tipo != (tipo_atual or ""):
+        return {"tipo": tipo, "valor": None, "data_pagamento": None}, ["Escolha o tipo na lista de categorias."]
     valor_txt = f.get("valor", "").strip()
     valor = parse_num(valor_txt) if valor_txt else None
     data_txt = f.get("data_pagamento", "").strip()
@@ -3529,9 +3584,7 @@ def paineis_lancamentos(args):
 @login_obrigatorio
 def lancamentos():
     paineis = paineis_lancamentos(request.args)
-    usados = [r[0] for r in get_db().execute(
-        "SELECT tipo FROM lancamentos WHERE tipo <> '' GROUP BY lower(tipo) ORDER BY COUNT(*) DESC")]
-    sugestoes = list(dict.fromkeys(usados + TIPOS_LANCAMENTO_SUGERIDOS))
+    sugestoes = NOMES_CATEGORIA
     total = round(sum(p["total"] for p in paineis), 2)
     qtd = sum(len(p["lancamentos"]) for p in paineis)
     pend_qtd = sum(p["pendentes_erp"] for p in paineis)
@@ -3578,7 +3631,7 @@ def lancamento_editar(lid):
     antigo = db.execute("SELECT * FROM lancamentos WHERE id = ?", (lid,)).fetchone()
     if antigo is None:
         abort(404)
-    dados, erros = ler_lancamento(request.form)
+    dados, erros = ler_lancamento(request.form, antigo["tipo"])
     if erros:
         for e in erros:
             flash(e, "erro")
@@ -3820,7 +3873,223 @@ def duimp_anexar(id):
             flash("DUIMP anexada: " + ", ".join(salvos) + ".", "ok")
         for e in erros:
             flash(e, "erro")
+        pdf = get_db().execute("SELECT id FROM arquivos WHERE origem = 'duimp' AND origem_id = ? AND lower(nome) LIKE '%.pdf'"
+                               " ORDER BY id DESC", (id,)).fetchone() if salvos else None
+        if pdf and not request.form.get("sem_leitura"):
+            return redirect(url_for("duimp_dados", id=id, arquivo=pdf["id"]))
     return redirect(url_for("invoice_detalhe", id=r["id"]) + "#etapa-DESEMBARACO")
+
+
+# ---------------------------------------------------------------------------
+# Fator de importação (v4.44)
+# Fator = (FOB em R$ + custos não recuperáveis) ÷ FOB em R$ = 1 + custos não recuperáveis ÷ FOB em R$
+# - FOB: valor final do invoice (depois das deduções), na moeda; em R$ pelo câmbio dos pagamentos registrados
+#   (média ponderada das cotações). Sem pagamento com cotação, usa a taxa da DUIMP (estimativa).
+# - Custos: lançamentos financeiros do invoice por categoria (recuperáveis: IPI, PIS, COFINS, ICMS — não entram).
+# - Os tributos da DUIMP viram lançamentos na conferência dos dados da DUIMP (sem duplicar).
+# ---------------------------------------------------------------------------
+CAMPOS_DUIMP_CATEGORIA = [("ii", "II"), ("ipi", "IPI"), ("pis", "PIS"), ("cofins", "COFINS"), ("icms", "ICMS"),
+                          ("taxa_siscomex", "Taxa Siscomex"), ("frete_brl", "Frete internacional + taxas"),
+                          ("multa", "Multa / taxas adicionais")]
+
+
+def garantir_pypdf():
+    """A leitura do PDF usa a biblioteca pypdf. Se o servidor ainda não a tem (atualização feita por uma versão
+    antiga), instala uma vez, automaticamente."""
+    try:
+        import pypdf  # noqa: F401
+        return True
+    except ImportError:
+        pass
+    cmd = [sys.executable, "-m", "pip", "install", "-q", "--disable-pip-version-check", "pypdf>=4"]
+    if sys.prefix == getattr(sys, "base_prefix", sys.prefix):  # fora de ambiente virtual (PythonAnywhere)
+        cmd.insert(4, "--user")
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=180)
+        import site, importlib
+        importlib.invalidate_caches()
+        if site.getusersitepackages() not in sys.path:
+            sys.path.append(site.getusersitepackages())
+        import pypdf  # noqa: F401
+        return True
+    except Exception:
+        app.logger.exception("Não foi possível instalar o pypdf")
+        return False
+
+
+def fator_importacao(r):
+    """Fator de importação do invoice e o detalhamento (ou None se ainda não há base)."""
+    db = get_db()
+    dd = db.execute("SELECT * FROM duimp_dados WHERE invoice_id = ?", (r["id"],)).fetchone()
+    lancs = db.execute("SELECT * FROM lancamentos WHERE invoice_id = ? AND valor IS NOT NULL", (r["id"],)).fetchall()
+    fob = r["valor_invoice"]
+    avisos = []
+    # câmbio do FOB: pagamentos registrados (cotação de cada pagamento)
+    pagos = [p for p in r["pagamentos"] if p["cotacao"]]
+    if r["moeda"] == "BRL":
+        taxa, origem_taxa = 1.0, "invoice em reais"
+    elif pagos:
+        taxa = sum(p["valor"] * p["cotacao"] for p in pagos) / sum(p["valor"] for p in pagos)
+        origem_taxa = "câmbio dos pagamentos" + (" (média ponderada)" if len(pagos) > 1 else "")
+        if len(pagos) < len(r["pagamentos"]):
+            avisos.append("Há pagamentos sem cotação: só os pagamentos com cotação entram no câmbio do FOB.")
+    elif dd and dd["taxa_cambio"]:
+        taxa, origem_taxa = dd["taxa_cambio"], "taxa da DUIMP (estimativa: ainda não há pagamento com cotação)"
+        avisos.append("FOB em R$ estimado pela taxa da DUIMP: será recalculado com a cotação dos pagamentos.")
+    else:
+        taxa, origem_taxa = None, None
+    if not dd:
+        avisos.append("Dados da DUIMP ainda não conferidos.")
+    por_cat = {}
+    sem_categoria = []
+    for l in lancs:
+        if l["tipo"] in RECUPERAVEL:
+            por_cat[l["tipo"]] = round(por_cat.get(l["tipo"], 0) + l["valor"], 2)
+        else:
+            sem_categoria.append(l)
+    if sem_categoria:
+        avisos.append("Lançamentos sem categoria não entram no cálculo: "
+                      + ", ".join(f"{l['tipo'] or 'sem tipo'} ({fmt_moeda(l['valor'], 'BRL')})" for l in sem_categoria)
+                      + ". Corrija o tipo na aba Lançamentos Financeiros.")
+    nao_rec = round(sum(v for c, v in por_cat.items() if not RECUPERAVEL[c]), 2)
+    rec = round(sum(v for c, v in por_cat.items() if RECUPERAVEL[c]), 2)
+    fob_brl = round(fob * taxa, 2) if taxa and fob else None
+    fator = round(1 + nao_rec / fob_brl, 4) if fob_brl else None
+    if r["situacao"] != "CONCLUIDO":
+        avisos.append("Invoice ainda não concluído: o fator pode mudar com novos custos e pagamentos.")
+    pdfs = [x["id"] for x in r.get("duimp_arquivos", []) if x["nome"].lower().endswith(".pdf")]
+    return {"duimp": dd, "fob": fob, "pdf_id": pdfs[-1] if pdfs else None, "taxa": taxa, "origem_taxa": origem_taxa, "fob_brl": fob_brl,
+            "fob_brl_duimp": round(fob * dd["taxa_cambio"], 2) if dd and dd["taxa_cambio"] and fob else None,
+            "categorias": [(c, RECUPERAVEL[c], por_cat.get(c)) for c in NOMES_CATEGORIA],
+            "nao_rec": nao_rec, "rec": rec, "fator": fator, "sem_categoria": sem_categoria,
+            "pct_nao_rec": nao_rec / fob_brl if fob_brl else None, "pct_rec": rec / fob_brl if fob_brl else None,
+            "total_brl": round((fob_brl or 0) + nao_rec + rec, 2), "avisos": avisos,
+            "final": bool(fator and dd and r["situacao"] == "CONCLUIDO" and pagos and not sem_categoria)}
+
+
+def fator_resumido(iid, r=None):
+    """Só o número do fator (para o Painel)."""
+    try:
+        f = fator_importacao(r or carregar_invoice(iid))
+        return (f["fator"], f["final"]) if f["fator"] else (None, False)
+    except Exception:
+        return None, False
+
+
+@app.route("/invoices/<int:id>/duimp-dados", methods=["GET", "POST"])
+@login_obrigatorio
+def duimp_dados(id):
+    """Conferência dos dados da DUIMP: lidos do PDF anexado (ou digitados) e confirmados pela Importação.
+    Ao salvar, os tributos (e o frete/multa, se escolhido) viram lançamentos financeiros do invoice."""
+    if not pode("importacao"):
+        abort(403)
+    r = carregar_invoice(id)
+    db = get_db()
+    atual = db.execute("SELECT * FROM duimp_dados WHERE invoice_id = ?", (id,)).fetchone()
+    existentes = {}
+    for l in db.execute("SELECT * FROM lancamentos WHERE invoice_id = ? ORDER BY id", (id,)):
+        existentes.setdefault(l["tipo"], []).append(l)
+    if request.method == "POST":
+        f = request.form
+        dados = {}
+        erros = []
+        for campo in leitor_duimp.CAMPOS:
+            v = (f.get(campo) or "").strip()
+            if campo == "numero":
+                dados[campo] = v[:30] or None
+            elif campo == "data_registro":
+                dados[campo] = data_valida(v) if v else None
+                if v and not dados[campo]:
+                    erros.append("Data de registro inválida.")
+            elif campo == "moeda":
+                dados[campo] = v if v in MOEDAS else r["moeda"]
+            else:
+                dados[campo] = parse_num(v) if v else None
+                if v and dados[campo] is None:
+                    erros.append(f"Valor inválido em {campo}.")
+        if not dados["taxa_cambio"] and r["moeda"] != "BRL":
+            erros.append("Informe a taxa de câmbio da DUIMP.")
+        if erros:
+            for e in erros:
+                flash(e, "erro")
+            return redirect(url_for("duimp_dados", id=id))
+        arquivo_id = f.get("arquivo_id", type=int)
+        valores = [dados[c] for c in leitor_duimp.CAMPOS]
+        if atual:
+            db.execute(f"UPDATE duimp_dados SET {', '.join(c + ' = ?' for c in leitor_duimp.CAMPOS)}, arquivo_id = ?,"
+                       " conferido_por = ?, conferido_em = ? WHERE invoice_id = ?",
+                       (*valores, arquivo_id, g.usuario["id"], agora(), id))
+        else:
+            db.execute(f"INSERT INTO duimp_dados (invoice_id, {', '.join(leitor_duimp.CAMPOS)}, arquivo_id, conferido_por,"
+                       f" conferido_em) VALUES (?, {', '.join('?' * len(valores))}, ?, ?, ?)",
+                       (id, *valores, arquivo_id, g.usuario["id"], agora()))
+        # lançamentos: criar / atualizar conforme a escolha de cada linha
+        feitos = []
+        for campo, categoria in CAMPOS_DUIMP_CATEGORIA:
+            acao = f.get(f"acao_{campo}")
+            valor = dados.get(campo)
+            if not valor or acao not in ("criar", "atualizar"):
+                continue
+            ja = existentes.get(categoria, [])
+            if acao == "atualizar" and len(ja) == 1:
+                l = ja[0]
+                if abs((l["valor"] or 0) - valor) > TOLERANCIA:
+                    db.execute("UPDATE lancamentos SET valor = ?, atualizado_por = ?, atualizado_em = ?, lancado_erp = 0,"
+                               " alterado_apos_erp = ? WHERE id = ?",
+                               (valor, g.usuario["id"], agora(), 1 if (l["lancado_erp"] or l["alterado_apos_erp"]) else 0,
+                                l["id"]))
+                    feitos.append(f"{categoria} atualizado: {fmt_moeda(l['valor'], 'BRL')} → {fmt_moeda(valor, 'BRL')}")
+            elif acao == "criar":
+                db.execute("INSERT INTO lancamentos (invoice_id, tipo, valor, data_pagamento, criado_por, criado_em)"
+                           " VALUES (?, ?, ?, ?, ?, ?)",
+                           (id, categoria, valor, dados["data_registro"] if campo not in ("frete_brl",) else None,
+                            g.usuario["id"], agora()))
+                feitos.append(f"{categoria} {fmt_moeda(valor, 'BRL')}")
+        registrar_evento(id, "Dados da DUIMP conferidos" + (f" ({dados['numero']})" if dados["numero"] else ""),
+                         (f"Taxa {fmt_num(dados['taxa_cambio'], 4)}" if dados["taxa_cambio"] else "")
+                         + (" · lançamentos: " + "; ".join(feitos) if feitos else ""))
+        db.commit()
+        flash("Dados da DUIMP salvos." + (f" Lançamentos financeiros: {'; '.join(feitos)}." if feitos else ""), "ok")
+        return redirect(url_for("invoice_detalhe", id=id) + "#fator")
+    # GET: lê o PDF escolhido (ou mostra os dados já salvos)
+    arquivo_id = request.args.get("arquivo", type=int)
+    lidos, avisos = None, []
+    if arquivo_id:
+        a = db.execute("SELECT * FROM arquivos WHERE id = ? AND origem = 'duimp' AND origem_id = ?",
+                       (arquivo_id, id)).fetchone()
+        if a is None:
+            abort(404)
+        if not garantir_pypdf():
+            avisos.append("O componente de leitura de PDF não está instalado no servidor: preencha os dados manualmente.")
+        else:
+            try:
+                lidos, avisos = leitor_duimp.ler_pdf(caminho_anexo(a))
+            except Exception as e:
+                app.logger.warning("Falha ao ler a DUIMP %s: %s", arquivo_id, e)
+                avisos.append("Não foi possível ler este PDF: preencha os dados manualmente.")
+        if lidos and lidos.get("moeda") and lidos["moeda"] != r["moeda"]:
+            avisos.append(f"A moeda da DUIMP ({lidos['moeda']}) é diferente da moeda do invoice ({r['moeda']}).")
+        if lidos and lidos.get("fob_moeda") and abs(lidos["fob_moeda"] - r["valor_invoice"]) > max(0.05, r["valor_invoice"] * 0.001):
+            avisos.append(f"O FOB da DUIMP ({fmt_moeda(lidos['fob_moeda'], r['moeda'])}) é diferente do valor final do invoice "
+                          f"({fmt_moeda(r['valor_invoice'], r['moeda'])}). Confira (o fator usa o valor final do invoice).")
+    base = lidos or (dict(atual) if atual else {c: None for c in leitor_duimp.CAMPOS})
+    if not arquivo_id and atual:
+        arquivo_id = atual["arquivo_id"]
+    linhas = []
+    for campo, categoria in CAMPOS_DUIMP_CATEGORIA:
+        ja = existentes.get(categoria, [])
+        valor = base.get(campo)
+        if not ja:
+            padrao = "criar" if valor and campo != "frete_brl" else "nada"
+        elif len(ja) == 1 and valor and abs((ja[0]["valor"] or 0) - valor) > TOLERANCIA:
+            padrao = "atualizar"
+        else:
+            padrao = "nada"
+        linhas.append({"campo": campo, "categoria": categoria, "valor": valor, "existentes": ja, "padrao": padrao,
+                       "recuperavel": RECUPERAVEL[categoria]})
+    arquivos_pdf = [x for x in r["duimp_arquivos"] if x["nome"].lower().endswith(".pdf")]
+    return render_template("duimp_dados.html", r=r, d=base, avisos=avisos, lidos=bool(lidos), linhas=linhas,
+                           arquivo_id=arquivo_id, atual=atual, arquivos_pdf=arquivos_pdf)
 
 
 @app.route("/invoices/<int:id>/invoice-assinado", methods=["POST"])
