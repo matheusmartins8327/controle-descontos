@@ -386,11 +386,14 @@
   <h3>Pagamentos registrados</h3>
   <div class="rolagem">
   <table>
-    <thead><tr><th>Data</th><th>Tipo</th><th class="num">Valor</th><th>Banco</th><th>Swift</th><th></th></tr></thead>
+    <thead><tr><th>Data</th><th>Tipo</th><th class="num">Valor</th>{% if m != 'BRL' %}<th class="num">Cotação</th><th class="num">Valor em R$</th>{% endif %}<th>Banco</th><th>Swift</th><th></th></tr></thead>
     <tbody>
     {% for p in r.pagamentos %}
       <tr><td>{{ p.data_pagamento|data }}</td><td>{{ TIPOS_PAGAMENTO[p.tipo] }}{% if p.obs %}<small class="bloco-linha">{{ p.obs }}</small>{% endif %}</td>
-        <td class="num">{{ p.valor|moeda(m) }}</td><td>{{ p.banco or '—' }}</td>
+        <td class="num">{{ p.valor|moeda(m) }}</td>
+        {% if m != 'BRL' %}<td class="num">{{ ('R$ ' ~ p.cotacao|num(4)) if p.cotacao else '—' }}</td>
+        <td class="num">{{ (p.valor * p.cotacao)|round(2)|moeda('BRL') if p.cotacao else '—' }}</td>{% endif %}
+        <td>{{ p.banco or '—' }}</td>
         <td class="arquivos">
           {% for a in r.swift_arquivos.get(p.id, []) %}
           <div class="arq">
@@ -419,6 +422,7 @@
             <label>Data<input type="date" name="data_pagamento" value="{{ p.data_pagamento }}" required></label>
             <label>Valor<input name="valor" inputmode="decimal" value="{{ p.valor|num }}" required></label>
             <label>Banco<input name="banco" value="{{ p.banco or '' }}"></label>
+            {% if m != 'BRL' %}<label>Cotação (R$ por 1 {{ m }})<input name="cotacao" inputmode="decimal" value="{{ p.cotacao|num(4) if p.cotacao else '' }}"></label>{% endif %}
             <label>Observação<input name="obs" value="{{ p.obs or '' }}"></label>
             <button class="btn pequeno">Salvar correção</button></form>
           <form method="post" action="{{ url_for('pagamento_excluir', pid=p.id) }}" onsubmit="return confirm('Excluir este pagamento?')" class="linha-mini">
@@ -443,6 +447,8 @@
       <label>Valor pago ({{ m }}) *<input name="valor" id="valor-pagamento" inputmode="decimal" required>
         <small>Pode ser parcial.</small></label>
       <label>Banco<input name="banco" value="{{ r.banco_debito or '' }}"></label>
+      {% if m != 'BRL' %}<label>Cotação do {{ m }} no pagamento * <small>(R$ por 1 {{ m }})</small><input name="cotacao" id="cotacao-pagamento" inputmode="decimal" placeholder="ex.: 5,4321" required>
+        <small id="valor-brl"></small></label>{% endif %}
       <label class="largo">Arquivo do Swift<input type="file" name="swift_arquivo" multiple>
         <small>PDF ou imagem, até {{ ANEXO_MAX_MB }} MB. Pode anexar depois. O processo só é concluído com o Swift de todos os pagamentos.</small></label>
       <label class="largo">Observação<input name="obs" placeholder="Opcional"></label>
@@ -504,6 +510,15 @@
   if (tipo && valor) {
     const sugerir = () => { valor.value = tipo.selectedOptions[0].dataset.valor; };
     tipo.addEventListener('change', sugerir); sugerir();
+  }
+  // cotação: mostra o valor equivalente em reais
+  const cot = document.getElementById('cotacao-pagamento'), brl = document.getElementById('valor-brl');
+  if (cot && valor && brl) {
+    const n = t => { t = (t || '').trim(); if (!t) return null; t = t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t; const x = parseFloat(t); return isNaN(x) ? null : x; };
+    const mostrar = () => { const v = n(valor.value), c = n(cot.value);
+      brl.textContent = v && c ? '≈ ' + (v * c).toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'}) + ' em reais' : ''; };
+    cot.addEventListener('input', mostrar); valor.addEventListener('input', mostrar);
+    if (tipo) tipo.addEventListener('change', mostrar);
   }
 })();
 </script>

@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.42)
+# Controle de Invoices e Descontos (v4.43)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -116,6 +116,13 @@ com a quantidade de invoices e os fornecedores de cada um. Clique para escolher 
 (Cadastro, Coleta, Embarque, Desembaraço, Transporte Terrestre, Inspeção, Pagamento, Dedução/liberação, Concluído) com ✓ e a
 data quando concluída, ● na etapa atual, ○ a fazer e – quando não se aplica (sem desconto). A aba **Pendências** reúne as
 pendências de todos os setores (as do seu setor no topo), com a contagem por setor e de vencidas.
+
+**DUIMP obrigatória (v4.43):** a etapa Desembaraço só é concluída com o **arquivo da DUIMP anexado** (além das datas, canal e
+número da NF). Invoices que já tinham data de desembaraço antes desta versão ficam dispensados.
+
+**Cotação no pagamento (v4.43):** em invoices em moeda estrangeira (USD, EUR, CHF), o registro de pagamento pede a **cotação da
+moeda no momento do pagamento** (R$ por 1 unidade, obrigatória). A tabela de pagamentos mostra a cotação e o valor em reais, e a
+cotação pode ser corrigida em "Corrigir". Invoices em reais não têm o campo.
 
 **Filtros no painel:** as tabelas de Pendências e de Invoices têm filtro em cada coluna (lista ou texto) e ordenação ao clicar no título da coluna.
 

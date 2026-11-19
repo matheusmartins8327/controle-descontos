@@ -46,7 +46,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.42"
+VERSAO = "4.43"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -473,7 +473,8 @@ def init_db():
         for col, tipo in (("numero_nf", "TEXT"), ("pagamento_liberado_em", "TEXT"), ("pagamento_liberado_por", "INTEGER"),
                           ("pagamento_liberado_obs", "TEXT"), ("historico", "INTEGER NOT NULL DEFAULT 0"),
                           ("nf_liberada", "INTEGER"), ("cadastro_concluido_em", "TEXT"),
-                          ("duimp_banco_em", "TEXT"), ("duimp_banco_por", "INTEGER")):
+                          ("duimp_banco_em", "TEXT"), ("duimp_banco_por", "INTEGER"),
+                          ("duimp_dispensada", "INTEGER")):
             if col not in colunas_inv:
                 db.execute(f"ALTER TABLE invoices ADD COLUMN {col} {tipo}")
         # versão 4.30: invoices que já passaram do Transporte não voltam a ficar pendentes da nova "NF Liberada"
@@ -485,6 +486,13 @@ def init_db():
             db.execute("UPDATE invoices SET duimp_banco_em = 'antes da v4.33' WHERE data_chegada IS NOT NULL"
                        " AND duimp_banco_em IS NULL")
             db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v433_duimp_banco', '1')")
+        # versão 4.43: DUIMP (arquivo) obrigatória no Desembaraço; os que já passaram do desembaraço ficam dispensados
+        if db.execute("SELECT 1 FROM configuracoes WHERE chave = 'v443_duimp'").fetchone() is None:
+            db.execute("UPDATE invoices SET duimp_dispensada = 1 WHERE data_desembaraco IS NOT NULL AND id NOT IN"
+                       " (SELECT origem_id FROM arquivos WHERE origem = 'duimp')")
+            db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v443_duimp', '1')")
+        if "cotacao" not in {r[1] for r in db.execute("PRAGMA table_info(pagamentos)")}:
+            db.execute("ALTER TABLE pagamentos ADD COLUMN cotacao REAL")  # v4.43: R$ por unidade da moeda no pagamento
         # versão 4.22: invoices/pagamentos lançados pela carga de histórico (dados do passado)
         if "historico" not in {r[1] for r in db.execute("PRAGMA table_info(pagamentos)")}:
             db.execute("ALTER TABLE pagamentos ADD COLUMN historico INTEGER NOT NULL DEFAULT 0")
@@ -654,10 +662,10 @@ def pode(perfil_necessario):
 # ---------------------------------------------------------------------------
 # Helpers de template
 # ---------------------------------------------------------------------------
-def fmt_num(valor):
+def fmt_num(valor, casas=2):
     if not isinstance(valor, (int, float)):
         return ""
-    return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{valor:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def fmt_moeda(valor, moeda="USD"):
@@ -1649,7 +1657,22 @@ def etapa_faltando(r, etapa):
     falta = [rot for campo, rot, _t, obrig in CAMPOS_ETAPA[etapa] if obrig and not r[campo]]
     if etapa == "EMBARQUE" and not r["banco_debito"]:
         falta.append("Banco de débito (Financeiro)")
+    if etapa == "DESEMBARACO" and not tem_duimp(r):
+        falta.insert(1, "DUIMP (arquivo anexado)")
     return falta
+
+
+def tem_duimp(r):
+    """v4.43: o Desembaraço só é concluído com a DUIMP anexada (ou caminho cadastrado na v4.27–4.30).
+    Invoices que já tinham passado do desembaraço antes desta regra ficam dispensados."""
+    if r["duimp_dispensada"]:
+        return True
+    chaves = r.keys()
+    if "duimp_arquivos" in chaves:
+        return bool(r["duimp_arquivos"] or r["duimp_docs"])
+    db = get_db()
+    return bool(db.execute("SELECT 1 FROM arquivos WHERE origem = 'duimp' AND origem_id = ?", (r["id"],)).fetchone()
+                or db.execute("SELECT 1 FROM documentos WHERE origem = 'duimp' AND origem_id = ?", (r["id"],)).fetchone())
 
 
 def avisar_cadastro_pendente(iid):
@@ -2785,6 +2808,7 @@ def pagamento_novo(id):
     arquivos_swift = [a for a in request.files.getlist("swift_arquivo") if a and a.filename]
     caminho_swift = normalizar_caminho(f.get("swift_caminho"))
     banco = f.get("banco", "").strip() or r["banco_debito"]
+    cotacao = parse_num(f.get("cotacao")) if r["moeda"] != "BRL" else None
     limite = {"PRINCIPAL": r["principal_liberado_pendente"], "LIBERACAO": r["liberacao_disponivel"]}.get(tipo)
     erro = None
     if r["cancelado_em"]:
@@ -2795,6 +2819,8 @@ def pagamento_novo(id):
         erro = "Informe a data do pagamento."
     elif valor is None or valor <= 0:
         erro = "Informe o valor pago."
+    elif r["moeda"] != "BRL" and (cotacao is None or cotacao <= 0):
+        erro = f"Informe a cotação do {r['moeda']} no momento do pagamento (R$ por 1 {r['moeda']})."
     elif valor > limite + TOLERANCIA:
         erro = (f"O valor é maior que o disponível para {TIPOS_PAGAMENTO[tipo].lower()} "
                 f"({fmt_moeda(limite, r['moeda'])}).")
@@ -2809,10 +2835,11 @@ def pagamento_novo(id):
         return volta
     db = get_db()
     valor = round(valor, 2)
+    cotacao = round(cotacao, 6) if cotacao else None
     pid = db.execute("INSERT INTO pagamentos (invoice_id, tipo, valor, data_pagamento, banco, swift_url, obs,"
-                     " registrado_por, registrado_em) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+                     " registrado_por, registrado_em, cotacao) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
                      (id, tipo, valor, data_pg, banco, f.get("obs", "").strip() or None, g.usuario["id"],
-                      agora())).lastrowid
+                      agora(), cotacao)).lastrowid
     salvos, erros = salvar_arquivos("pagamento", pid, arquivos_swift)
     if caminho_swift:
         db.execute("INSERT INTO documentos (origem, origem_id, caminho, status, cadastrado_por, cadastrado_em)"
@@ -2820,7 +2847,9 @@ def pagamento_novo(id):
         salvos.append(caminho_swift)
     registrar_evento(id, f"{TIPOS_PAGAMENTO[tipo]}: {fmt_moeda(valor, r['moeda'])} em {fmt_data(data_pg)}",
                      (f"Swift: {', '.join(salvos)}" if salvos else "Swift pendente")
-                     + (f" · banco: {banco}" if banco else ""))
+                     + (f" · banco: {banco}" if banco else "")
+                     + (f" · cotação: R$ {fmt_num(cotacao, 4)} ({fmt_moeda(round(valor * cotacao, 2), 'BRL')})"
+                        if cotacao else ""))
     db.commit()
     flash("Pagamento registrado." + ("" if salvos else " O Swift ficou pendente: anexe o arquivo na tabela de pagamentos."), "ok")
     for e in erros:
@@ -2870,6 +2899,8 @@ def pagamento_editar(pid):
     data_pg = data_valida(f.get("data_pagamento"))
     banco = f.get("banco", "").strip() or None
     obs = f.get("obs", "").strip() or None
+    cotacao = parse_num(f.get("cotacao")) if r["moeda"] != "BRL" else None
+    cotacao = round(cotacao, 6) if cotacao and cotacao > 0 else None
     # limite: o que ainda pode ser pago desse tipo, devolvendo o valor atual deste pagamento
     if p["tipo"] == "PRINCIPAL":
         limite = r["principal_liberado_pendente"] + p["valor"]
@@ -2895,9 +2926,11 @@ def pagamento_editar(pid):
         mudancas.append(f"banco {p['banco'] or '—'} → {banco or '—'}")
     if obs != p["obs"]:
         mudancas.append("observação")
+    if r["moeda"] != "BRL" and (cotacao or None) != (p["cotacao"] or None):
+        mudancas.append(f"cotação {fmt_num(p['cotacao'], 4) if p['cotacao'] else '—'} → {fmt_num(cotacao, 4) if cotacao else '—'}")
     if mudancas:
-        db.execute("UPDATE pagamentos SET data_pagamento = ?, valor = ?, banco = ?, obs = ? WHERE id = ?",
-                   (data_pg, valor, banco, obs, pid))
+        db.execute("UPDATE pagamentos SET data_pagamento = ?, valor = ?, banco = ?, obs = ?, cotacao = ? WHERE id = ?",
+                   (data_pg, valor, banco, obs, cotacao if r["moeda"] != "BRL" else None, pid))
         registrar_evento(r["id"], f"Pagamento corrigido ({TIPOS_PAGAMENTO[p['tipo']]})", "; ".join(mudancas))
         db.commit()
         flash("Pagamento corrigido.", "ok")
