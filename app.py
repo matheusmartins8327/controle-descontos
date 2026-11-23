@@ -49,7 +49,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.44"
+VERSAO = "4.45"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -1255,7 +1255,12 @@ def listar_pendencias(invoices, perfil=None):
         if imp and opcionais:
             add(r, "Informações não obrigatórias a preencher: " + ", ".join(opcionais), "importacao")
         if adm and sit == "INSPECAO":
-            add(r, "Registrar a inspeção", "admin", r["data_chegada"])
+            if not r["data_fim_inspecao"]:
+                add(r, "Registrar o fim da inspeção", "admin", r["data_chegada"])
+            elif r["tem_desconto"] is None:  # v4.45: data registrada, resultado ainda não definido
+                add(r, "Relatório de Inspeção Pendente", "admin", r["data_fim_inspecao"], atencao=True)
+            else:
+                add(r, "Registrar a inspeção", "admin", r["data_chegada"])
         d = r["desconto"]
         if adm and d and d["status"] == "ENVIADO":
             add(r, "Acompanhar a aprovação do desconto pelo fornecedor", "admin", d["data_relatorio"], d["valor_final"])
@@ -2646,10 +2651,21 @@ def invoice_inspecao(id):
     if not r["data_chegada"]:
         flash("A inspeção é registrada depois da chegada do invoice na fábrica.", "erro")
         return volta
-    if not data_insp or tem not in ("0", "1"):
-        flash("Informe a data do fim da inspeção e se há desconto.", "erro")
+    if not data_insp:
+        flash("Informe a data do fim da inspeção.", "erro")
         return volta
     db = get_db()
+    if tem not in ("0", "1"):  # v4.45: só a data; o resultado (com ou sem desconto) vem depois, com o relatório
+        if d:
+            flash("Este invoice já tem desconto cadastrado: a inspeção não pode voltar para 'a definir'. "
+                  "Para alterar o valor, use a revalidação.", "erro")
+            return volta
+        db.execute("UPDATE invoices SET data_fim_inspecao = ?, tem_desconto = NULL WHERE id = ?", (data_insp, id))
+        registrar_evento(id, "Fim da inspeção registrado: relatório de inspeção pendente",
+                         f"Fim da inspeção: {fmt_data(data_insp)}")
+        db.commit()
+        flash("Fim da inspeção registrado. Falta definir se há desconto (relatório de inspeção pendente).", "ok")
+        return volta
     if tem == "0":
         if d:
             if r["deducoes_do_desconto"] or r["liberado"] or db.execute(

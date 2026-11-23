@@ -228,7 +228,7 @@
   {% else %}
   <dl class="dl-colunas">
     <dt>Fim da inspeção</dt><dd>{{ r.data_fim_inspecao|data }}</dd>
-    <dt>Tem desconto?</dt><dd>{{ {None: 'Não informado', 0: 'Não — pagamento integral', 1: 'Sim'}[r.tem_desconto] }}</dd>
+    <dt>Tem desconto?</dt><dd>{% if r.tem_desconto is none and r.data_fim_inspecao %}<span class="ciencia c-pendente">Relatório de inspeção pendente</span>{% else %}{{ {None: 'Não informado', 0: 'Não — pagamento integral', 1: 'Sim'}[r.tem_desconto] }}{% endif %}</dd>
     {% if d %}
     <dt>Data do relatório</dt><dd>{{ d.data_relatorio|data }}</dd>
     <dt>Aprovação</dt><dd>{{ STATUS_DESCONTO[d.status] }}{% if d.aprovado_em %} <small>em {{ d.aprovado_em|data }}</small>{% endif %}</dd>
@@ -252,13 +252,14 @@
 
   {% if admin and ativo %}
   <details class="revalidar" {{ 'open' if r.tem_desconto is none }}>
-    <summary>{{ 'Registrar inspeção' if r.tem_desconto is none else 'Editar inspeção' }}</summary>
+    <summary>{{ ('Registrar o fim da inspeção' if not r.data_fim_inspecao else 'Definir o resultado da inspeção (desconto)') if r.tem_desconto is none else 'Editar inspeção' }}</summary>
     <form method="post" action="{{ url_for('invoice_inspecao', id=r.id) }}" enctype="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="grade">
         <label>Data real do fim da inspeção *<input type="date" name="data_fim_inspecao" value="{{ r.data_fim_inspecao or hoje }}" required></label>
         <label>Tem desconto? *
           <select name="tem_desconto" id="tem_desconto">
+            {% if not d %}<option value="" {{ 'selected' if r.tem_desconto is none }}>A definir (relatório de inspeção pendente)</option>{% endif %}
             <option value="0" {{ 'selected' if r.tem_desconto == 0 }}>Não</option>
             <option value="1" {{ 'selected' if r.tem_desconto == 1 }}>Sim</option>
           </select></label>

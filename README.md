@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.44)
+# Controle de Invoices e Descontos (v4.45)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -230,6 +230,12 @@ mostrados na própria tela; os demais tipos mostram só os dados do arquivo), co
   quando provisório.
 - Lançamentos antigos com tipo livre foram convertidos para a categoria correspondente quando possível; os demais (ex.:
   Capatazia, Seguro) ficam marcados para escolher a categoria e não entram no fator até isso.
+
+### Inspeção em duas partes (v4.45)
+A Engenharia de Processos registra primeiro só a **data do fim da inspeção**, com "Tem desconto?" = **A definir**. Enquanto o
+resultado não for definido, fica a pendência **"Relatório de Inspeção Pendente"** para a Engenharia (o invoice continua em
+"Aguardando inspeção"). Depois, em "Definir o resultado da inspeção", escolhe Não (pagamento integral) ou Sim (valor, data do
+relatório e relatório em Excel). Sem a data, a pendência é "Registrar o fim da inspeção".
 
 ### Relatório de inspeção obrigatório (v4.41)
 - Ao registrar a inspeção **com desconto**, é obrigatório anexar o **relatório de inspeção em Excel** (.xlsx, .xlsm ou .xls);
