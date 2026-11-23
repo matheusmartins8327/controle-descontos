@@ -4,7 +4,7 @@
 <h1>Descontos</h1>
 <p class="sub">Descontos por má qualidade registrados na inspeção dos invoices e descontos avulsos (sem invoice), cadastrados pela Engenharia de Processos.</p>
 <div class="filtros">
-  {% for k, v in [('abertos', 'Em aberto'), ('ENVIADO', 'Aguardando aprovação do fornecedor'), ('APROVADO', 'Aprovados'), ('todos', 'Todos'), ('avulsos', 'Descontos avulsos')] %}
+  {% for k, v in [('abertos', 'Em aberto'), ('RELATORIO', 'Relatório de inspeção pendente'), ('PENDENTE', 'Relatório pendente de envio'), ('ENVIADO', 'Aguardando aprovação do fornecedor'), ('APROVADO', 'Aprovados'), ('todos', 'Todos'), ('avulsos', 'Descontos avulsos')] %}
   <a class="btn {{ 'primario' if filtro == k }}" href="{{ url_for('descontos', f=k) }}">{{ v }}</a>
   {% endfor %}
 </div>
@@ -57,17 +57,27 @@
 <section class="bloco">
   {% if lista %}
   <div class="rolagem">
-  <table>
-    <thead><tr><th>Fornecedor</th><th>Invoice</th><th>Relatório</th><th>Aprovação</th><th class="num">Valor final</th><th class="num">Segurado</th><th class="num">Deduzido</th><th class="num">Saldo a deduzir</th><th class="num">Liberado</th><th>Situação</th></tr></thead>
+  <table class="tabela-filtro tabela-descontos" data-rotulo="descontos">
+    <thead><tr><th data-filtro="lista">Fornecedor</th><th data-filtro="texto">Invoice</th><th data-filtro="texto" data-tipo="data">Relatório</th>
+      <th data-filtro="lista">Aprovação</th><th class="num" data-filtro="nenhum" data-tipo="numero">Valor final</th><th class="num" data-filtro="nenhum" data-tipo="numero">Segurado</th>
+      <th class="num" data-filtro="nenhum" data-tipo="numero">Deduzido</th><th class="num" data-filtro="nenhum" data-tipo="numero">Saldo a deduzir</th>
+      <th class="num" data-filtro="nenhum" data-tipo="numero">Liberado</th><th data-filtro="lista">Situação</th></tr></thead>
     <tbody>
     {% for r in lista %}{% set d = r.desconto %}{% set m = r.moeda %}
       <tr class="clicavel" onclick="location='{{ url_for('invoice_detalhe', id=r.id) }}#inspecao'">
         <td>{{ r.fornecedor }}</td><td><a href="{{ url_for('invoice_detalhe', id=r.id) }}#inspecao">{{ r.numero }}</a></td>
-        <td>{{ d.data_relatorio|data }}</td><td>{{ STATUS_DESCONTO[d.status] }}</td>
-        <td class="num">{{ d.valor_final|moeda(m) }}{% if d.valor_final != d.valor_inicial %}<small class="bloco-linha">inicial {{ d.valor_inicial|moeda(m) }}</small>{% endif %}</td>
-        <td class="num">{{ r.segurado|moeda(m) }}</td><td class="num">{{ r.deduzido|moeda(m) }}</td>
-        <td class="num">{{ r.saldo_a_deduzir|moeda(m) }}</td><td class="num">{{ r.liberado|moeda(m) }}</td>
-        <td>{% with sit=r.situacao %}{% include "_situacao.html" %}{% endwith %}</td>
+        {% if d %}
+        <td data-ordem="{{ d.data_relatorio or '' }}">{{ d.data_relatorio|data }}</td><td>{{ STATUS_DESCONTO[d.status] }}</td>
+        <td class="num" data-ordem="{{ d.valor_final }}">{{ d.valor_final|moeda(m) }}{% if d.valor_final != d.valor_inicial %}<small class="bloco-linha">inicial {{ d.valor_inicial|moeda(m) }}</small>{% endif %}</td>
+        <td class="num" data-ordem="{{ r.segurado }}">{{ r.segurado|moeda(m) }}</td><td class="num" data-ordem="{{ r.deduzido }}">{{ r.deduzido|moeda(m) }}</td>
+        <td class="num" data-ordem="{{ r.saldo_a_deduzir }}">{{ r.saldo_a_deduzir|moeda(m) }}</td><td class="num" data-ordem="{{ r.liberado }}">{{ r.liberado|moeda(m) }}</td>
+        <td data-filtro="{{ SITUACOES[r.situacao][0] if r.situacao in SITUACOES else r.situacao }}">{% with sit=r.situacao %}{% include "_situacao.html" %}{% endwith %}</td>
+        {% else %}
+        <td data-ordem="">—</td><td>A definir</td>
+        <td class="num" data-ordem="">—</td><td class="num" data-ordem="">—</td><td class="num" data-ordem="">—</td><td class="num" data-ordem="">—</td><td class="num" data-ordem="">—</td>
+        <td data-filtro="Relatório de inspeção pendente"><span class="status s-relatorio" title="Fim da inspeção em {{ r.data_fim_inspecao|data }}">Relatório de inspeção pendente</span>
+          <small class="bloco-linha">fim da inspeção {{ r.data_fim_inspecao|data }}</small></td>
+        {% endif %}
       </tr>
     {% endfor %}
     </tbody>

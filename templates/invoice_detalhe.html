@@ -265,9 +265,12 @@
           </select></label>
         <label class="so-desconto">Valor do desconto ({{ m }}) *<input name="valor" inputmode="decimal" value="{{ d.valor_final|num if d else '' }}" {{ 'readonly' if d }}>
           {% if d %}<small>Para alterar o valor, use a revalidação abaixo.</small>{% endif %}</label>
-        <label class="so-desconto">Data do relatório *<input type="date" name="data_relatorio" value="{{ d.data_relatorio if d else hoje }}"></label>
+        <label class="so-desconto">Data do relatório *<input type="date" name="data_relatorio" value="{{ d.data_relatorio if d else '' }}"></label>
         <label class="so-desconto">Aprovação do fornecedor
-          <select name="status">{% for k, v in STATUS_DESCONTO.items() %}<option value="{{ k }}" {{ 'selected' if d and d.status == k }}>{{ v }}</option>{% endfor %}</select></label>
+          <select name="status">
+            <option value="" {{ 'selected' if not d or d.status == 'PENDENTE' }}>— Relatório ainda não enviado</option>
+            {% for k, v in STATUS_DESCONTO.items() if k != 'PENDENTE' %}<option value="{{ k }}" {{ 'selected' if d and d.status == k }}>{{ v }}</option>{% endfor %}</select>
+          <small>Preencha depois de enviar o relatório ao fornecedor.</small></label>
         <label class="largo so-desconto">Relatório de inspeção (Excel){{ ' *' if not d }}<input type="file" name="relatorio_arquivo" accept=".xlsx,.xlsm,.xls">
           <small>{% if d %}{{ 'Opcional: anexe para incluir uma nova versão do relatório.' if r.relatorios else 'Obrigatório: este desconto ainda não tem relatório.' }}{% else %}Obrigatório quando há desconto: o relatório que descreve o desconto (.xlsx, .xlsm ou .xls).{% endif %}</small></label>
         <label class="largo so-desconto">Observações<textarea name="obs" rows="2">{{ d.obs if d and d.obs else '' }}</textarea></label>
@@ -276,6 +279,13 @@
     </form>
   </details>
   {% if d %}
+    {% if d.status == 'PENDENTE' %}
+    <form method="post" action="{{ url_for('desconto_status', did=d.id) }}" class="linha-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="status" value="ENVIADO">
+      <button class="btn primario">Marcar relatório como enviado ao fornecedor</button>
+      <small>Depois do envio, acompanhe a aprovação do fornecedor.</small>
+    </form>
+    {% endif %}
     {% if d.status == 'ENVIADO' %}
     <form method="post" action="{{ url_for('desconto_status', did=d.id) }}" class="linha-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="status" value="APROVADO">

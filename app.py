@@ -49,7 +49,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.45"
+VERSAO = "4.46"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -75,7 +75,8 @@ PRAZO_LIBERACAO_DIAS_UTEIS = 5     # liberação do segurado: chegada real do in
 CUSTO_IMPORTACAO_ESTIMADO = 0.40   # visibilidade do Financeiro a partir do embarque
 # canal de parametrização: opção -> (cor de fundo pastel, cor do texto)
 CORES_CANAL = {"Verde": ("#d4f0dc", "#1d5a31"), "Amarelo": ("#fff3c4", "#6b5200"), "Vermelho": ("#fbd5d5", "#8a1c1c")}
-STATUS_DESCONTO = {"ENVIADO": "Enviado ao fornecedor", "APROVADO": "Aprovado pelo fornecedor"}
+STATUS_DESCONTO = {"PENDENTE": "Relatório pendente de envio", "ENVIADO": "Enviado ao fornecedor",
+                   "APROVADO": "Aprovado pelo fornecedor"}
 TIPOS_PAGAMENTO = {"PRINCIPAL": "Pagamento do invoice", "LIBERACAO": "Liberação do valor segurado"}
 
 # Etapas logísticas (Importação): campos de cada etapa -> (campo, rótulo, tipo, obrigatório p/ concluir)
@@ -1262,6 +1263,8 @@ def listar_pendencias(invoices, perfil=None):
             else:
                 add(r, "Registrar a inspeção", "admin", r["data_chegada"])
         d = r["desconto"]
+        if adm and d and d["status"] == "PENDENTE":
+            add(r, "Enviar o relatório de inspeção (desconto) ao fornecedor", "admin", d["data_relatorio"], d["valor_final"])
         if adm and d and d["status"] == "ENVIADO":
             add(r, "Acompanhar a aprovação do desconto pelo fornecedor", "admin", d["data_relatorio"], d["valor_final"])
         if imp and d and d["status"] == "APROVADO" and r["saldo_a_deduzir"] > TOLERANCIA:
@@ -2683,7 +2686,8 @@ def invoice_inspecao(id):
         flash("Inspeção registrada sem desconto. O invoice segue para pagamento integral.", "ok")
         return volta
     data_rel = data_valida(f.get("data_relatorio"))
-    status = f.get("status") if f.get("status") in STATUS_DESCONTO else "ENVIADO"
+    # v4.46: sem escolha, o relatório ainda não foi enviado ao fornecedor
+    status = f.get("status") if f.get("status") in STATUS_DESCONTO else "PENDENTE"
     relatorio, erro_rel = arquivo_excel_form("relatorio_arquivo")
     if erro_rel:
         flash(erro_rel, "erro")
@@ -2695,6 +2699,9 @@ def invoice_inspecao(id):
     if d:  # desconto já existe: valor só muda pela revalidação
         db.execute("UPDATE descontos SET data_relatorio = ?, obs = ? WHERE id = ?", (data_rel, obs, d["id"]))
         db.execute("UPDATE invoices SET data_fim_inspecao = ?, tem_desconto = 1 WHERE id = ?", (data_insp, id))
+        if status != d["status"] and status != "APROVADO" and r["deducoes_do_desconto"]:
+            flash("O desconto já foi deduzido em outro invoice: a aprovação do fornecedor não pode ser desfeita.", "erro")
+            return volta
         if status != d["status"]:
             alterar_status_desconto(r, d, status)
         if relatorio:  # nova versão do relatório (ou relatório de desconto anterior à v4.41)
@@ -2762,8 +2769,8 @@ def desconto_status(did):
     status = request.form.get("status")
     if status not in STATUS_DESCONTO:
         abort(400)
-    if status == "ENVIADO" and r["deducoes_do_desconto"]:
-        flash("O desconto já foi deduzido em outro invoice: não pode voltar para 'enviado'.", "erro")
+    if status != "APROVADO" and r["deducoes_do_desconto"]:
+        flash("O desconto já foi deduzido em outro invoice: a aprovação do fornecedor não pode ser desfeita.", "erro")
     elif status != d["status"]:
         alterar_status_desconto(r, d, status)
         get_db().commit()
@@ -3109,10 +3116,18 @@ def descontos():
         return render_template("descontos.html", lista=[], filtro=filtro, avulsos=avulsos,
                                fornecedores_lista=get_db().execute("SELECT id, nome FROM fornecedores WHERE ativo = 1"
                                                                    " ORDER BY nome").fetchall())
+    # v4.46: invoices com o fim da inspeção registrado e o resultado ainda não definido (relatório pendente)
+    pendentes_rel = [carregar_invoice(x[0]) for x in get_db().execute(
+        "SELECT id FROM invoices WHERE data_fim_inspecao IS NOT NULL AND tem_desconto IS NULL AND cancelado_em IS NULL"
+        " ORDER BY data_fim_inspecao")]
     if filtro == "abertos":
-        lista = [r for r in lista if r["situacao"] not in ("CONCLUIDO", "CANCELADO")]
+        lista = pendentes_rel + [r for r in lista if r["situacao"] not in ("CONCLUIDO", "CANCELADO")]
+    elif filtro == "RELATORIO":
+        lista = pendentes_rel
     elif filtro in STATUS_DESCONTO:
         lista = [r for r in lista if r["desconto"]["status"] == filtro]
+    else:
+        lista = pendentes_rel + lista
     return render_template("descontos.html", lista=lista, filtro=filtro, avulsos=avulsos)
 
 

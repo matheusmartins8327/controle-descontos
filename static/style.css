@@ -749,3 +749,8 @@ select.tipo-antigo { border-color: #e0a800; background: #fffbea; }
 .fator-final { font-weight: 700; color: var(--ok); }
 .fator-prov { font-style: italic; color: var(--suave); }
 .duimp-aviso { background: #fff8e1; border: 1px solid #f3d27a; color: #6b5200; border-radius: var(--raio); padding: .55rem .8rem; margin: 0 0 .6rem; font-size: .88rem; }
+
+/* v4.46: aba Descontos — situação quebra em duas linhas em vez de ser cortada */
+.tabela-descontos .status { white-space: normal; line-height: 1.25; text-align: center; padding: .2rem .55rem; border-radius: 10px; }
+.tabela-descontos td:last-child { min-width: 140px; }
+.s-relatorio { background: #fff3c4; color: #6b5200; }
