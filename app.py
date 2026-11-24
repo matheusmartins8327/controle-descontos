@@ -49,7 +49,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.51"
+VERSAO = "4.52"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -3125,6 +3125,59 @@ def invoice_excluir(id):
           + (f" e {n_arq} arquivo(s)" if n_arq else "")
           + f". Backup do banco feito antes: {os.path.basename(backup) if backup else '—'}.", "ok")
     return redirect(url_for("painel"))
+
+
+def marcar_historico(iid, marcar):
+    """v4.52: trata um invoice como os da carga de histórico (sem pendências; etapas até a chegada puladas;
+    inspeção e desconto em diante preenchidos normalmente) — ou volta ao fluxo normal. Não faz commit."""
+    db = get_db()
+    db.execute("UPDATE invoices SET historico = ? WHERE id = ?", (1 if marcar else 0, iid))
+    registrar_evento(iid, "Invoice passou a ser tratado como histórico (sem pendências; etapas até a chegada puladas)"
+                     if marcar else "Invoice voltou ao fluxo normal (deixou de ser tratado como histórico)")
+
+
+@app.route("/invoices/<int:id>/historico", methods=["POST"])
+@somente_admin
+def invoice_historico(id):
+    r = carregar_invoice(id)
+    marcar = request.form.get("acao") == "marcar"
+    if bool(r["historico"]) != marcar:
+        marcar_historico(id, marcar)
+        get_db().commit()
+        flash("Invoice tratado como histórico: sem pendências e com as etapas até a chegada puladas." if marcar
+              else "Invoice voltou ao fluxo normal.", "ok")
+    return redirect(url_for("invoice_detalhe", id=id) + "#admin")
+
+
+@app.route("/sistema/tratar-historico", methods=["POST"])
+@somente_admin
+def sistema_tratar_historico():
+    """Marca vários invoices como histórico de uma vez, pelo número (um por linha, ou separados por vírgula)."""
+    numeros = [n.strip() for n in re.split(r"[\n,;]+", request.form.get("numeros", "")) if n.strip()]
+    db = get_db()
+    feitos, ja, nao = [], [], []
+    for n in numeros:
+        achados = db.execute("SELECT i.id, i.numero, i.historico, f.nome FROM invoices i JOIN fornecedores f"
+                             " ON f.id = i.fornecedor_id WHERE lower(trim(i.numero)) = lower(?) AND i.cancelado_em IS NULL",
+                             (n,)).fetchall()
+        if not achados:
+            nao.append(n)
+        for a in achados:
+            if a["historico"]:
+                ja.append(f"{a['numero']} ({a['nome']})")
+            else:
+                marcar_historico(a["id"], True)
+                feitos.append(f"{a['numero']} ({a['nome']})")
+    db.commit()
+    if feitos:
+        flash(f"Tratados como histórico: {', '.join(feitos)}.", "ok")
+    if ja:
+        flash(f"Já eram histórico: {', '.join(ja)}.", "ok")
+    if nao:
+        flash(f"Não encontrados (confira o número exato): {', '.join(nao)}.", "erro")
+    if not numeros:
+        flash("Informe os números dos invoices.", "erro")
+    return redirect(url_for("sistema") + "#tratar-historico")
 
 
 @app.route("/invoices/<int:id>/cancelar", methods=["POST"])

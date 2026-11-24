@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.51)
+# Controle de Invoices e Descontos (v4.52)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -224,6 +224,9 @@ mostrados na própria tela; os demais tipos mostram só os dados do arquivo), co
 Não geram pendências. As etapas até a chegada (cadastro, coleta, embarque, desembaraço e transporte) são puladas (aparecem como
 concluídas no Painel). A inspeção e o desconto em diante são preenchidos na tela do invoice (a inspeção pode ser registrada
 mesmo sem data de chegada). Na carga, se não for informado desconto, a inspeção fica para a Engenharia registrar.
+Invoices cadastrados pelo fluxo normal também podem ser **tratados como histórico** (v4.52): em Sistema → "Tratar invoices como
+histórico" (vários números de uma vez) ou no invoice → Ações do administrador → "Tratar como histórico" (com "Voltar ao fluxo
+normal" para desfazer).
 
 ### Fator de importação (v4.44)
 **Fator = 1 + custos não recuperáveis ÷ FOB em R$** (mesma conta da planilha de Follow Up de Importação).

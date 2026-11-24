@@ -535,6 +535,12 @@
     <button class="btn perigo">Cancelar invoice</button>
   </form>
   {% endif %}
+  <form method="post" action="{{ url_for('invoice_historico', id=r.id) }}" class="linha-form"
+        onsubmit="return confirm('{{ 'Voltar este invoice ao fluxo normal (com pendências e etapas logísticas)?' if r.historico else 'Tratar este invoice como histórico? Ele deixa de gerar pendências e as etapas até a chegada são puladas.' }}')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="{{ 'desmarcar' if r.historico else 'marcar' }}">
+    <button class="btn">{{ 'Voltar ao fluxo normal' if r.historico else 'Tratar como histórico' }}</button>
+    <small>{{ 'Este invoice está sendo tratado como histórico: sem pendências e com as etapas até a chegada puladas.' if r.historico else 'Sem pendências; etapas até a chegada puladas; inspeção e desconto em diante preenchidos normalmente.' }}</small>
+  </form>
   <details class="excluir-invoice">
     <summary>Excluir este invoice definitivamente</summary>
     <p>Apaga o invoice <strong>{{ r.numero }}</strong> e tudo o que depende dele: itens, condição de pagamento, desconto e revalidações,

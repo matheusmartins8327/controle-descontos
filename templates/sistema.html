@@ -31,6 +31,18 @@
   <ul class="historico">{% for b in backups %}<li>{{ b }}</li>{% endfor %}</ul>
   {% else %}<p class="vazio">Nenhum backup ainda. Eles são criados a cada atualização e diariamente no servidor.</p>{% endif %}
 </section>
+<section class="bloco" id="tratar-historico">
+  <h2>Tratar invoices como histórico</h2>
+  <p class="sub">Os invoices informados passam a ser tratados como os da carga de histórico: <strong>não geram pendências</strong>, as etapas
+    até a chegada são puladas e a inspeção e o desconto em diante são preenchidos normalmente. Dá para desfazer na tela de cada invoice
+    (Ações do administrador → Voltar ao fluxo normal).</p>
+  <form method="post" action="{{ url_for('sistema_tratar_historico') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Números dos invoices (um por linha, ou separados por vírgula)<textarea name="numeros" rows="4" placeholder="26000069&#10;HI-100-145"></textarea></label>
+    <button class="btn">Tratar como histórico</button>
+  </form>
+</section>
+
 <section class="bloco perigo-zona" id="apagar">
   <h2>Apagar todos os invoices</h2>
   <p>Remove <strong>todos os invoices</strong> e o que depende deles: itens, condições de pagamento, descontos, revalidações,
