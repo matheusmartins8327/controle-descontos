@@ -49,7 +49,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.48"
+VERSAO = "4.49"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -514,6 +514,8 @@ def init_db():
         # v4.48: pagamentos anteriores a esta versão sem cotação não viram pendência
         if db.execute("SELECT 1 FROM configuracoes WHERE chave = 'v448_cotacao_desde'").fetchone() is None:
             db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v448_cotacao_desde', ?)", (agora(),))
+        if "segurado_incluido" not in {r[1] for r in db.execute("PRAGMA table_info(pagamentos)")}:
+            db.execute("ALTER TABLE pagamentos ADD COLUMN segurado_incluido REAL")  # v4.49: parte do segurado paga junto
         if "cotacao" not in {r[1] for r in db.execute("PRAGMA table_info(pagamentos)")}:
             db.execute("ALTER TABLE pagamentos ADD COLUMN cotacao REAL")  # v4.43: R$ por unidade da moeda no pagamento
         # versão 4.44: tipos livres dos lançamentos que correspondem a uma categoria de custo passam a usar o nome dela
@@ -950,6 +952,10 @@ def calcular(inv):
     r["principal_bloqueado"] = round(sum(p["pendente"] for p in r["parcelas"] if p["bloqueado"]), 2)
     r["principal_liberado_pendente"] = max(round(r["principal_pendente"] - r["principal_bloqueado"], 2), 0) \
         if r["parcelas"] else r["principal_pendente"]
+    # v4.49: caso excepcional — o Financeiro paga o invoice inteiro, inclusive o valor segurado (nada fica retido).
+    # O desconto continua valendo para dedução no próximo invoice; só deixa de haver liberação do segurado.
+    r["segurado_pagavel"] = max(round(r["segurado"] - r["liberado"], 2), 0) \
+        if r["desconto"] and r["principal_bloqueado"] <= TOLERANCIA else 0
     r["duimp_arquivos"] = arquivos_de("duimp", [iid]).get(iid, [])
     r["duimp_docs"] = documentos_de("duimp", [iid]).get(iid, [])
     r["invoice_docs"] = documentos_de("invoice", [iid]).get(iid, [])
@@ -2869,7 +2875,8 @@ def pagamento_novo(id):
     caminho_swift = normalizar_caminho(f.get("swift_caminho"))
     banco = f.get("banco", "").strip() or r["banco_debito"]
     cotacao = parse_num(f.get("cotacao")) if r["moeda"] != "BRL" else None
-    limite = {"PRINCIPAL": r["principal_liberado_pendente"], "LIBERACAO": r["liberacao_disponivel"]}.get(tipo)
+    limite = {"PRINCIPAL": r["principal_liberado_pendente"] + r["segurado_pagavel"],
+              "LIBERACAO": r["liberacao_disponivel"]}.get(tipo)
     erro = None
     if r["cancelado_em"]:
         erro = "Invoice cancelado."
@@ -2896,10 +2903,21 @@ def pagamento_novo(id):
     db = get_db()
     valor = round(valor, 2)
     cotacao = round(cotacao, 6) if cotacao else None
+    # parte do valor segurado paga junto (o desconto continua para dedução; nada fica retido)
+    seg_incl = round(valor - r["principal_liberado_pendente"], 2) if tipo == "PRINCIPAL" else 0
+    seg_incl = seg_incl if seg_incl > TOLERANCIA else 0
+    if seg_incl:
+        db.execute("UPDATE descontos SET valor_segurado = ? WHERE id = ?",
+                   (round(r["segurado"] - seg_incl, 2), r["desconto"]["id"]))
     pid = db.execute("INSERT INTO pagamentos (invoice_id, tipo, valor, data_pagamento, banco, swift_url, obs,"
                      " registrado_por, registrado_em, cotacao) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
                      (id, tipo, valor, data_pg, banco, f.get("obs", "").strip() or None, g.usuario["id"],
                       agora(), cotacao)).lastrowid
+    if seg_incl:
+        db.execute("UPDATE pagamentos SET segurado_incluido = ? WHERE id = ?", (seg_incl, pid))
+        registrar_evento(id, f"Valor segurado pago junto: {fmt_moeda(seg_incl, r['moeda'])} (não ficou retido)",
+                         f"O desconto de {fmt_moeda(r['desconto']['valor_final'], r['moeda'])} continua para dedução "
+                         "no próximo invoice; não haverá liberação deste valor.")
     salvos, erros = salvar_arquivos("pagamento", pid, arquivos_swift)
     if caminho_swift:
         db.execute("INSERT INTO documentos (origem, origem_id, caminho, status, cadastrado_por, cadastrado_em)"
@@ -2962,8 +2980,11 @@ def pagamento_editar(pid):
     cotacao = parse_num(f.get("cotacao")) if r["moeda"] != "BRL" else None
     cotacao = round(cotacao, 6) if cotacao and cotacao > 0 else None
     # limite: o que ainda pode ser pago desse tipo, devolvendo o valor atual deste pagamento
+    si = p["segurado_incluido"] or 0
+    base_pend = r["principal_liberado_pendente"] + p["valor"] - si  # pendente sem este pagamento (segurado devolvido)
     if p["tipo"] == "PRINCIPAL":
-        limite = r["principal_liberado_pendente"] + p["valor"]
+        limite = base_pend + (r["segurado"] + si - r["liberado"] if r["desconto"] and r["principal_bloqueado"] <= TOLERANCIA
+                              else si)
     else:
         limite = r["liberacao_disponivel"] + p["valor"]
     erro = None
@@ -2991,6 +3012,14 @@ def pagamento_editar(pid):
     if mudancas:
         db.execute("UPDATE pagamentos SET data_pagamento = ?, valor = ?, banco = ?, obs = ?, cotacao = ? WHERE id = ?",
                    (data_pg, valor, banco, obs, cotacao if r["moeda"] != "BRL" else None, pid))
+        if p["tipo"] == "PRINCIPAL" and r["desconto"]:  # v4.49: reajusta a parte do segurado paga junto
+            novo_si = round(valor - base_pend, 2)
+            novo_si = novo_si if novo_si > TOLERANCIA else 0
+            if abs(novo_si - si) > TOLERANCIA:
+                db.execute("UPDATE descontos SET valor_segurado = ? WHERE id = ?",
+                           (round(r["segurado"] + si - novo_si, 2), r["desconto"]["id"]))
+                db.execute("UPDATE pagamentos SET segurado_incluido = ? WHERE id = ?", (novo_si or None, pid))
+                mudancas.append(f"segurado pago junto {fmt_moeda(si, r['moeda'])} → {fmt_moeda(novo_si, r['moeda'])}")
         registrar_evento(r["id"], f"Pagamento corrigido ({TIPOS_PAGAMENTO[p['tipo']]})", "; ".join(mudancas))
         db.commit()
         flash("Pagamento corrigido.", "ok")
@@ -3014,6 +3043,9 @@ def pagamento_excluir(pid):
         flash("Exclua antes as liberações do valor segurado deste invoice.", "erro")
     else:
         arquivos_swift = excluir_arquivos_de("pagamento", pid)
+        if p["segurado_incluido"] and r["desconto"]:  # v4.49: o valor volta a ficar segurado
+            db.execute("UPDATE descontos SET valor_segurado = valor_segurado + ? WHERE id = ?",
+                       (p["segurado_incluido"], r["desconto"]["id"]))
         db.execute("DELETE FROM pagamentos WHERE id = ?", (pid,))
         registrar_evento(p["invoice_id"], f"Pagamento excluído: {TIPOS_PAGAMENTO[p['tipo']]} de "
                          f"{fmt_moeda(p['valor'], r['moeda'])} em {fmt_data(p['data_pagamento'])}", motivo)

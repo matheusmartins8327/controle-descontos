@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.48)
+# Controle de Invoices e Descontos (v4.49)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -173,6 +173,11 @@ Enquanto bloqueadas: a pendência é da Engenharia ("Liberar o pagamento ao Fina
 "Bloqueado (Engenharia)" e o Financeiro só consegue registrar pagamento das parcelas antecipadas. Ao liberar, o
 Financeiro recebe o e-mail "Pagamento liberado pela Engenharia de Processos". A liberação pode ser desfeita.
 Os pagamentos abatem primeiro as parcelas antecipadas e depois as após a HAWB.
+
+**Pagar também o valor segurado (v4.49, caso excepcional):** o Financeiro pode registrar o pagamento do invoice inteiro,
+incluindo o valor segurado (ex.: invoice de US$ 1.000 com US$ 100 segurados → pagamento de US$ 1.000). O sistema pede
+confirmação, o segurado deixa de ficar retido (não haverá liberação dele) e **o desconto continua aparecendo para a Importação
+deduzir no próximo invoice**. Corrigir ou excluir o pagamento devolve o valor ao segurado.
 
 ### Carga de histórico (temporária)
 Menu da conta → **Carga de histórico** (só Administrador): cadastra processos do passado de uma vez (fornecedor, nº,
