@@ -754,3 +754,9 @@ select.tipo-antigo { border-color: #e0a800; background: #fffbea; }
 .tabela-descontos .status { white-space: normal; line-height: 1.25; text-align: center; padding: .2rem .55rem; border-radius: 10px; }
 .tabela-descontos td:last-child { min-width: 140px; }
 .s-relatorio { background: #fff3c4; color: #6b5200; }
+/* v4.47: aba Descontos cabe na tela (cabeçalhos em duas linhas, colunas mais estreitas) */
+.tabela-descontos th, .tabela-descontos th.ordenavel { white-space: normal; line-height: 1.2; }
+.tabela-descontos th, .tabela-descontos td { padding-left: .4rem; padding-right: .4rem; }
+.tabela-descontos td.num { white-space: nowrap; }
+.tabela-descontos td:last-child { min-width: 150px; width: 150px; }
+.tabela-descontos thead select, .tabela-descontos thead input { min-width: 0; width: 100%; max-width: 130px; }
