@@ -223,7 +223,7 @@
 {# ---------- inspeção e desconto (Engenharia de Processos) ---------- #}
 <section class="bloco" id="inspecao">
   <h2>Inspeção e desconto <small>· Engenharia de Processos</small></h2>
-  {% if not r.data_chegada %}
+  {% if not r.data_chegada and not r.historico %}
     <p class="vazio">A inspeção é registrada após a chegada do invoice na fábrica.</p>
   {% else %}
   <dl class="dl-colunas">

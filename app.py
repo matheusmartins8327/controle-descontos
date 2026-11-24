@@ -49,7 +49,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.50"
+VERSAO = "4.51"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -1253,6 +1253,8 @@ def listar_pendencias(invoices, perfil=None):
         sit = r["situacao"]
         if sit == "CANCELADO":
             continue
+        if r["historico"]:  # v4.51: invoices da carga de histórico não geram pendências
+            continue
         if imp and sit == "CRIACAO":
             add(r, "Completar o cadastro: falta " + ", ".join(criacao_faltando(r)), "importacao")
         if imp and sit in ORDEM_LOGISTICA:
@@ -1395,7 +1397,7 @@ def progresso_fluxo(r):
     datas = {"COLETA": r["data_coleta"], "EMBARQUE": r["eta_real"], "DESEMBARACO": r["data_desembaraco"],
              "CHEGADA": r["data_chegada"]}
     for e in ORDEM_LOGISTICA:
-        passos.append((TITULO_ETAPA[e], etapa_concluida(r, e) and not (r["historico"] and not datas[e]), datas[e]))
+        passos.append((TITULO_ETAPA[e], etapa_concluida(r, e), datas[e]))  # histórico: etapas puladas (v4.51)
     passos.append(("Inspeção", r["tem_desconto"] is not None and bool(r["data_fim_inspecao"]), r["data_fim_inspecao"]))
     passos.append(("Pagamento", sit not in antes_pagamento + ("CANCELADO",), max(pagos) if pagos else None))
     # sem desconto confirmado na inspeção (ou histórico sem desconto), a etapa de dedução/liberação não se aplica
@@ -2674,7 +2676,7 @@ def invoice_inspecao(id):
     d = r["desconto"]
     if r["cancelado_em"]:
         abort(403)
-    if not r["data_chegada"]:
+    if not r["data_chegada"] and not r["historico"]:  # histórico: etapas até a chegada são puladas (v4.51)
         flash("A inspeção é registrada depois da chegada do invoice na fábrica.", "erro")
         return volta
     if not data_insp:
@@ -5416,14 +5418,15 @@ def gravar_carga_historico(d):
     db = get_db()
     fid = obter_fornecedor(d["fornecedor"])
     unica = d["condicao"][0] if len(d["condicao"]) == 1 else None
-    data_insp = d["data_hawb"] or d["data_assinatura"]
+    # v4.51: com desconto informado, a inspeção já está feita; sem desconto, fica para a Engenharia registrar
+    data_insp = (d["data_hawb"] or d["data_assinatura"]) if d["desconto"] else None
     iid = db.execute(
         "INSERT INTO invoices (fornecedor_id, numero, moeda, data_assinatura, condicao_tipo, condicao_dias, data_hawb,"
         " data_fim_inspecao, tem_desconto, obs, historico, pagamento_liberado_em, pagamento_liberado_por,"
         " pagamento_liberado_obs, criado_por, criado_em, cadastro_concluido_em)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
         (fid, d["numero"], d["moeda"], d["data_assinatura"], unica["tipo"] if unica else "MISTA",
-         unica["dias"] if unica else None, d["data_hawb"], data_insp, 1 if d["desconto"] else 0, d["obs"],
+         unica["dias"] if unica else None, d["data_hawb"], data_insp, 1 if d["desconto"] else None, d["obs"],
          agora(), g.usuario["id"], "Carga de histórico", g.usuario["id"], agora(), d["data_assinatura"])).lastrowid
     salvar_condicao(iid, d["condicao"])
     db.execute("INSERT INTO invoice_itens (invoice_id, codigo, item, quantidade, valor_unit_original, valor_unit)"
