@@ -49,7 +49,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.47"
+VERSAO = "4.48"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -511,6 +511,9 @@ def init_db():
             db.execute("UPDATE invoices SET duimp_dispensada = 1 WHERE data_desembaraco IS NOT NULL AND id NOT IN"
                        " (SELECT origem_id FROM arquivos WHERE origem = 'duimp')")
             db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v443_duimp', '1')")
+        # v4.48: pagamentos anteriores a esta versão sem cotação não viram pendência
+        if db.execute("SELECT 1 FROM configuracoes WHERE chave = 'v448_cotacao_desde'").fetchone() is None:
+            db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v448_cotacao_desde', ?)", (agora(),))
         if "cotacao" not in {r[1] for r in db.execute("PRAGMA table_info(pagamentos)")}:
             db.execute("ALTER TABLE pagamentos ADD COLUMN cotacao REAL")  # v4.43: R$ por unidade da moeda no pagamento
         # versão 4.44: tipos livres dos lançamentos que correspondem a uma categoria de custo passam a usar o nome dela
@@ -1296,6 +1299,14 @@ def listar_pendencias(invoices, perfil=None):
                     p["vencimento"], p["pendente"], alerta=vencido, atencao=p["vencimento"] <= lim_7)
         if fin and r["swifts_pendentes"]:
             add(r, f"Anexar o Swift ({r['swifts_pendentes']} pagamento(s))", "financeiro")
+        # v4.48: cotação não é obrigatória ao registrar, mas fica pendente até ser informada (em "Corrigir")
+        if fin and r["moeda"] != "BRL" and not r["historico"]:
+            desde = config("v448_cotacao_desde") or ""
+            sem_cot = [p for p in r["pagamentos"] if not p["cotacao"] and not p["historico"]
+                       and (p["registrado_em"] or "") >= desde]
+            if sem_cot:
+                add(r, "Informar a cotação do pagamento de " + ", ".join(fmt_data(p["data_pagamento"]) for p in sem_cot)
+                    + " (em Corrigir)", "financeiro", sem_cot[0]["data_pagamento"])
         for doc in r["docs_quebrados"]:
             add(r, f"Arquivo não encontrado na pasta da rede ({NOME_DOCUMENTO[doc['origem']]}): corrigir o caminho "
                    f"{doc['caminho']}", SETOR_DOCUMENTO[doc["origem"]], atencao=True)
@@ -2868,8 +2879,8 @@ def pagamento_novo(id):
         erro = "Informe a data do pagamento."
     elif valor is None or valor <= 0:
         erro = "Informe o valor pago."
-    elif r["moeda"] != "BRL" and (cotacao is None or cotacao <= 0):
-        erro = f"Informe a cotação do {r['moeda']} no momento do pagamento (R$ por 1 {r['moeda']})."
+    elif cotacao is not None and cotacao <= 0:
+        erro = "Cotação inválida: informe o valor em R$ por 1 unidade da moeda (ou deixe em branco e informe depois)."
     elif valor > limite + TOLERANCIA:
         erro = (f"O valor é maior que o disponível para {TIPOS_PAGAMENTO[tipo].lower()} "
                 f"({fmt_moeda(limite, r['moeda'])}).")

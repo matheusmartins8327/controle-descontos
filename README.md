@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.47)
+# Controle de Invoices e Descontos (v4.48)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -121,7 +121,8 @@ pendências de todos os setores (as do seu setor no topo), com a contagem por se
 número da NF). Invoices que já tinham data de desembaraço antes desta versão ficam dispensados.
 
 **Cotação no pagamento (v4.43):** em invoices em moeda estrangeira (USD, EUR, CHF), o registro de pagamento pede a **cotação da
-moeda no momento do pagamento** (R$ por 1 unidade, obrigatória). A tabela de pagamentos mostra a cotação e o valor em reais, e a
+moeda no momento do pagamento** (R$ por 1 unidade). Desde a v4.48 não é obrigatória ao registrar: sem ela, fica a
+pendência do Financeiro "Informar a cotação do pagamento" até ser informada em Corrigir. A tabela de pagamentos mostra a cotação e o valor em reais, e a
 cotação pode ser corrigida em "Corrigir". Invoices em reais não têm o campo.
 
 **Filtros no painel:** as tabelas de Pendências e de Invoices têm filtro em cada coluna (lista ou texto) e ordenação ao clicar no título da coluna.

@@ -403,7 +403,7 @@
     {% for p in r.pagamentos %}
       <tr><td>{{ p.data_pagamento|data }}</td><td>{{ TIPOS_PAGAMENTO[p.tipo] }}{% if p.obs %}<small class="bloco-linha">{{ p.obs }}</small>{% endif %}</td>
         <td class="num">{{ p.valor|moeda(m) }}</td>
-        {% if m != 'BRL' %}<td class="num">{{ ('R$ ' ~ p.cotacao|num(4)) if p.cotacao else '—' }}</td>
+        {% if m != 'BRL' %}<td class="num">{% if p.cotacao %}R$ {{ p.cotacao|num(4) }}{% elif p.historico %}—{% else %}<span class="ciencia c-pendente" title="Informe em Corrigir">Pendente</span>{% endif %}</td>
         <td class="num">{{ (p.valor * p.cotacao)|round(2)|moeda('BRL') if p.cotacao else '—' }}</td>{% endif %}
         <td>{{ p.banco or '—' }}</td>
         <td class="arquivos">
@@ -459,7 +459,7 @@
       <label>Valor pago ({{ m }}) *<input name="valor" id="valor-pagamento" inputmode="decimal" required>
         <small>Pode ser parcial.</small></label>
       <label>Banco<input name="banco" value="{{ r.banco_debito or '' }}"></label>
-      {% if m != 'BRL' %}<label>Cotação do {{ m }} no pagamento * <small>(R$ por 1 {{ m }})</small><input name="cotacao" id="cotacao-pagamento" inputmode="decimal" placeholder="ex.: 5,4321" required>
+      {% if m != 'BRL' %}<label>Cotação do {{ m }} no pagamento <small>(R$ por 1 {{ m }})</small><input name="cotacao" id="cotacao-pagamento" inputmode="decimal" placeholder="ex.: 5,4321">
         <small id="valor-brl"></small></label>{% endif %}
       <label class="largo">Arquivo do Swift<input type="file" name="swift_arquivo" multiple>
         <small>PDF ou imagem, até {{ ANEXO_MAX_MB }} MB. Pode anexar depois. O processo só é concluído com o Swift de todos os pagamentos.</small></label>
