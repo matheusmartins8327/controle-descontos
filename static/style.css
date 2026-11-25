@@ -767,3 +767,4 @@ select.tipo-antigo { border-color: #e0a800; background: #fffbea; }
 .cat { display: inline-block; min-width: 1.5rem; text-align: center; border-radius: 6px; font-weight: 700; font-size: .8rem; padding: .05rem .3rem; }
 .cat-a { background: #d4f0dc; color: #1d5a31; } .cat-b { background: #fff3c4; color: #6b5200; }
 .cat-c { background: #ffe0c2; color: #8a4500; } .cat-d { background: #fbd5d5; color: #8a1c1c; }
+.sem-trad { color: var(--suave); font-style: italic; }

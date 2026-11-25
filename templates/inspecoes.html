@@ -37,7 +37,7 @@
         {% for c in ['A','B','C','D'] %}<td class="num">{{ r.qtd[c]|qtd if r.qtd[c] else '' }}</td>{% endfor %}
         <td class="num" data-ordem="{{ r.pct_cd }}">{{ (r.pct_cd * 100)|num(1) }}%</td>
         <td data-filtro="{{ 'Pendente' if r.pendentes else 'OK' }}">{% if r.pendentes %}<span class="ciencia c-pendente" title="{{ r.pendentes|join(', ') }}">{{ r.pendentes|length }} termo(s)</span>{% else %}<small>OK</small>{% endif %}</td>
-        <td data-ordem="{{ r.data }}">{{ r.data|data }}</td>
+        <td data-ordem="{{ r.data }}">{{ r.data[:10]|data }}</td>
       </tr>
     {% endfor %}
     </tbody>

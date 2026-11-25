@@ -50,7 +50,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.53"
+VERSAO = "4.54"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -3251,6 +3251,15 @@ CAMPOS_GRAVADOS = ["invoice_excel", "numero_nf", "fornecedor_excel", "produto", 
                    "report_date", "lote", "area", "familia", "family", "qtde_nf", "vlr_unit_nf"]
 
 
+# v4.54: a padronização dos termos começou pouco antes de 01/07/2026; eventos com REPORT DATE anterior não geram
+# pendência de tradução (eventos sem REPORT DATE contam como novos)
+TRADUCAO_DESDE = "2026-07-01"
+
+
+def exige_traducao(e):
+    return (e["report_date"] or "9999")[:10] >= TRADUCAO_DESDE
+
+
 def glossario():
     return {r["chave"]: r["texto_en"] for r in get_db().execute("SELECT chave, texto_en FROM traducao_termos")}
 
@@ -3402,7 +3411,7 @@ def inspecoes():
     glos = glossario()
     resumo = {}
     for e in db.execute("SELECT grupo, invoice_id, invoice_excel, numero_nf, fornecedor_excel, quantidade, categoria,"
-                        " comentario, data_inclusao, reclass_em, categoria_original FROM inspecao_eventos"):
+                        " comentario, data_inclusao, reclass_em, categoria_original, report_date FROM inspecao_eventos"):
         r = resumo.setdefault(e["grupo"], {"grupo": e["grupo"], "invoice_id": e["invoice_id"], "invoice": e["invoice_excel"],
                                           "nf": e["numero_nf"], "fornecedor": e["fornecedor_excel"], "eventos": 0,
                                           "qtd": Counter(), "pendentes": set(), "data": "", "reclass": 0})
@@ -3411,8 +3420,9 @@ def inspecoes():
         r["data"] = max(r["data"], e["data_inclusao"] or "")
         if e["categoria"] != e["categoria_original"]:
             r["reclass"] += 1
-        _en, falta = insp.traduzir(e["comentario"], glos)
-        r["pendentes"].update(falta)
+        if exige_traducao(e):
+            _en, falta = insp.traduzir(e["comentario"], glos)
+            r["pendentes"].update(falta)
     invs = {i["id"]: i for i in db.execute(
         "SELECT i.id, i.numero, f.nome AS fornecedor, d.status AS desconto_status FROM invoices i"
         " JOIN fornecedores f ON f.id = i.fornecedor_id LEFT JOIN descontos d ON d.invoice_id = i.id")}
@@ -3537,9 +3547,11 @@ def inspecao_grupo(grupo):
     por_item = OrderedDict()
     for e in eventos:
         en, falta = insp.traduzir(e["comentario"], glos)
-        for k in falta:
-            pendentes[k] += 1
-        linhas.append({"e": e, "en": en, "falta": falta})
+        antigo = not exige_traducao(e)
+        if not antigo:
+            for k in falta:
+                pendentes[k] += 1
+        linhas.append({"e": e, "en": en, "falta": falta, "antigo": antigo})
         it = por_item.setdefault(e["produto"], {"descricao": e["descricao"], "qtd": Counter(), "total": 0})
         it["qtd"][e["categoria"]] += e["quantidade"] or 0
         it["total"] += e["quantidade"] or 0
@@ -3588,7 +3600,9 @@ def traducoes():
         return redirect(url_for("traducoes", aba=request.args.get("aba", "pendentes"), q=request.args.get("q", "")))
     glos = glossario()
     uso, exemplos, ultimo, invoices_termo = Counter(), {}, {}, {}
-    for e in db.execute("SELECT grupo, comentario, data_inclusao FROM inspecao_eventos"):
+    for e in db.execute("SELECT grupo, comentario, data_inclusao, report_date FROM inspecao_eventos"):
+        if not exige_traducao(e):  # antes da padronização dos termos: não conta como pendência
+            continue
         for original, k in insp.termos(e["comentario"]):
             if k in insp.SEM_DEFEITO:
                 continue

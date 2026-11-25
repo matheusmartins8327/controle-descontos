@@ -4,7 +4,8 @@
 <p class="voltar"><a href="{{ url_for('inspecoes') }}">← Inspeções de recebimento</a></p>
 <h1>Termos de tradução</h1>
 <p class="sub">Cada comentário do MEGA é separado em termos (pelas "/" e ";"); cada termo é traduzido <strong>uma única vez</strong> e o texto em
-  inglês é montado juntando as traduções com " / ", no formato atual. Termos sem tradução impedem o relatório ao fornecedor.</p>
+  inglês é montado juntando as traduções com " / ", no formato atual. Termos sem tradução impedem o relatório ao fornecedor.
+  Eventos com REPORT DATE anterior a 01/07/2026 (antes da padronização dos termos) não geram pendência.</p>
 <form method="get" class="filtros">
   <a class="btn {{ 'primario' if aba == 'pendentes' }}" href="{{ url_for('traducoes', aba='pendentes', q=q, periodo=periodo) }}">Pendentes ({{ total_pendentes }})</a>
   <a class="btn {{ 'primario' if aba == 'cadastrados' }}" href="{{ url_for('traducoes', aba='cadastrados', q=q) }}">Cadastrados ({{ cadastrados|length }})</a>
@@ -26,7 +27,7 @@
       <tbody>
       {% for t in pendentes %}
         <tr><td>{{ t.exemplo }}<input type="hidden" name="chave" value="{{ t.chave }}"></td><td class="num">{{ t.uso }}</td><td class="num">{{ t.invoices }}</td>
-          <td>{{ t.ultimo|data }}</td><td><input name="texto_en" {{ 'disabled' if not admin }} autocomplete="off" placeholder="—"></td></tr>
+          <td>{{ t.ultimo[:10]|data }}</td><td><input name="texto_en" {{ 'disabled' if not admin }} autocomplete="off" placeholder="—"></td></tr>
       {% endfor %}
       </tbody>
     </table>

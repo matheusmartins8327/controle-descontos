@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.53)
+# Controle de Invoices e Descontos (v4.54)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -240,7 +240,8 @@ Em **Descontos → Inspeções de recebimento** (Engenharia de Processos importa
 - Tela de cada invoice: resumo por item (A/B/C/D, inspecionado × quantidade do invoice) e os eventos com o defeito em inglês.
 - **Termos de tradução**: cada comentário é separado em termos (por "/" e ";"); cada termo é traduzido uma única vez e o texto em
   inglês junta as traduções com " / " (formato atual). O glossário inicial vem da aba "Tradução Ações" da planilha. Termos sem
-  tradução ficam pendentes (e vão impedir o relatório ao fornecedor).
+  tradução ficam pendentes (e vão impedir o relatório ao fornecedor). Eventos com REPORT DATE anterior a 01/07/2026 (antes da
+  padronização dos termos) não geram pendência de tradução.
 - A aba "Acompanhamento de Relatórios" da planilha não é mais necessária: o acompanhamento é o da aba Descontos.
 
 ### Fator de importação (v4.44)

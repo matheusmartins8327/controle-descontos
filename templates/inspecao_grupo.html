@@ -38,7 +38,7 @@
       <tr><td>{{ e.produto }}</td><td class="num">{{ e.quantidade|qtd }}</td>
         <td data-filtro="{{ e.categoria }}"><span class="cat cat-{{ e.categoria|lower }}">{{ e.categoria }}</span>{% if e.categoria != e.categoria_original %} <small title="{{ e.reclass_motivo or '' }}">(era {{ e.categoria_original }})</small>{% endif %}</td>
         <td><small>{{ e.comentario or '' }}</small></td>
-        <td>{% if x.en %}{{ x.en }}{% else %}<span class="ciencia c-pendente" title="Sem tradução: {{ x.falta|join(', ') }}">Traduzir: {{ x.falta|join(', ') }}</span>{% endif %}</td>
+        <td>{% if x.en %}{{ x.en }}{% elif x.antigo %}<small class="sem-trad" title="REPORT DATE antes de 01/07/2026 (antes da padronização dos termos): não é pendência">sem tradução (anterior a 07/2026)</small>{% else %}<span class="ciencia c-pendente" title="Sem tradução: {{ x.falta|join(', ') }}">Traduzir: {{ x.falta|join(', ') }}</span>{% endif %}</td>
         <td data-ordem="{{ e.data_inspecao or '' }}">{{ e.data_inspecao|data }}</td><td><small>{{ e.inspetor or '' }}</small></td><td>{{ e.lote or '' }}</td></tr>
     {% endfor %}
     </tbody>
