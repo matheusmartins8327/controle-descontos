@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.54)
+# Controle de Invoices e Descontos (v4.55)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -237,6 +237,8 @@ Em **Descontos → Inspeções de recebimento** (Engenharia de Processos importa
 - Como não há código único do evento, a comparação é por invoice: os eventos são trocados pelos da extração mais recente e as
   **reclassificações já feitas são mantidas** para o mesmo evento. Categoria diferente do critério do MEGA (feita na planilha) fica
   registrada como reclassificação.
+- A coluna "Última inclusão" da lista é a maior **REPORT DATE** dos eventos do invoice. Ao registrar o fim da inspeção no invoice,
+  a data vem preenchida com essa REPORT DATE (pode ser alterada).
 - Tela de cada invoice: resumo por item (A/B/C/D, inspecionado × quantidade do invoice) e os eventos com o defeito em inglês.
 - **Termos de tradução**: cada comentário é separado em termos (por "/" e ";"); cada termo é traduzido uma única vez e o texto em
   inglês junta as traduções com " / " (formato atual). O glossário inicial vem da aba "Tradução Ações" da planilha. Termos sem

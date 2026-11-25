@@ -258,7 +258,10 @@
     <form method="post" action="{{ url_for('invoice_inspecao', id=r.id) }}" enctype="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="grade">
-        <label>Data real do fim da inspeção *<input type="date" name="data_fim_inspecao" value="{{ r.data_fim_inspecao or hoje }}" required></label>
+        {% set rep = r.insp_resumo.report_date if r.insp_resumo else None %}
+        <label>Data real do fim da inspeção *<input type="date" name="data_fim_inspecao" value="{{ r.data_fim_inspecao or rep or hoje }}" required>
+          {% if rep and not r.data_fim_inspecao %}<small>Preenchida com a última REPORT DATE da inspeção (Agregador MEGA): {{ rep|data }}. Pode alterar.</small>
+          {% elif rep and r.data_fim_inspecao != rep %}<small>Última REPORT DATE da inspeção: {{ rep|data }}.</small>{% endif %}</label>
         <label>Tem desconto? *
           <select name="tem_desconto" id="tem_desconto">
             {% if not d %}<option value="" {{ 'selected' if r.tem_desconto is none }}>A definir (relatório de inspeção pendente)</option>{% endif %}

@@ -50,7 +50,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.54"
+VERSAO = "4.55"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2147,7 +2147,8 @@ def invoice_detalhe(id):
     r["relatorios"] = relatorios_desconto(r["desconto"]["id"]) if r["desconto"] else []
     r["insp_resumo"] = db.execute(
         "SELECT grupo, COUNT(*) AS eventos, SUM(quantidade) AS pecas,"
-        " SUM(CASE WHEN categoria IN ('C', 'D') THEN quantidade ELSE 0 END) AS cd FROM inspecao_eventos"
+        " SUM(CASE WHEN categoria IN ('C', 'D') THEN quantidade ELSE 0 END) AS cd, MAX(substr(report_date, 1, 10))"
+        " AS report_date FROM inspecao_eventos"
         " WHERE invoice_id = ? GROUP BY grupo", (id,)).fetchone()
     fator = fator_importacao(r)
     r["relatorios_revisao"] = arquivos_de("revisao", [v["id"] for v in revisoes])
@@ -3417,7 +3418,7 @@ def inspecoes():
                                           "qtd": Counter(), "pendentes": set(), "data": "", "reclass": 0})
         r["eventos"] += 1
         r["qtd"][e["categoria"] or "?"] += e["quantidade"] or 0
-        r["data"] = max(r["data"], e["data_inclusao"] or "")
+        r["data"] = max(r["data"], (e["report_date"] or "")[:10])  # v4.55: "última inclusão" = maior REPORT DATE
         if e["categoria"] != e["categoria_original"]:
             r["reclass"] += 1
         if exige_traducao(e):

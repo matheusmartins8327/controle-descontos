@@ -26,7 +26,7 @@
     <thead><tr><th data-filtro="lista">Fornecedor</th><th data-filtro="texto">Invoice</th><th data-filtro="texto">NF</th>
       <th class="num" data-filtro="nenhum" data-tipo="numero">Eventos</th><th class="num" data-filtro="nenhum" data-tipo="numero">Peças</th>
       <th class="num" data-filtro="nenhum">A</th><th class="num" data-filtro="nenhum">B</th><th class="num" data-filtro="nenhum">C</th><th class="num" data-filtro="nenhum">D</th>
-      <th class="num" data-filtro="nenhum" data-tipo="numero">% C+D</th><th data-filtro="lista">Tradução</th><th data-filtro="texto" data-tipo="data">Última inclusão</th></tr></thead>
+      <th class="num" data-filtro="nenhum" data-tipo="numero">% C+D</th><th data-filtro="lista">Tradução</th><th data-filtro="texto" data-tipo="data" title="Maior REPORT DATE dos eventos do invoice">Última inclusão</th></tr></thead>
     <tbody>
     {% for r in lista %}
       <tr class="clicavel" onclick="location='{{ url_for('inspecao_grupo', grupo=r.grupo) }}'">
@@ -37,7 +37,7 @@
         {% for c in ['A','B','C','D'] %}<td class="num">{{ r.qtd[c]|qtd if r.qtd[c] else '' }}</td>{% endfor %}
         <td class="num" data-ordem="{{ r.pct_cd }}">{{ (r.pct_cd * 100)|num(1) }}%</td>
         <td data-filtro="{{ 'Pendente' if r.pendentes else 'OK' }}">{% if r.pendentes %}<span class="ciencia c-pendente" title="{{ r.pendentes|join(', ') }}">{{ r.pendentes|length }} termo(s)</span>{% else %}<small>OK</small>{% endif %}</td>
-        <td data-ordem="{{ r.data }}">{{ r.data[:10]|data }}</td>
+        <td data-ordem="{{ r.data }}">{{ r.data|data if r.data else '—' }}</td>
       </tr>
     {% endfor %}
     </tbody>
