@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block titulo %}Prévia da importação{% endblock %}
+{% block conteudo %}
+<p class="voltar"><a href="{{ url_for('inspecoes') }}">← Inspeções de recebimento</a></p>
+<h1>Prévia da importação</h1>
+<p class="sub">{{ arquivo }} · aba "{{ aba }}" · {{ total }} evento(s). Confira e confirme: só os invoices marcados são gravados.</p>
+{% for a in avisos %}<div class="duimp-aviso">{{ a }}</div>{% endfor %}
+{% set n = namespace(novo=0, atualizar=0, igual=0, bloqueado=0) %}
+{% for p in plano %}{% if p.acao == 'novo' %}{% set n.novo = n.novo + 1 %}{% elif p.acao == 'atualizar' %}{% set n.atualizar = n.atualizar + 1 %}{% elif p.acao == 'igual' %}{% set n.igual = n.igual + 1 %}{% else %}{% set n.bloqueado = n.bloqueado + 1 %}{% endif %}{% endfor %}
+<section class="fluxo cards-imp">
+  <div class="fluxo-etapa"><span class="n">{{ n.novo }}</span><span class="rot">Invoices novos</span></div>
+  <div class="fluxo-etapa"><span class="n">{{ n.atualizar }}</span><span class="rot">Com mudança (atualizar)</span></div>
+  <div class="fluxo-etapa"><span class="n">{{ n.igual }}</span><span class="rot">Sem mudança</span></div>
+  <div class="fluxo-etapa {{ 'alerta-card' if n.bloqueado }}"><span class="n">{{ n.bloqueado }}</span><span class="rot">Relatório já enviado (não muda)</span></div>
+  <div class="fluxo-etapa"><span class="n">{{ termos_novos }}</span><span class="rot">Termos de tradução novos</span><small>da aba de traduções da planilha</small></div>
+</section>
+<form method="post" class="bloco">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% if termos_novos %}<label class="flag-etapa"><input type="checkbox" name="termos" value="1" checked> Carregar os {{ termos_novos }} termos de tradução da planilha (os já cadastrados no sistema não mudam)</label>{% endif %}
+  <div class="rolagem">
+  <table class="tabela-filtro" data-rotulo="invoices">
+    <thead><tr><th data-filtro="nenhum"><input type="checkbox" id="todos" checked title="Marcar/desmarcar todos"></th><th data-filtro="lista">Situação</th><th data-filtro="lista">Fornecedor</th><th data-filtro="texto">Invoice</th><th data-filtro="texto">NF</th>
+      <th class="num" data-filtro="nenhum">Eventos na planilha</th><th class="num" data-filtro="nenhum">Eventos atuais</th><th data-filtro="nenhum">Atenção</th></tr></thead>
+    <tbody>
+    {% for p in plano %}
+      <tr class="{{ 'linha-atencao' if p.acao == 'bloqueado' or p.itens_fora }}">
+        <td>{% if p.acao in ('novo', 'atualizar') %}<input type="checkbox" name="grupo" value="{{ p.grupo }}" class="sel-grupo" checked>{% endif %}</td>
+        <td data-filtro="{{ {'novo': 'Novo', 'atualizar': 'Atualizar', 'igual': 'Sem mudança', 'bloqueado': 'Relatório enviado'}[p.acao] }}">{{ {'novo': 'Novo', 'atualizar': 'Atualizar', 'igual': 'Sem mudança', 'bloqueado': 'Relatório enviado: não muda'}[p.acao] }}</td>
+        <td>{{ p.fornecedor or '—' }}</td>
+        <td>{{ p.invoice or '—' }}{% if not p.invoice_id %} <small class="etiqueta-xls" title="NF não cadastrada em nenhum invoice e número do invoice não encontrado: fica como está no Excel">Excel</small>{% endif %}</td>
+        <td>{{ p.nf or '⚠ sem NF' }}</td>
+        <td class="num">{{ p.eventos }}</td><td class="num">{{ p.atuais or '' }}</td>
+        <td><small>{% if p.itens_fora %}Itens que não estão no invoice: {{ p.itens_fora|join(', ') }}{% endif %}
+          {% if p.acao == 'bloqueado' %}A extração mudou depois do envio do relatório: confira.{% endif %}</small></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="linha-form"><button class="btn primario">Confirmar importação</button><a class="btn link" href="{{ url_for('inspecoes') }}">Cancelar</a></div>
+</form>
+<script>
+  document.getElementById('todos').addEventListener('change', e => document.querySelectorAll('.sel-grupo').forEach(c => c.checked = e.target.checked));
+</script>
+{% endblock %}

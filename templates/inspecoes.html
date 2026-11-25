@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block titulo %}Inspeções de recebimento{% endblock %}
+{% block conteudo %}
+<p class="voltar"><a href="{{ url_for('descontos') }}">← Descontos</a></p>
+<h1>Inspeções de recebimento</h1>
+<p class="sub">Eventos de inspeção extraídos do Agregador MEGA, ligados a cada invoice pela NF de entrada. Base dos relatórios de
+  desconto aos fornecedores. A importação é semanal: só os invoices com mudança são atualizados.</p>
+
+<div class="linha-form insp-topo">
+  {% if admin %}
+  <form method="post" action="{{ url_for('inspecoes_importar') }}" enctype="multipart/form-data" class="linha-form"
+        onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Lendo a planilha…'">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="cresce">Planilha extraída do Agregador MEGA (.xlsx)<input type="file" name="arquivo" accept=".xlsx,.xlsm" required></label>
+    <button class="btn primario">Importar (com prévia)</button>
+  </form>
+  {% endif %}
+  <a class="btn {{ 'primario' if pendentes_total }}" href="{{ url_for('traducoes') }}">Termos de tradução{% if pendentes_total %} · {{ pendentes_total }} pendente(s){% endif %}</a>
+</div>
+{% if importacoes %}<p class="sub">Últimas importações: {% for m in importacoes %}{{ m.criado_em|data }} ({{ m.usuario or '—' }}, {{ m.eventos }} evento(s) em {{ m.grupos }} invoice(s)){{ '; ' if not loop.last }}{% endfor %}</p>{% endif %}
+
+<section class="bloco">
+  {% if lista %}
+  <div class="rolagem">
+  <table class="tabela-filtro" data-rotulo="invoices">
+    <thead><tr><th data-filtro="lista">Fornecedor</th><th data-filtro="texto">Invoice</th><th data-filtro="texto">NF</th>
+      <th class="num" data-filtro="nenhum" data-tipo="numero">Eventos</th><th class="num" data-filtro="nenhum" data-tipo="numero">Peças</th>
+      <th class="num" data-filtro="nenhum">A</th><th class="num" data-filtro="nenhum">B</th><th class="num" data-filtro="nenhum">C</th><th class="num" data-filtro="nenhum">D</th>
+      <th class="num" data-filtro="nenhum" data-tipo="numero">% C+D</th><th data-filtro="lista">Tradução</th><th data-filtro="texto" data-tipo="data">Última inclusão</th></tr></thead>
+    <tbody>
+    {% for r in lista %}
+      <tr class="clicavel" onclick="location='{{ url_for('inspecao_grupo', grupo=r.grupo) }}'">
+        <td>{{ r.fornecedor or '—' }}</td>
+        <td><a href="{{ url_for('inspecao_grupo', grupo=r.grupo) }}">{{ r.invoice or '—' }}</a>{% if not r.invoice_id %} <small class="etiqueta-xls" title="Sem vínculo com um invoice do sistema: mostrado como está no Excel">Excel</small>{% endif %}</td>
+        <td>{{ r.nf or '—' }}</td>
+        <td class="num">{{ r.eventos }}</td><td class="num" data-ordem="{{ r.total }}">{{ r.total|qtd }}</td>
+        {% for c in ['A','B','C','D'] %}<td class="num">{{ r.qtd[c]|qtd if r.qtd[c] else '' }}</td>{% endfor %}
+        <td class="num" data-ordem="{{ r.pct_cd }}">{{ (r.pct_cd * 100)|num(1) }}%</td>
+        <td data-filtro="{{ 'Pendente' if r.pendentes else 'OK' }}">{% if r.pendentes %}<span class="ciencia c-pendente" title="{{ r.pendentes|join(', ') }}">{{ r.pendentes|length }} termo(s)</span>{% else %}<small>OK</small>{% endif %}</td>
+        <td data-ordem="{{ r.data }}">{{ r.data|data }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="vazio">Nenhuma inspeção importada ainda.{% if admin %} Envie a planilha do Agregador MEGA (na primeira vez, a base completa desde 2025).{% endif %}</p>{% endif %}
+</section>
+{% endblock %}

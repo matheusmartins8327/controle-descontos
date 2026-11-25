@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.52)
+# Controle de Invoices e Descontos (v4.53)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -227,6 +227,21 @@ mesmo sem data de chegada). Na carga, se não for informado desconto, a inspeç�
 Invoices cadastrados pelo fluxo normal também podem ser **tratados como histórico** (v4.52): em Sistema → "Tratar invoices como
 histórico" (vários números de uma vez) ou no invoice → Ações do administrador → "Tratar como histórico" (com "Voltar ao fluxo
 normal" para desfazer).
+
+### Inspeções de recebimento e tradução por termo (v4.53 — fase 1 dos relatórios de desconto)
+Em **Descontos → Inspeções de recebimento** (Engenharia de Processos importa; todos consultam):
+- **Importação semanal** da planilha extraída do Agregador MEGA (.xlsx), com **prévia**: invoices novos, com mudança, sem mudança e
+  com relatório já enviado (estes não mudam; só avisa). A primeira carga pode ser a base completa desde 2025.
+- **Vínculo com o invoice** pela **NF de entrada** (NUMERO_NF = número da NF do Desembaraço). Sem NF cadastrada, pelo número do invoice
+  da coluna INVOICE (sem o nome do fornecedor do fim); sem vínculo, o invoice aparece como está no Excel. NF vazia na planilha gera aviso.
+- Como não há código único do evento, a comparação é por invoice: os eventos são trocados pelos da extração mais recente e as
+  **reclassificações já feitas são mantidas** para o mesmo evento. Categoria diferente do critério do MEGA (feita na planilha) fica
+  registrada como reclassificação.
+- Tela de cada invoice: resumo por item (A/B/C/D, inspecionado × quantidade do invoice) e os eventos com o defeito em inglês.
+- **Termos de tradução**: cada comentário é separado em termos (por "/" e ";"); cada termo é traduzido uma única vez e o texto em
+  inglês junta as traduções com " / " (formato atual). O glossário inicial vem da aba "Tradução Ações" da planilha. Termos sem
+  tradução ficam pendentes (e vão impedir o relatório ao fornecedor).
+- A aba "Acompanhamento de Relatórios" da planilha não é mais necessária: o acompanhamento é o da aba Descontos.
 
 ### Fator de importação (v4.44)
 **Fator = 1 + custos não recuperáveis ÷ FOB em R$** (mesma conta da planilha de Follow Up de Importação).

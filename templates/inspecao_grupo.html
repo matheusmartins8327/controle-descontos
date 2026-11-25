@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block titulo %}Inspeção · {{ r.numero if r else e0.invoice_excel }}{% endblock %}
+{% block conteudo %}
+<p class="voltar"><a href="{{ url_for('inspecoes') }}">← Inspeções de recebimento</a>{% if r %} · <a href="{{ url_for('invoice_detalhe', id=r.id) }}#inspecao">Invoice {{ r.numero }}</a>{% endif %}</p>
+<h1>Inspeção de recebimento · {{ r.numero if r else e0.invoice_excel }}</h1>
+<p class="sub">{{ r.fornecedor if r else e0.fornecedor_excel }} · NF {{ e0.numero_nf or '—' }}
+  {% if not r %} · <strong>sem vínculo com um invoice do sistema</strong> (cadastre o número da NF no invoice para ligar){% endif %}</p>
+
+{% if pendentes %}<div class="duimp-aviso"><strong>{{ pendentes|length }} termo(s) sem tradução</strong> neste invoice: {{ pendentes.keys()|list|join(', ') }}.
+  {% if admin %}<a href="{{ url_for('traducoes') }}">Traduzir</a>{% endif %}</div>{% endif %}
+
+<section class="bloco">
+  <h2>Resumo por item</h2>
+  <div class="rolagem">
+  <table>
+    <thead><tr><th>Item</th><th>Descrição</th><th class="num">A</th><th class="num">B</th><th class="num">C</th><th class="num">D</th><th class="num">Inspecionado</th>{% if r %}<th class="num">No invoice</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for cod, it in por_item.items() %}
+      <tr class="{{ 'linha-atencao' if r and it.qtd_invoice is not none and (it.qtd_invoice - it.total)|abs > 0.001 }}"><td>{{ cod }}</td><td><small>{{ it.descricao }}</small></td>
+        {% for c in ['A','B','C','D'] %}<td class="num">{{ it.qtd[c]|qtd if it.qtd[c] else '' }}</td>{% endfor %}
+        <td class="num"><strong>{{ it.total|qtd }}</strong></td>
+        {% if r %}<td class="num">{{ it.qtd_invoice|qtd if it.qtd_invoice is not none else '⚠ não está no invoice' }}</td>{% endif %}</tr>
+    {% endfor %}
+    </tbody>
+    <tfoot><tr><th colspan="2">Total</th>{% for c in ['A','B','C','D'] %}<th class="num">{{ totais[c]|qtd }}{% if total %} <small>({{ (totais[c] / total * 100)|num(1) }}%)</small>{% endif %}</th>{% endfor %}<th class="num">{{ total|qtd }}</th>{% if r %}<th></th>{% endif %}</tr></tfoot>
+  </table>
+  </div>
+</section>
+
+<section class="bloco">
+  <h2>Eventos <small>· {{ eventos|length }}</small></h2>
+  <div class="rolagem">
+  <table class="tabela-filtro" data-rotulo="eventos">
+    <thead><tr><th data-filtro="lista">Item</th><th class="num" data-filtro="nenhum" data-tipo="numero">Qtd.</th><th data-filtro="lista">Categoria</th>
+      <th data-filtro="texto">Comentário (MEGA)</th><th data-filtro="texto">Defeito (inglês)</th><th data-filtro="texto" data-tipo="data">Inspeção</th><th data-filtro="lista">Inspetor</th><th data-filtro="texto">Lote</th></tr></thead>
+    <tbody>
+    {% for x in eventos %}{% set e = x.e %}
+      <tr><td>{{ e.produto }}</td><td class="num">{{ e.quantidade|qtd }}</td>
+        <td data-filtro="{{ e.categoria }}"><span class="cat cat-{{ e.categoria|lower }}">{{ e.categoria }}</span>{% if e.categoria != e.categoria_original %} <small title="{{ e.reclass_motivo or '' }}">(era {{ e.categoria_original }})</small>{% endif %}</td>
+        <td><small>{{ e.comentario or '' }}</small></td>
+        <td>{% if x.en %}{{ x.en }}{% else %}<span class="ciencia c-pendente" title="Sem tradução: {{ x.falta|join(', ') }}">Traduzir: {{ x.falta|join(', ') }}</span>{% endif %}</td>
+        <td data-ordem="{{ e.data_inspecao or '' }}">{{ e.data_inspecao|data }}</td><td><small>{{ e.inspetor or '' }}</small></td><td>{{ e.lote or '' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endblock %}

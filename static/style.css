@@ -760,3 +760,10 @@ select.tipo-antigo { border-color: #e0a800; background: #fffbea; }
 .tabela-descontos td.num { white-space: nowrap; }
 .tabela-descontos td:last-child { min-width: 150px; width: 150px; }
 .tabela-descontos thead select, .tabela-descontos thead input { min-width: 0; width: 100%; max-width: 130px; }
+
+/* v4.53: inspeção de recebimento e tradução */
+.insp-topo { gap: .8rem; flex-wrap: wrap; align-items: flex-end; margin-bottom: .6rem; }
+.etiqueta-xls { font-size: .7rem; padding: .05rem .4rem; border-radius: 99px; background: #eef1f6; color: var(--suave); }
+.cat { display: inline-block; min-width: 1.5rem; text-align: center; border-radius: 6px; font-weight: 700; font-size: .8rem; padding: .05rem .3rem; }
+.cat-a { background: #d4f0dc; color: #1d5a31; } .cat-b { background: #fff3c4; color: #6b5200; }
+.cat-c { background: #ffe0c2; color: #8a4500; } .cat-d { background: #fbd5d5; color: #8a1c1c; }

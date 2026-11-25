@@ -3,6 +3,8 @@
 {% block conteudo %}
 <h1>Descontos</h1>
 <p class="sub">Descontos por má qualidade registrados na inspeção dos invoices e descontos avulsos (sem invoice), cadastrados pela Engenharia de Processos.</p>
+<p class="linha-form"><a class="btn" href="{{ url_for('inspecoes') }}">Inspeções de recebimento (Agregador MEGA)</a>
+  <a class="btn link" href="{{ url_for('traducoes') }}">Termos de tradução</a></p>
 <div class="filtros">
   {% for k, v in [('abertos', 'Em aberto'), ('RELATORIO', 'Relatório de inspeção pendente'), ('PENDENTE', 'Relatório pendente de envio'), ('ENVIADO', 'Aguardando aprovação do fornecedor'), ('APROVADO', 'Aprovados'), ('todos', 'Todos'), ('avulsos', 'Descontos avulsos')] %}
   <a class="btn {{ 'primario' if filtro == k }}" href="{{ url_for('descontos', f=k) }}">{{ v }}</a>

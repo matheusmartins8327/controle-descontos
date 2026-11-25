@@ -223,6 +223,8 @@
 {# ---------- inspeção e desconto (Engenharia de Processos) ---------- #}
 <section class="bloco" id="inspecao">
   <h2>Inspeção e desconto <small>· Engenharia de Processos</small></h2>
+  {% if r.insp_resumo %}<p class="insp-resumo">Inspeção de recebimento (Agregador MEGA): <strong>{{ r.insp_resumo.eventos }} evento(s)</strong>,
+    {{ r.insp_resumo.pecas|qtd }} peça(s), {{ r.insp_resumo.cd|qtd }} em C/D · <a href="{{ url_for('inspecao_grupo', grupo=r.insp_resumo.grupo) }}">ver eventos</a></p>{% endif %}
   {% if not r.data_chegada and not r.historico %}
     <p class="vazio">A inspeção é registrada após a chegada do invoice na fábrica.</p>
   {% else %}

@@ -37,6 +37,7 @@ from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_t
                    send_file, session, url_for)
 
 import duimp as leitor_duimp  # leitura do extrato da DUIMP (PDF) para o fator de importação
+import inspecoes as insp  # inspeção de recebimento (Agregador MEGA) e tradução por termo
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -49,7 +50,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.52"
+VERSAO = "4.53"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -301,6 +302,33 @@ CREATE TABLE IF NOT EXISTS duimp_dados (
     arquivo_id INTEGER,                   -- PDF de onde os dados foram lidos (vazio = digitado)
     conferido_por INTEGER REFERENCES usuarios(id),
     conferido_em TEXT
+);
+-- versão 4.53: inspeção de recebimento (eventos extraídos do Agregador MEGA) e glossário de tradução por termo
+CREATE TABLE IF NOT EXISTS inspecao_eventos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    grupo TEXT NOT NULL,                  -- "inv:<id do invoice>" ou "xls:<invoice do Excel>" (sem vínculo)
+    invoice_id INTEGER REFERENCES invoices(id),
+    invoice_excel TEXT, numero_nf TEXT, fornecedor_excel TEXT,
+    produto TEXT, seq INTEGER, descricao TEXT, codigo_mega TEXT, quantidade REAL, criterio TEXT,
+    categoria_original TEXT,              -- pelo critério do MEGA
+    categoria TEXT,                       -- final (pode ser reclassificada pela Engenharia de Processos)
+    comentario TEXT, data_inclusao TEXT, data_inspecao TEXT, inspetor TEXT, cod_inspetor TEXT, report_date TEXT,
+    lote TEXT, area TEXT, familia TEXT, family TEXT, qtde_nf REAL, vlr_unit_nf REAL, outros TEXT,
+    reclass_por INTEGER REFERENCES usuarios(id), reclass_em TEXT, reclass_motivo TEXT,
+    importacao_id INTEGER, ordem INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_inspecao_grupo ON inspecao_eventos(grupo);
+CREATE INDEX IF NOT EXISTS idx_inspecao_invoice ON inspecao_eventos(invoice_id);
+CREATE TABLE IF NOT EXISTS inspecao_importacoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    arquivo TEXT, eventos INTEGER, grupos INTEGER, resumo TEXT,
+    criado_por INTEGER REFERENCES usuarios(id), criado_em TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS traducao_termos (
+    chave TEXT PRIMARY KEY,               -- termo normalizado (maiúsculas, sem acento)
+    texto_pt TEXT, texto_en TEXT NOT NULL,
+    origem TEXT,                          -- 'planilha' (cadastro antigo) ou 'sistema'
+    atualizado_por INTEGER REFERENCES usuarios(id), atualizado_em TEXT
 );
 -- Pagamentos registrados pelo Financeiro
 CREATE TABLE IF NOT EXISTS pagamentos (
@@ -2117,6 +2145,10 @@ def invoice_detalhe(id):
         "SELECT v.*, u.nome AS usuario FROM revisoes_desconto v LEFT JOIN usuarios u ON u.id = v.usuario_id"
         " WHERE v.desconto_id = ? ORDER BY v.id", (r["desconto"]["id"],)).fetchall() if r["desconto"] else []
     r["relatorios"] = relatorios_desconto(r["desconto"]["id"]) if r["desconto"] else []
+    r["insp_resumo"] = db.execute(
+        "SELECT grupo, COUNT(*) AS eventos, SUM(quantidade) AS pecas,"
+        " SUM(CASE WHEN categoria IN ('C', 'D') THEN quantidade ELSE 0 END) AS cd FROM inspecao_eventos"
+        " WHERE invoice_id = ? GROUP BY grupo", (id,)).fetchone()
     fator = fator_importacao(r)
     r["relatorios_revisao"] = arquivos_de("revisao", [v["id"] for v in revisoes])
     disponiveis = descontos_disponiveis(r["fornecedor_id"], r["moeda"], excluir_invoice_id=id)
@@ -3096,6 +3128,7 @@ def excluir_invoice(iid):
                " (SELECT id FROM lancamentos WHERE invoice_id = ?))", (iid, iid, iid))
     db.execute("DELETE FROM deducoes_avulsas WHERE invoice_id = ?", (iid,))
     db.execute("DELETE FROM duimp_dados WHERE invoice_id = ?", (iid,))
+    db.execute("DELETE FROM inspecao_eventos WHERE invoice_id = ?", (iid,))
     db.execute("DELETE FROM deducoes WHERE invoice_id = ? OR desconto_id IN (SELECT id FROM descontos WHERE invoice_id = ?)",
                (iid, iid))
     db.execute("DELETE FROM revisoes_desconto WHERE desconto_id IN (SELECT id FROM descontos WHERE invoice_id = ?)", (iid,))
@@ -3204,6 +3237,379 @@ def invoice_cancelar(id):
 # ---------------------------------------------------------------------------
 # Lista de descontos
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Inspeção de recebimento (v4.53): base de eventos do Agregador MEGA, importada toda semana
+# - Vínculo com o invoice pela NF de entrada (NUMERO_NF = número da NF do Desembaraço); sem NF cadastrada,
+#   pelo número do invoice da coluna INVOICE (sem o nome do fornecedor do fim); sem vínculo, fica o texto do Excel.
+# - Não há identificador único do evento: a importação compara invoice a invoice. Se o relatório ainda não foi
+#   enviado ao fornecedor, os eventos do invoice são trocados pelos da extração mais recente (as reclassificações
+#   já feitas são reaproveitadas para o mesmo evento); com relatório enviado, nada muda (só avisa).
+# ---------------------------------------------------------------------------
+PASTA_IMPORTACOES = os.path.join(os.path.dirname(DB_PATH), "importacoes")
+CAMPOS_GRAVADOS = ["invoice_excel", "numero_nf", "fornecedor_excel", "produto", "seq", "descricao", "codigo_mega",
+                   "quantidade", "criterio", "comentario", "data_inclusao", "data_inspecao", "inspetor", "cod_inspetor",
+                   "report_date", "lote", "area", "familia", "family", "qtde_nf", "vlr_unit_nf"]
+
+
+def glossario():
+    return {r["chave"]: r["texto_en"] for r in get_db().execute("SELECT chave, texto_en FROM traducao_termos")}
+
+
+def assinatura_evento(e):
+    """Identifica o mesmo evento entre duas extrações (não há código único no MEGA)."""
+    def v(x):
+        if x is None:
+            return ""
+        if isinstance(x, (int, float)):
+            return f"{float(x):g}"
+        t = str(x).strip()
+        try:  # número gravado como texto (ex.: critério "017", código do inspetor)
+            return f"{float(t):g}"
+        except ValueError:
+            return t
+    return "|".join(v(e[c]) for c in
+                    ("produto", "seq", "quantidade", "criterio", "comentario", "data_inspecao", "cod_inspetor", "lote"))
+
+
+def vincular_eventos(eventos):
+    """Preenche invoice_id e grupo de cada evento. Devolve avisos (NF vazia etc.)."""
+    db = get_db()
+    por_nf, por_numero = {}, {}
+    for i in db.execute("SELECT id, numero, numero_nf FROM invoices WHERE cancelado_em IS NULL"):
+        if i["numero_nf"]:
+            por_nf.setdefault(str(i["numero_nf"]).strip().lstrip("0"), []).append(i["id"])
+        por_numero.setdefault(i["numero"].strip().lower(), []).append(i["id"])
+    sem_nf = 0
+    for e in eventos:
+        nf = str(e.get("numero_nf") or "").strip()
+        e["numero_nf"] = nf or None
+        if not nf:
+            sem_nf += 1
+        iid = None
+        ids = por_nf.get(nf.lstrip("0")) if nf else None
+        if ids and len(ids) == 1:
+            iid = ids[0]
+        else:
+            ids = por_numero.get(insp.numero_invoice_excel(e.get("invoice_excel")).lower())
+            if ids and len(ids) == 1:
+                iid = ids[0]
+        e["invoice_id"] = iid
+        e["grupo"] = f"inv:{iid}" if iid else "xls:" + (str(e.get("invoice_excel") or "").strip() or f"NF {nf or '?'}")
+        crit = insp.categoria_do_criterio(e.get("criterio"))
+        cat = str(e.get("categoria") or "").strip().upper() or None
+        e["categoria_original"] = crit or cat
+        e["categoria"] = cat if cat in insp.CATEGORIAS else crit
+    avisos = []
+    if sem_nf:
+        avisos.append(f"{sem_nf} evento(s) sem NF de entrada (NUMERO_NF) na planilha: confira a extração.")
+    return avisos
+
+
+def grupos_atuais():
+    """{grupo: {qtd, assinaturas (multiconjunto), invoice_id, bloqueado}}"""
+    from collections import Counter
+    db = get_db()
+    res = {}
+    for e in db.execute("SELECT * FROM inspecao_eventos"):
+        g_ = res.setdefault(e["grupo"], {"qtd": 0, "assin": Counter(), "invoice_id": e["invoice_id"]})
+        g_["qtd"] += 1
+        g_["assin"][assinatura_evento(e)] += 1
+    for k, g_ in res.items():
+        g_["bloqueado"] = relatorio_enviado(g_["invoice_id"])
+    return res
+
+
+def relatorio_enviado(invoice_id):
+    """Depois de enviado o relatório (desconto enviado/aprovado), a extração não muda mais os eventos do invoice."""
+    if not invoice_id:
+        return False
+    d = get_db().execute("SELECT status FROM descontos WHERE invoice_id = ?", (invoice_id,)).fetchone()
+    return bool(d and d["status"] in ("ENVIADO", "APROVADO"))
+
+
+def plano_importacao(eventos):
+    """Compara a planilha com a base, invoice a invoice."""
+    from collections import Counter
+    atuais = grupos_atuais()
+    novos = {}
+    for e in eventos:
+        novos.setdefault(e["grupo"], []).append(e)
+    db = get_db()
+    nomes = {i["id"]: i for i in db.execute(
+        "SELECT i.id, i.numero, i.numero_nf, f.nome AS fornecedor FROM invoices i JOIN fornecedores f ON f.id = i.fornecedor_id")}
+    linhas = []
+    for gk, evs in novos.items():
+        atual = atuais.get(gk)
+        assin = Counter(assinatura_evento(e) for e in evs)
+        if not atual:
+            acao = "novo"
+        elif atual["assin"] == assin:
+            acao = "igual"
+        elif atual["bloqueado"]:
+            acao = "bloqueado"
+        else:
+            acao = "atualizar"
+        iid = evs[0]["invoice_id"]
+        inv = nomes.get(iid)
+        itens_inv = {x["codigo"].strip().upper() for x in db.execute(
+            "SELECT codigo FROM invoice_itens WHERE invoice_id = ? AND codigo IS NOT NULL", (iid,))} if iid else set()
+        fora = sorted({str(e["produto"]).strip() for e in evs if iid and itens_inv
+                       and str(e["produto"] or "").strip().upper() not in itens_inv})
+        linhas.append({"grupo": gk, "invoice_id": iid, "invoice": inv["numero"] if inv else evs[0].get("invoice_excel"),
+                       "fornecedor": inv["fornecedor"] if inv else evs[0].get("fornecedor_excel"),
+                       "nf": evs[0].get("numero_nf"), "eventos": len(evs), "atuais": atual["qtd"] if atual else 0,
+                       "acao": acao, "itens_fora": fora,
+                       "data": max((str(e.get("data_inclusao") or "") for e in evs), default="")})
+    linhas.sort(key=lambda x: (x["acao"] == "igual", x["data"]), reverse=False)
+    linhas.sort(key=lambda x: ({"atualizar": 0, "novo": 1, "bloqueado": 2, "igual": 3}[x["acao"]], x["data"]), reverse=False)
+    return linhas
+
+
+def gravar_eventos(grupo, eventos, importacao_id):
+    """Troca os eventos do grupo pelos da extração, reaproveitando as reclassificações do mesmo evento."""
+    from collections import defaultdict
+    db = get_db()
+    antigos = defaultdict(list)
+    for e in db.execute("SELECT * FROM inspecao_eventos WHERE grupo = ? ORDER BY ordem, id", (grupo,)):
+        if e["reclass_em"] or (e["categoria"] != e["categoria_original"]):
+            antigos[assinatura_evento(e)].append(e)
+    db.execute("DELETE FROM inspecao_eventos WHERE grupo = ?", (grupo,))
+    linhas = []
+    for ordem, e in enumerate(eventos):
+        cat, rp, re_, rm = e["categoria"], None, None, None
+        if cat and e["categoria_original"] and cat != e["categoria_original"]:
+            rm = "Reclassificado na planilha (antes do sistema)"
+        anterior = antigos.get(assinatura_evento(e))
+        if anterior:
+            a = anterior.pop(0)
+            cat, rp, re_, rm = a["categoria"], a["reclass_por"], a["reclass_em"], a["reclass_motivo"]
+        outros = json.dumps({k: e.get(k) for k in ("bu", "grupo_estoque", "qtde_pedida", "usuario_inclusao",
+                                                   "item_inspecionado", "status_lote", "vlr_item_nf", "data_nf")},
+                            default=str)
+        linhas.append((grupo, e["invoice_id"], *[None if e.get(c) is None else e.get(c) for c in CAMPOS_GRAVADOS],
+                       e["categoria_original"], cat, outros, rp, re_, rm, importacao_id, ordem))
+    db.executemany(
+        f"INSERT INTO inspecao_eventos (grupo, invoice_id, {', '.join(CAMPOS_GRAVADOS)}, categoria_original, categoria,"
+        f" outros, reclass_por, reclass_em, reclass_motivo, importacao_id, ordem)"
+        f" VALUES ({', '.join('?' * (len(CAMPOS_GRAVADOS) + 10))})", linhas)
+
+
+@app.route("/inspecoes")
+@login_obrigatorio
+def inspecoes():
+    from collections import Counter
+    db = get_db()
+    glos = glossario()
+    resumo = {}
+    for e in db.execute("SELECT grupo, invoice_id, invoice_excel, numero_nf, fornecedor_excel, quantidade, categoria,"
+                        " comentario, data_inclusao, reclass_em, categoria_original FROM inspecao_eventos"):
+        r = resumo.setdefault(e["grupo"], {"grupo": e["grupo"], "invoice_id": e["invoice_id"], "invoice": e["invoice_excel"],
+                                          "nf": e["numero_nf"], "fornecedor": e["fornecedor_excel"], "eventos": 0,
+                                          "qtd": Counter(), "pendentes": set(), "data": "", "reclass": 0})
+        r["eventos"] += 1
+        r["qtd"][e["categoria"] or "?"] += e["quantidade"] or 0
+        r["data"] = max(r["data"], e["data_inclusao"] or "")
+        if e["categoria"] != e["categoria_original"]:
+            r["reclass"] += 1
+        _en, falta = insp.traduzir(e["comentario"], glos)
+        r["pendentes"].update(falta)
+    invs = {i["id"]: i for i in db.execute(
+        "SELECT i.id, i.numero, f.nome AS fornecedor, d.status AS desconto_status FROM invoices i"
+        " JOIN fornecedores f ON f.id = i.fornecedor_id LEFT JOIN descontos d ON d.invoice_id = i.id")}
+    lista = []
+    for r in resumo.values():
+        inv = invs.get(r["invoice_id"])
+        if inv:
+            r["invoice"], r["fornecedor"], r["desconto_status"] = inv["numero"], inv["fornecedor"], inv["desconto_status"]
+        total = sum(r["qtd"].values())
+        r["total"] = total
+        r["pct_cd"] = (r["qtd"]["C"] + r["qtd"]["D"]) / total if total else 0
+        lista.append(r)
+    lista.sort(key=lambda r: r["data"], reverse=True)
+    importacoes = db.execute("SELECT m.*, u.nome AS usuario FROM inspecao_importacoes m LEFT JOIN usuarios u"
+                             " ON u.id = m.criado_por ORDER BY m.id DESC LIMIT 5").fetchall()
+    return render_template("inspecoes.html", lista=lista, importacoes=importacoes, admin=g.usuario["perfil"] == "admin",
+                           pendentes_total=len(set().union(*[r["pendentes"] for r in lista])) if lista else 0)
+
+
+@app.route("/inspecoes/importar", methods=["POST"])
+@somente_admin
+def inspecoes_importar():
+    arq = request.files.get("arquivo")
+    if not arq or not arq.filename.lower().endswith((".xlsx", ".xlsm")):
+        flash("Escolha a planilha (.xlsx) extraída do Agregador MEGA.", "erro")
+        return redirect(url_for("inspecoes"))
+    try:
+        eventos, traducoes, avisos, aba = insp.ler_planilha(io.BytesIO(arq.read()))
+    except Exception as e:
+        app.logger.warning("Falha ao ler a planilha de inspeções: %s", e)
+        flash("Não foi possível ler a planilha. Confira se é um arquivo .xlsx válido.", "erro")
+        return redirect(url_for("inspecoes"))
+    if not eventos:
+        for a in avisos or ["A planilha não tem eventos."]:
+            flash(a, "erro")
+        return redirect(url_for("inspecoes"))
+    os.makedirs(PASTA_IMPORTACOES, exist_ok=True)
+    for antigo in glob.glob(os.path.join(PASTA_IMPORTACOES, "*.json")):  # prévias abandonadas
+        try:
+            if datetime.now().timestamp() - os.path.getmtime(antigo) > 86400:
+                os.remove(antigo)
+        except OSError:
+            pass
+    token = secrets.token_hex(8)
+    with open(os.path.join(PASTA_IMPORTACOES, f"{token}.json"), "w", encoding="utf-8") as fh:
+        json.dump({"arquivo": arq.filename, "aba": aba, "eventos": eventos, "traducoes": traducoes, "avisos": avisos},
+                  fh, default=str)
+    return redirect(url_for("inspecoes_previa", token=token))
+
+
+def carregar_previa(token):
+    if not re.fullmatch(r"[0-9a-f]{16}", token or ""):
+        abort(404)
+    caminho = os.path.join(PASTA_IMPORTACOES, f"{token}.json")
+    if not os.path.exists(caminho):
+        flash("A prévia expirou: envie a planilha de novo.", "erro")
+        return None, caminho
+    with open(caminho, encoding="utf-8") as fh:
+        return json.load(fh), caminho
+
+
+@app.route("/inspecoes/importar/<token>", methods=["GET", "POST"])
+@somente_admin
+def inspecoes_previa(token):
+    dados, caminho = carregar_previa(token)
+    if dados is None:
+        return redirect(url_for("inspecoes"))
+    eventos = dados["eventos"]
+    avisos = dados["avisos"] + vincular_eventos(eventos)
+    plano = plano_importacao(eventos)
+    termos_planilha = insp.termos_das_traducoes(dados["traducoes"]) if dados["traducoes"] else {}
+    existentes = set(glossario())
+    termos_novos = {k: v for k, v in termos_planilha.items() if k not in existentes}
+    if request.method == "POST":
+        db = get_db()
+        escolhidos = set(request.form.getlist("grupo"))
+        por_grupo = {}
+        for e in eventos:
+            por_grupo.setdefault(e["grupo"], []).append(e)
+        aplicar = [p for p in plano if p["grupo"] in escolhidos and p["acao"] in ("novo", "atualizar")]
+        mid = db.execute("INSERT INTO inspecao_importacoes (arquivo, eventos, grupos, resumo, criado_por, criado_em)"
+                         " VALUES (?, ?, ?, ?, ?, ?)", (dados["arquivo"], sum(p["eventos"] for p in aplicar), len(aplicar),
+                                                        None, g.usuario["id"], agora())).lastrowid
+        for p in aplicar:
+            gravar_eventos(p["grupo"], por_grupo[p["grupo"]], mid)
+            if p["invoice_id"]:
+                registrar_evento(p["invoice_id"], "Inspeção de recebimento importada do Agregador MEGA",
+                                 f"{p['eventos']} evento(s)" + (" (atualizados)" if p["acao"] == "atualizar" else ""))
+        n_termos = 0
+        if request.form.get("termos") and termos_novos:
+            db.executemany("INSERT OR IGNORE INTO traducao_termos (chave, texto_pt, texto_en, origem, atualizado_por,"
+                           " atualizado_em) VALUES (?, ?, ?, 'planilha', ?, ?)",
+                           [(k, k.capitalize(), v, g.usuario["id"], agora()) for k, v in termos_novos.items()])
+            n_termos = len(termos_novos)
+        resumo = {"novos": sum(1 for p in aplicar if p["acao"] == "novo"),
+                  "atualizados": sum(1 for p in aplicar if p["acao"] == "atualizar"), "termos": n_termos}
+        db.execute("UPDATE inspecao_importacoes SET resumo = ? WHERE id = ?", (json.dumps(resumo), mid))
+        db.commit()
+        try:
+            os.remove(caminho)
+        except OSError:
+            pass
+        flash(f"Importação concluída: {resumo['novos']} invoice(s) novo(s), {resumo['atualizados']} atualizado(s), "
+              f"{sum(p['eventos'] for p in aplicar)} evento(s)." + (f" {n_termos} termo(s) de tradução carregado(s)."
+                                                                   if n_termos else ""), "ok")
+        return redirect(url_for("inspecoes"))
+    return render_template("inspecoes_previa.html", plano=plano, avisos=avisos, arquivo=dados["arquivo"], aba=dados["aba"],
+                           total=len(eventos), termos_novos=len(termos_novos), token=token)
+
+
+@app.route("/inspecoes/<path:grupo>")
+@login_obrigatorio
+def inspecao_grupo(grupo):
+    from collections import Counter, OrderedDict
+    db = get_db()
+    eventos = db.execute("SELECT * FROM inspecao_eventos WHERE grupo = ? ORDER BY produto, ordem", (grupo,)).fetchall()
+    if not eventos:
+        abort(404)
+    glos = glossario()
+    r = carregar_invoice(eventos[0]["invoice_id"]) if eventos[0]["invoice_id"] else None
+    linhas, pendentes = [], Counter()
+    por_item = OrderedDict()
+    for e in eventos:
+        en, falta = insp.traduzir(e["comentario"], glos)
+        for k in falta:
+            pendentes[k] += 1
+        linhas.append({"e": e, "en": en, "falta": falta})
+        it = por_item.setdefault(e["produto"], {"descricao": e["descricao"], "qtd": Counter(), "total": 0})
+        it["qtd"][e["categoria"]] += e["quantidade"] or 0
+        it["total"] += e["quantidade"] or 0
+    itens_inv = {x["codigo"].strip().upper(): x["quantidade"] for x in r["itens"] if x["codigo"]} if r else {}
+    for cod, it in por_item.items():
+        it["qtd_invoice"] = itens_inv.get(str(cod or "").strip().upper())
+    totais = Counter()
+    for it in por_item.values():
+        totais.update(it["qtd"])
+    return render_template("inspecao_grupo.html", grupo=grupo, eventos=linhas, r=r, por_item=por_item, totais=totais,
+                           total=sum(totais.values()), pendentes=pendentes, e0=eventos[0],
+                           admin=g.usuario["perfil"] == "admin")
+
+
+@app.route("/traducoes", methods=["GET", "POST"])
+@login_obrigatorio
+def traducoes():
+    """Glossário PT -> EN por termo. Os termos pendentes (usados nos eventos e ainda sem tradução) ficam no topo."""
+    from collections import Counter
+    db = get_db()
+    admin = g.usuario["perfil"] == "admin"
+    if request.method == "POST":
+        if not admin:
+            abort(403)
+        f = request.form
+        n = 0
+        for chave, en in zip(f.getlist("chave"), f.getlist("texto_en")):
+            chave, en = insp.chave_termo(chave), " ".join(en.split())[:200]
+            if not chave:
+                continue
+            if f.get("acao") == "excluir":
+                continue
+            if en:
+                db.execute("INSERT INTO traducao_termos (chave, texto_pt, texto_en, origem, atualizado_por, atualizado_em)"
+                           " VALUES (?, ?, ?, 'sistema', ?, ?) ON CONFLICT(chave) DO UPDATE SET texto_en = excluded.texto_en,"
+                           " origem = 'sistema', atualizado_por = excluded.atualizado_por, atualizado_em = excluded.atualizado_em",
+                           (chave, chave.capitalize(), en, g.usuario["id"], agora()))
+                n += 1
+        if f.get("acao") == "excluir" and f.get("excluir"):
+            db.execute("DELETE FROM traducao_termos WHERE chave = ?", (f.get("excluir"),))
+            db.commit()
+            flash("Termo excluído.", "ok")
+            return redirect(url_for("traducoes", aba="cadastrados"))
+        db.commit()
+        flash(f"{n} tradução(ões) salva(s)." if n else "Nenhuma tradução preenchida.", "ok" if n else "erro")
+        return redirect(url_for("traducoes", aba=request.args.get("aba", "pendentes"), q=request.args.get("q", "")))
+    glos = glossario()
+    uso, exemplos, ultimo, invoices_termo = Counter(), {}, {}, {}
+    for e in db.execute("SELECT grupo, comentario, data_inclusao FROM inspecao_eventos"):
+        for original, k in insp.termos(e["comentario"]):
+            if k in insp.SEM_DEFEITO:
+                continue
+            uso[k] += 1
+            exemplos.setdefault(k, original)
+            ultimo[k] = max(ultimo.get(k, ""), e["data_inclusao"] or "")
+            invoices_termo.setdefault(k, set()).add(e["grupo"])
+    busca = insp.chave_termo(request.args.get("q", ""))
+    periodo = request.args.get("periodo", "180")
+    desde = somar_dias(hoje(), -int(periodo)) if periodo.isdigit() else ""
+    pendentes = [{"chave": k, "exemplo": exemplos[k], "uso": n, "ultimo": ultimo[k], "invoices": len(invoices_termo[k])}
+                 for k, n in uso.items() if k not in glos and (not busca or busca in k) and ultimo[k][:10] >= desde]
+    pendentes.sort(key=lambda x: (x["uso"], x["ultimo"]), reverse=True)  # os mais usados primeiro
+    cadastrados = [dict(t) | {"uso": uso.get(t["chave"], 0)} for t in db.execute(
+        "SELECT t.*, u.nome AS usuario FROM traducao_termos t LEFT JOIN usuarios u ON u.id = t.atualizado_por"
+        " ORDER BY t.chave") if not busca or busca in t["chave"]]
+    return render_template("traducoes.html", pendentes=pendentes[:300], total_pendentes=len(pendentes), periodo=periodo,
+                           cadastrados=cadastrados, aba=request.args.get("aba", "pendentes"), admin=admin,
+                           q=request.args.get("q", ""))
+
+
 @app.route("/descontos")
 @login_obrigatorio
 def descontos():
@@ -3539,7 +3945,7 @@ def sistema():
 
 # Tabelas com dados de invoices (na ordem de exclusão). Usuários, fornecedores, configurações (e-mails,
 # destinatários, agendador) e a conta de envio são mantidos.
-TABELAS_INVOICES = ["duimp_dados", "revisoes_desconto", "deducoes", "deducoes_avulsas", "descontos", "pagamentos", "invoice_itens", "condicao_parcelas",
+TABELAS_INVOICES = ["inspecao_eventos", "duimp_dados", "revisoes_desconto", "deducoes", "deducoes_avulsas", "descontos", "pagamentos", "invoice_itens", "condicao_parcelas",
                     "anexos", "lancamento_anexos", "lancamentos", "eventos", "notificacoes_estado", "invoices"]
 
 

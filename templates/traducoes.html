@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block titulo %}Termos de tradução{% endblock %}
+{% block conteudo %}
+<p class="voltar"><a href="{{ url_for('inspecoes') }}">← Inspeções de recebimento</a></p>
+<h1>Termos de tradução</h1>
+<p class="sub">Cada comentário do MEGA é separado em termos (pelas "/" e ";"); cada termo é traduzido <strong>uma única vez</strong> e o texto em
+  inglês é montado juntando as traduções com " / ", no formato atual. Termos sem tradução impedem o relatório ao fornecedor.</p>
+<form method="get" class="filtros">
+  <a class="btn {{ 'primario' if aba == 'pendentes' }}" href="{{ url_for('traducoes', aba='pendentes', q=q, periodo=periodo) }}">Pendentes ({{ total_pendentes }})</a>
+  <a class="btn {{ 'primario' if aba == 'cadastrados' }}" href="{{ url_for('traducoes', aba='cadastrados', q=q) }}">Cadastrados ({{ cadastrados|length }})</a>
+  <input type="hidden" name="aba" value="{{ aba }}">
+  {% if aba == 'pendentes' %}<select name="periodo" onchange="this.form.submit()">
+    {% for v, t in [('90', 'Usados nos últimos 3 meses'), ('180', 'Usados nos últimos 6 meses'), ('365', 'Usados no último ano'), ('todos', 'Todo o histórico')] %}<option value="{{ v }}" {{ 'selected' if periodo == v }}>{{ t }}</option>{% endfor %}</select>{% endif %}
+  <input name="q" value="{{ q }}" placeholder="Buscar termo"><button class="btn">Buscar</button>
+</form>
+
+{% if aba == 'pendentes' %}
+<section class="bloco">
+  {% if pendentes %}
+  <form method="post" action="{{ url_for('traducoes', aba='pendentes', q=q) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <p class="sub">Os mais usados primeiro{% if total_pendentes > pendentes|length %} (mostrando {{ pendentes|length }} de {{ total_pendentes }}; use a busca){% endif %}. Preencha os que quiser e salve.</p>
+    <div class="rolagem">
+    <table>
+      <thead><tr><th>Termo (como aparece no MEGA)</th><th class="num">Ocorrências</th><th class="num">Invoices</th><th>Último uso</th><th>Tradução (inglês)</th></tr></thead>
+      <tbody>
+      {% for t in pendentes %}
+        <tr><td>{{ t.exemplo }}<input type="hidden" name="chave" value="{{ t.chave }}"></td><td class="num">{{ t.uso }}</td><td class="num">{{ t.invoices }}</td>
+          <td>{{ t.ultimo|data }}</td><td><input name="texto_en" {{ 'disabled' if not admin }} autocomplete="off" placeholder="—"></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% if admin %}<button class="btn primario">Salvar traduções</button>{% endif %}
+  </form>
+  {% else %}<p class="vazio">Nenhum termo pendente{{ ' para a busca' if q }}.</p>{% endif %}
+</section>
+{% else %}
+<section class="bloco">
+  {% if admin %}
+  <form method="post" action="{{ url_for('traducoes', aba='cadastrados', q=q) }}" class="linha-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Novo termo (português)<input name="chave" required></label><label class="cresce">Tradução (inglês)<input name="texto_en" required></label>
+    <button class="btn">Adicionar</button>
+  </form>
+  {% endif %}
+  <div class="rolagem">
+  <table class="tabela-filtro" data-rotulo="termos">
+    <thead><tr><th data-filtro="texto">Termo</th><th data-filtro="texto">Tradução (inglês)</th><th class="num" data-filtro="nenhum" data-tipo="numero">Ocorrências</th><th data-filtro="lista">Origem</th><th data-filtro="nenhum"></th></tr></thead>
+    <tbody>
+    {% for t in cadastrados %}
+      <tr><td>{{ t.chave }}</td>
+        <td>{% if admin %}<form method="post" action="{{ url_for('traducoes', aba='cadastrados', q=q) }}" class="linha-mini">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="chave" value="{{ t.chave }}">
+            <input name="texto_en" value="{{ t.texto_en }}"><button class="btn pequeno">Salvar</button></form>{% else %}{{ t.texto_en }}{% endif %}</td>
+        <td class="num">{{ t.uso }}</td><td><small>{{ 'Planilha (cadastro antigo)' if t.origem == 'planilha' else 'Sistema' }}{% if t.usuario %} · {{ t.usuario }}{% endif %}</small></td>
+        <td>{% if admin %}<form method="post" action="{{ url_for('traducoes', aba='cadastrados', q=q) }}" onsubmit="return confirm('Excluir o termo {{ t.chave|replace("'", "") }}?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="excluir"><input type="hidden" name="excluir" value="{{ t.chave }}">
+            <button class="btn pequeno link perigo-txt">Excluir</button></form>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
