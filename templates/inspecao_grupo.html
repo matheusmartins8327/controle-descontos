@@ -1,41 +1,132 @@
 {% extends "base.html" %}
 {% block titulo %}Inspeção · {{ r.numero if r else e0.invoice_excel }}{% endblock %}
 {% block conteudo %}
+{% set m = r.moeda if r else 'USD' %}
 <p class="voltar"><a href="{{ url_for('inspecoes') }}">← Inspeções de recebimento</a>{% if r %} · <a href="{{ url_for('invoice_detalhe', id=r.id) }}#inspecao">Invoice {{ r.numero }}</a>{% endif %}</p>
 <h1>Inspeção de recebimento · {{ r.numero if r else e0.invoice_excel }}</h1>
 <p class="sub">{{ r.fornecedor if r else e0.fornecedor_excel }} · NF {{ e0.numero_nf or '—' }}
-  {% if not r %} · <strong>sem vínculo com um invoice do sistema</strong> (cadastre o número da NF no invoice para ligar){% endif %}</p>
+  {% if not r %} · <strong>sem vínculo com um invoice do sistema</strong> (cadastre o número da NF no invoice para ligar e calcular o desconto){% endif %}</p>
 
 {% if pendentes %}<div class="duimp-aviso"><strong>{{ pendentes|length }} termo(s) sem tradução</strong> neste invoice: {{ pendentes.keys()|list|join(', ') }}.
   {% if admin %}<a href="{{ url_for('traducoes') }}">Traduzir</a>{% endif %}</div>{% endif %}
 
-<section class="bloco">
-  <h2>Resumo por item</h2>
+{% if calc %}
+<section class="bloco" id="fechamento">
+  <h2>Fechamento do relatório de desconto</h2>
+  <p class="sub">Política: <strong>{{ calc.politica_txt }}</strong>{% if calc.politica.propria %} (própria do fornecedor){% else %} (padrão){% endif %}
+    · <a href="{{ url_for('politicas_desconto') }}">Políticas de desconto</a>.
+    Desconto = preço FOB × (qtd. C × % C + qtd. D × % D). O fornecedor recebe só a categoria final.</p>
+  {% if calc.divergencias %}<div class="duimp-aviso"><strong>Quantidade inspecionada diferente do invoice</strong> (pode ser amostra ou inspeção em andamento):
+    <ul>{% for d in calc.divergencias %}<li>{{ d }}</li>{% endfor %}</ul></div>{% endif %}
   <div class="rolagem">
-  <table>
-    <thead><tr><th>Item</th><th>Descrição</th><th class="num">A</th><th class="num">B</th><th class="num">C</th><th class="num">D</th><th class="num">Inspecionado</th>{% if r %}<th class="num">No invoice</th>{% endif %}</tr></thead>
+  <table class="tabela-calc">
+    <thead><tr><th>Item</th><th class="num">A</th><th class="num">B</th><th class="num">C</th><th class="num">D</th><th class="num">% A+B</th>
+      <th class="num">Inspec.</th><th class="num">Invoice</th><th class="num">FOB ({{ m }})</th><th class="num">% C</th><th class="num">% D</th><th class="num">Desconto</th>{% if admin %}<th></th>{% endif %}</tr></thead>
     <tbody>
-    {% for cod, it in por_item.items() %}
-      <tr class="{{ 'linha-atencao' if r and it.qtd_invoice is not none and (it.qtd_invoice - it.total)|abs > 0.001 }}"><td>{{ cod }}</td><td><small>{{ it.descricao }}</small></td>
-        {% for c in ['A','B','C','D'] %}<td class="num">{{ it.qtd[c]|qtd if it.qtd[c] else '' }}</td>{% endfor %}
-        <td class="num"><strong>{{ it.total|qtd }}</strong></td>
-        {% if r %}<td class="num">{{ it.qtd_invoice|qtd if it.qtd_invoice is not none else '⚠ não está no invoice' }}</td>{% endif %}</tr>
+    {% for l in calc.linhas %}
+      <tr class="{{ 'linha-atencao' if l.qtd_invoice is none or (l.qtd_invoice - l.inspecionado)|abs > 0.001 }}">
+        <td>{{ l.codigo }}<small class="bloco-linha">{{ (l.descricao or '')[:40] }}</small></td>
+        {% for c in ['A','B','C','D'] %}<td class="num">{{ l[c]|qtd if l[c] else '' }}</td>{% endfor %}
+        <td class="num">{{ (l.pct_ab * 100)|num(1) }}%</td><td class="num">{{ l.inspecionado|qtd }}</td>
+        <td class="num">{{ l.qtd_invoice|qtd if l.qtd_invoice is not none else '—' }}</td>
+        <td class="num">{{ l.preco|num(2) if l.preco is not none else '—' }}</td>
+        <td class="num {{ 'ajustado' if l.origem != 'política' }}" title="{{ l.origem }}">{{ l.pct_c|num(0) }}%</td>
+        <td class="num {{ 'ajustado' if l.origem != 'política' }}" title="{{ l.origem }}">{{ l.pct_d|num(0) }}%</td>
+        <td class="num"><strong>{{ l.desconto|moeda(m) if l.desconto else '' }}</strong></td>
+        {% if admin %}<td><details class="ajuste-item"><summary>Ajustar</summary>
+          <form method="post" action="{{ url_for('desconto_ajuste', id=r.id) }}" class="linha-mini">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="produto" value="{{ l.chave }}">
+            <input name="pct_c" placeholder="% C" inputmode="decimal" value="{{ l.ajuste.pct_c|num(0) if l.ajuste and l.ajuste.pct_c is not none else '' }}">
+            <input name="pct_d" placeholder="% D" inputmode="decimal" value="{{ l.ajuste.pct_d|num(0) if l.ajuste and l.ajuste.pct_d is not none else '' }}">
+            <input name="motivo" placeholder="Motivo *" required><button class="btn pequeno">Salvar</button></form>
+          <small>Vazio = volta à política (ou ao ajuste geral).</small></details></td>{% endif %}
+      </tr>
     {% endfor %}
     </tbody>
-    <tfoot><tr><th colspan="2">Total</th>{% for c in ['A','B','C','D'] %}<th class="num">{{ totais[c]|qtd }}{% if total %} <small>({{ (totais[c] / total * 100)|num(1) }}%)</small>{% endif %}</th>{% endfor %}<th class="num">{{ total|qtd }}</th>{% if r %}<th></th>{% endif %}</tr></tfoot>
+    <tfoot>
+      <tr><th>Total</th>{% for c in ['A','B','C','D'] %}<th class="num">{{ calc.total_cat[c]|qtd }}{% if calc.inspecionado %} <small>({{ (calc.total_cat[c] / calc.inspecionado * 100)|num(1) }}%)</small>{% endif %}</th>{% endfor %}
+        <th></th><th class="num">{{ calc.inspecionado|qtd }}</th><th colspan="4" class="num">Desconto total</th><th class="num">{{ calc.total|moeda(m) }}</th>{% if admin %}<th></th>{% endif %}</tr>
+      <tr><th colspan="8">Valor dos produtos (FOB)</th><th class="num" colspan="4">{{ calc.valor_produtos|moeda(m) }}</th><th class="num" colspan="{{ 2 if admin else 1 }}">final {{ (calc.valor_produtos - calc.total)|moeda(m) }}</th></tr>
+    </tfoot>
   </table>
   </div>
+  {% if admin %}
+  <div class="fech-acoes">
+    <details class="ajuste-geral" {{ 'open' if calc.geral }}>
+      <summary>Ajuste geral do invoice{% if calc.geral %}: C {{ calc.geral.pct_c|num(0) ~ '%' if calc.geral.pct_c is not none else 'política' }} · D {{ calc.geral.pct_d|num(0) ~ '%' if calc.geral.pct_d is not none else 'política' }}{% endif %}</summary>
+      <form method="post" action="{{ url_for('desconto_ajuste', id=r.id) }}" class="linha-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>% C (todos os itens)<input name="pct_c" inputmode="decimal" value="{{ calc.geral.pct_c|num(0) if calc.geral and calc.geral.pct_c is not none else '' }}"></label>
+        <label>% D (todos os itens)<input name="pct_d" inputmode="decimal" value="{{ calc.geral.pct_d|num(0) if calc.geral and calc.geral.pct_d is not none else '' }}"></label>
+        <label class="cresce">Motivo *<input name="motivo" required></label><button class="btn">Salvar ajuste geral</button>
+      </form><small>Vazio = volta à política. O ajuste de um item vale mais que o geral.</small>
+    </details>
+    <form method="post" action="{{ url_for('desconto_versao', id=r.id) }}" class="linha-form salvar-versao">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% if versoes %}<label class="cresce">Motivo da revisão (versão {{ versoes[0].versao + 1 }}) *<input name="motivo" required placeholder="Ex.: fornecedor contestou o item SF.310.12H"></label>{% endif %}
+      <button class="btn primario">{{ 'Salvar versão 1 do desconto' if not versoes else 'Salvar nova versão (revisão)' }} · {{ calc.total|moeda(m) }}</button>
+    </form>
+  </div>
+  {% endif %}
+  {% if versoes %}
+  <h3>Versões do desconto</h3>
+  <table class="tabela-versoes">
+    <thead><tr><th>Versão</th><th>Data</th><th class="num">Desconto</th><th>Motivo</th><th>Por</th><th></th></tr></thead>
+    <tbody>{% for v in versoes %}
+      <tr><td>v{{ v.versao }}</td><td>{{ v.criado_em|data }}</td><td class="num"><strong>{{ v.total|moeda(m) }}</strong></td><td>{{ v.motivo or 'Primeira versão' }}{% if v.divergencias %} <small>(com diferença de quantidade confirmada)</small>{% endif %}</td><td>{{ v.usuario or '—' }}</td>
+        <td><details><summary>Itens</summary><table class="mini">{% for l in versao_json(v) if l.desconto %}<tr><td>{{ l.codigo }}</td><td class="num">C {{ l.C|qtd }} · D {{ l.D|qtd }}</td><td class="num">{{ l.pct_c|num(0) }}% / {{ l.pct_d|num(0) }}%</td><td class="num">{{ l.desconto|moeda(m) }}</td></tr>{% endfor %}</table><small>{{ v.politica }}</small></details></td></tr>
+    {% endfor %}</tbody>
+  </table>
+  <p class="sub">Na próxima etapa, a versão gerada vira o relatório Excel e o e-mail ao fornecedor (com prévia), e o valor passa para o desconto do invoice.</p>
+  {% endif %}
+  {% if ajustes_hist %}<details class="historico-ajustes"><summary>Histórico de ajustes de % ({{ ajustes_hist|length }})</summary>
+    <ul>{% for a in ajustes_hist %}<li>{{ a.criado_em|data }} · {{ a.usuario or '—' }} · {{ 'item ' ~ a.produto if a.produto else 'geral' }}:
+      {{ 'volta à política' if a.pct_c is none and a.pct_d is none else 'C ' ~ (a.pct_c|num(0) ~ '%' if a.pct_c is not none else 'política') ~ ' · D ' ~ (a.pct_d|num(0) ~ '%' if a.pct_d is not none else 'política') }} — {{ a.motivo }}</li>{% endfor %}</ul></details>{% endif %}
 </section>
-
+{% else %}
 <section class="bloco">
+  <h2>Resumo por item</h2>
+  <div class="rolagem"><table>
+    <thead><tr><th>Item</th><th>Descrição</th><th class="num">A</th><th class="num">B</th><th class="num">C</th><th class="num">D</th><th class="num">Inspecionado</th></tr></thead>
+    <tbody>{% for cod, it in por_item.items() %}<tr><td>{{ cod }}</td><td><small>{{ it.descricao }}</small></td>{% for c in ['A','B','C','D'] %}<td class="num">{{ it.qtd[c]|qtd if it.qtd[c] else '' }}</td>{% endfor %}<td class="num"><strong>{{ it.total|qtd }}</strong></td></tr>{% endfor %}</tbody>
+    <tfoot><tr><th colspan="2">Total</th>{% for c in ['A','B','C','D'] %}<th class="num">{{ totais[c]|qtd }}{% if total %} <small>({{ (totais[c] / total * 100)|num(1) }}%)</small>{% endif %}</th>{% endfor %}<th class="num">{{ total|qtd }}</th></tr></tfoot>
+  </table></div>
+</section>
+{% endif %}
+
+<form method="post" action="{{ url_for('inspecao_reclassificar', grupo=grupo) }}" id="form-reclass">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<section class="bloco" id="eventos">
   <h2>Eventos <small>· {{ eventos|length }}</small></h2>
+  {% if admin %}
+  <div class="barra-reclass">
+    <strong><span id="n-sel">0</span> evento(s) marcado(s)</strong> <small>(<span id="q-sel">0</span> peça(s))</small>
+    <label>Reclassificar para<select name="para"><option value="">—</option>{% for c in ['A','B','C','D'] %}<option>{{ c }}</option>{% endfor %}</select></label>
+    <label>Só parte da quantidade<input name="quantidade" inputmode="decimal" placeholder="vazio = tudo" title="Só com um evento marcado: divide o evento"></label>
+    <label class="cresce">Motivo *<input name="motivo" placeholder="Ex.: erro interno de classificação"></label>
+    <button class="btn primario">Reclassificar</button>
+  </div>
+  <p class="sub">Marque por grupo (item → defeito) ou evento a evento. Use os filtros da tabela de eventos e "marcar os visíveis".</p>
+  {% endif %}
+  <details class="por-defeito" open><summary>Por item e defeito ({{ grupos_def|length }} grupos)</summary>
+  <div class="rolagem"><table>
+    <thead><tr>{% if admin %}<th></th>{% endif %}<th>Item</th><th>Defeito (MEGA)</th><th>Inglês</th><th class="num">A</th><th class="num">B</th><th class="num">C</th><th class="num">D</th></tr></thead>
+    <tbody>{% for gd in grupos_def %}
+      <tr>{% if admin %}<td><input type="checkbox" class="sel-grupo-def" data-ids="{{ gd.ids|join(',') }}"></td>{% endif %}
+        <td>{{ gd.produto }}</td><td><small>{{ gd.comentario or '' }}</small></td><td><small>{{ gd.en or '—' }}</small></td>
+        {% for c in ['A','B','C','D'] %}<td class="num">{% if gd.qtd[c] %}<span class="cat cat-{{ c|lower }}">{{ gd.qtd[c]|qtd }}</span>{% endif %}</td>{% endfor %}</tr>
+    {% endfor %}</tbody>
+  </table></div>
+  </details>
+  <h3>Eventos {% if admin %}<button type="button" class="btn pequeno link" id="marcar-visiveis">marcar os visíveis</button><button type="button" class="btn pequeno link" id="limpar-sel">limpar</button>{% endif %}</h3>
   <div class="rolagem">
-  <table class="tabela-filtro" data-rotulo="eventos">
-    <thead><tr><th data-filtro="lista">Item</th><th class="num" data-filtro="nenhum" data-tipo="numero">Qtd.</th><th data-filtro="lista">Categoria</th>
+  <table class="tabela-filtro" data-rotulo="eventos" id="tabela-eventos">
+    <thead><tr>{% if admin %}<th data-filtro="nenhum"></th>{% endif %}<th data-filtro="lista">Item</th><th class="num" data-filtro="nenhum" data-tipo="numero">Qtd.</th><th data-filtro="lista">Categoria</th>
       <th data-filtro="texto">Comentário (MEGA)</th><th data-filtro="texto">Defeito (inglês)</th><th data-filtro="texto" data-tipo="data">Inspeção</th><th data-filtro="lista">Inspetor</th><th data-filtro="texto">Lote</th></tr></thead>
     <tbody>
     {% for x in eventos %}{% set e = x.e %}
-      <tr><td>{{ e.produto }}</td><td class="num">{{ e.quantidade|qtd }}</td>
+      <tr>{% if admin %}<td><input type="checkbox" name="evento" value="{{ e.id }}" class="sel-ev" data-q="{{ e.quantidade or 0 }}"></td>{% endif %}
+        <td>{{ e.produto }}</td><td class="num">{{ e.quantidade|qtd }}</td>
         <td data-filtro="{{ e.categoria }}"><span class="cat cat-{{ e.categoria|lower }}">{{ e.categoria }}</span>{% if e.categoria != e.categoria_original %} <small title="{{ e.reclass_motivo or '' }}">(era {{ e.categoria_original }})</small>{% endif %}</td>
         <td><small>{{ e.comentario or '' }}</small></td>
         <td>{% if x.en %}{{ x.en }}{% elif x.antigo %}<small class="sem-trad" title="REPORT DATE antes de 01/07/2026 (antes da padronização dos termos): não é pendência">sem tradução (anterior a 07/2026)</small>{% else %}<span class="ciencia c-pendente" title="Sem tradução: {{ x.falta|join(', ') }}">Traduzir: {{ x.falta|join(', ') }}</span>{% endif %}</td>
@@ -45,4 +136,45 @@
   </table>
   </div>
 </section>
+</form>
+
+{% if reclass %}
+<section class="bloco">
+  <h2>Reclassificações <small>· interno: o fornecedor recebe só a categoria final</small></h2>
+  <div class="rolagem"><table>
+    <thead><tr><th>Data</th><th>Item</th><th>Defeito</th><th class="num">Peças</th><th>De → para</th><th>Motivo</th><th>Por</th></tr></thead>
+    <tbody>{% for x in reclass %}<tr><td>{{ x.criado_em|data }}</td><td>{{ x.produto }}</td><td><small>{{ x.comentario or '' }}</small></td><td class="num">{{ x.quantidade|qtd }}{% if x.parcial %} <small>(parcial)</small>{% endif %}</td>
+      <td><span class="cat cat-{{ x.de|lower }}">{{ x.de }}</span> → <span class="cat cat-{{ x.para|lower }}">{{ x.para }}</span></td><td>{{ x.motivo }}</td><td>{{ x.usuario or '—' }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const evs = () => Array.from(document.querySelectorAll('.sel-ev'));
+  const atualizar = () => {
+    const sel = evs().filter(c => c.checked);
+    const n = document.getElementById('n-sel'); if (!n) return;
+    n.textContent = sel.length;
+    document.getElementById('q-sel').textContent = sel.reduce((s, c) => s + parseFloat(c.dataset.q || 0), 0).toLocaleString('pt-BR');
+  };
+  document.querySelectorAll('.sel-grupo-def').forEach(g => g.addEventListener('change', () => {
+    const ids = g.dataset.ids.split(',');
+    evs().forEach(c => { if (ids.includes(c.value)) c.checked = g.checked; });
+    atualizar();
+  }));
+  document.addEventListener('change', e => { if (e.target.classList && e.target.classList.contains('sel-ev')) atualizar(); });
+  const mv = document.getElementById('marcar-visiveis');
+  if (mv) mv.addEventListener('click', () => { evs().forEach(c => { if (c.closest('tr').offsetParent !== null) c.checked = true; }); atualizar(); });
+  const lp = document.getElementById('limpar-sel');
+  if (lp) lp.addEventListener('click', () => { evs().forEach(c => c.checked = false); document.querySelectorAll('.sel-grupo-def').forEach(c => c.checked = false); atualizar(); });
+  const f = document.getElementById('form-reclass');
+  if (f) f.addEventListener('submit', ev => {
+    const n = evs().filter(c => c.checked).length;
+    if (!n) { ev.preventDefault(); alert('Marque os eventos a reclassificar.'); return; }
+    if (!confirm('Reclassificar ' + n + ' evento(s)?')) ev.preventDefault();
+  });
+})();
+</script>
 {% endblock %}

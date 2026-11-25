@@ -50,7 +50,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.55"
+VERSAO = "4.56"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -324,6 +324,34 @@ CREATE TABLE IF NOT EXISTS inspecao_importacoes (
     arquivo TEXT, eventos INTEGER, grupos INTEGER, resumo TEXT,
     criado_por INTEGER REFERENCES usuarios(id), criado_em TEXT NOT NULL
 );
+-- versão 4.56: fechamento do relatório de desconto (reclassificações, políticas, ajustes e versões do cálculo)
+CREATE TABLE IF NOT EXISTS inspecao_reclass (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    grupo TEXT NOT NULL, invoice_id INTEGER, produto TEXT, comentario TEXT,
+    quantidade REAL, de TEXT, para TEXT, eventos INTEGER, parcial INTEGER NOT NULL DEFAULT 0,
+    motivo TEXT NOT NULL, criado_por INTEGER REFERENCES usuarios(id), criado_em TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS politicas_desconto (
+    fornecedor_id INTEGER PRIMARY KEY,    -- 0 = política padrão da empresa
+    tipo TEXT NOT NULL,                   -- FIXA: % fixos de C e D | FAIXAS: % de C conforme o % de A+B do item
+    pct_c REAL, pct_d REAL, faixas TEXT,  -- faixas: [[% mínimo de A+B, % de C], ...]
+    atualizado_por INTEGER REFERENCES usuarios(id), atualizado_em TEXT
+);
+CREATE TABLE IF NOT EXISTS desconto_ajustes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER NOT NULL REFERENCES invoices(id),
+    produto TEXT,                         -- vazio = ajuste geral do invoice
+    pct_c REAL, pct_d REAL,               -- vazios = volta à política
+    motivo TEXT NOT NULL, criado_por INTEGER REFERENCES usuarios(id), criado_em TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS relatorios_versoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER NOT NULL REFERENCES invoices(id),
+    versao INTEGER NOT NULL, total REAL NOT NULL, linhas TEXT NOT NULL, politica TEXT,
+    motivo TEXT, divergencias TEXT,       -- diferenças de quantidade confirmadas ao salvar
+    criado_por INTEGER REFERENCES usuarios(id), criado_em TEXT NOT NULL,
+    aplicado_em TEXT                      -- fase 3: quando vira o desconto do invoice (relatório enviado)
+);
 CREATE TABLE IF NOT EXISTS traducao_termos (
     chave TEXT PRIMARY KEY,               -- termo normalizado (maiúsculas, sem acento)
     texto_pt TEXT, texto_en TEXT NOT NULL,
@@ -551,6 +579,14 @@ def init_db():
             for antigo, novo in MAPA_TIPOS_ANTIGOS.items():
                 db.execute("UPDATE lancamentos SET tipo = ? WHERE lower(trim(tipo)) = ?", (novo, antigo))
             db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v444_categorias', '1')")
+        # versão 4.56: chave de origem do evento (para manter reclassificações e divisões entre importações)
+        if "chave_origem" not in {r[1] for r in db.execute("PRAGMA table_info(inspecao_eventos)")}:
+            db.execute("ALTER TABLE inspecao_eventos ADD COLUMN chave_origem TEXT")
+        if db.execute("SELECT 1 FROM politicas_desconto WHERE fornecedor_id = 0").fetchone() is None:
+            db.execute("INSERT INTO politicas_desconto (fornecedor_id, tipo, pct_c, pct_d) VALUES (0, 'FIXA', 80, 100)")
+            for f in db.execute("SELECT id FROM fornecedores WHERE lower(nome) LIKE '%orthogent%'").fetchall():
+                db.execute("INSERT OR IGNORE INTO politicas_desconto (fornecedor_id, tipo, pct_d, faixas) VALUES (?, 'FAIXAS', 100, ?)",
+                           (f[0], json.dumps(FAIXAS_ORTHOGENT)))
         # versão 4.22: invoices/pagamentos lançados pela carga de histórico (dados do passado)
         if "historico" not in {r[1] for r in db.execute("PRAGMA table_info(pagamentos)")}:
             db.execute("ALTER TABLE pagamentos ADD COLUMN historico INTEGER NOT NULL DEFAULT 0")
@@ -3379,29 +3415,40 @@ def gravar_eventos(grupo, eventos, importacao_id):
     """Troca os eventos do grupo pelos da extração, reaproveitando as reclassificações do mesmo evento."""
     from collections import defaultdict
     db = get_db()
+    # partes de cada evento original (um evento dividido numa reclassificação parcial tem várias partes)
     antigos = defaultdict(list)
     for e in db.execute("SELECT * FROM inspecao_eventos WHERE grupo = ? ORDER BY ordem, id", (grupo,)):
-        if e["reclass_em"] or (e["categoria"] != e["categoria_original"]):
-            antigos[assinatura_evento(e)].append(e)
+        antigos[e["chave_origem"] or assinatura_evento(e) + "#0"].append(e)
     db.execute("DELETE FROM inspecao_eventos WHERE grupo = ?", (grupo,))
     linhas = []
+    vistos = defaultdict(int)
+    colunas = (f"grupo, invoice_id, {', '.join(CAMPOS_GRAVADOS)}, categoria_original, categoria, outros, reclass_por,"
+               " reclass_em, reclass_motivo, importacao_id, ordem, chave_origem")
     for ordem, e in enumerate(eventos):
-        cat, rp, re_, rm = e["categoria"], None, None, None
-        if cat and e["categoria_original"] and cat != e["categoria_original"]:
-            rm = "Reclassificado na planilha (antes do sistema)"
-        anterior = antigos.get(assinatura_evento(e))
-        if anterior:
-            a = anterior.pop(0)
-            cat, rp, re_, rm = a["categoria"], a["reclass_por"], a["reclass_em"], a["reclass_motivo"]
+        assin = assinatura_evento(e)
+        chave = f"{assin}#{vistos[assin]}"
+        vistos[assin] += 1
         outros = json.dumps({k: e.get(k) for k in ("bu", "grupo_estoque", "qtde_pedida", "usuario_inclusao",
                                                    "item_inspecionado", "status_lote", "vlr_item_nf", "data_nf")},
                             default=str)
-        linhas.append((grupo, e["invoice_id"], *[None if e.get(c) is None else e.get(c) for c in CAMPOS_GRAVADOS],
-                       e["categoria_original"], cat, outros, rp, re_, rm, importacao_id, ordem))
-    db.executemany(
-        f"INSERT INTO inspecao_eventos (grupo, invoice_id, {', '.join(CAMPOS_GRAVADOS)}, categoria_original, categoria,"
-        f" outros, reclass_por, reclass_em, reclass_motivo, importacao_id, ordem)"
-        f" VALUES ({', '.join('?' * (len(CAMPOS_GRAVADOS) + 10))})", linhas)
+        base = [None if e.get(c) is None else e.get(c) for c in CAMPOS_GRAVADOS]
+        partes = antigos.get(chave) or []
+        mudou = [a for a in partes if a["reclass_em"] or a["categoria"] != a["categoria_original"]]
+        if mudou and abs(sum(a["quantidade"] or 0 for a in partes) - (e.get("quantidade") or 0)) < 0.001:
+            # mesmo evento: recria as partes com as reclassificações já feitas
+            for a in partes:
+                b = list(base)
+                b[CAMPOS_GRAVADOS.index("quantidade")] = a["quantidade"]
+                linhas.append((grupo, e["invoice_id"], *b, e["categoria_original"], a["categoria"], outros,
+                               a["reclass_por"], a["reclass_em"], a["reclass_motivo"], importacao_id, ordem, chave))
+            continue
+        cat, rm = e["categoria"], None
+        if cat and e["categoria_original"] and cat != e["categoria_original"]:
+            rm = "Reclassificado na planilha (antes do sistema)"
+        linhas.append((grupo, e["invoice_id"], *base, e["categoria_original"], cat, outros, None, None, rm,
+                       importacao_id, ordem, chave))
+    db.executemany(f"INSERT INTO inspecao_eventos ({colunas}) VALUES ({', '.join('?' * (len(CAMPOS_GRAVADOS) + 11))})",
+                   linhas)
 
 
 @app.route("/inspecoes")
@@ -3562,9 +3609,312 @@ def inspecao_grupo(grupo):
     totais = Counter()
     for it in por_item.values():
         totais.update(it["qtd"])
+    # visão agrupada item → defeito (para selecionar e reclassificar em lote)
+    grupos_def = OrderedDict()
+    for x in linhas:
+        e = x["e"]
+        k = (e["produto"], insp.chave_termo(e["comentario"] or "") or "OK")
+        gd = grupos_def.setdefault(k, {"produto": e["produto"], "comentario": e["comentario"], "en": x["en"], "ids": [],
+                                       "qtd": Counter()})
+        gd["ids"].append(e["id"])
+        gd["qtd"][e["categoria"]] += e["quantidade"] or 0
+    calc = calcular_desconto_inspecao(r) if r else None
+    versoes = db.execute("SELECT v.*, u.nome AS usuario FROM relatorios_versoes v LEFT JOIN usuarios u ON u.id = v.criado_por"
+                         " WHERE v.invoice_id = ? ORDER BY v.versao DESC", (r["id"],)).fetchall() if r else []
+    reclass = db.execute("SELECT x.*, u.nome AS usuario FROM inspecao_reclass x LEFT JOIN usuarios u ON u.id = x.criado_por"
+                         " WHERE x.grupo = ? ORDER BY x.id DESC", (grupo,)).fetchall()
+    ajustes_hist = db.execute("SELECT a.*, u.nome AS usuario FROM desconto_ajustes a LEFT JOIN usuarios u ON u.id = a.criado_por"
+                              " WHERE a.invoice_id = ? ORDER BY a.id DESC", (r["id"],)).fetchall() if r else []
     return render_template("inspecao_grupo.html", grupo=grupo, eventos=linhas, r=r, por_item=por_item, totais=totais,
-                           total=sum(totais.values()), pendentes=pendentes, e0=eventos[0],
-                           admin=g.usuario["perfil"] == "admin")
+                           total=sum(totais.values()), pendentes=pendentes, e0=eventos[0], grupos_def=list(grupos_def.values()),
+                           calc=calc, versoes=versoes, reclass=reclass, ajustes_hist=ajustes_hist,
+                           versao_json=lambda v: json.loads(v["linhas"]), admin=g.usuario["perfil"] == "admin")
+
+
+# ---------------------------------------------------------------------------
+# Fechamento do relatório de desconto (v4.56 — fase 2)
+# Desconto por item = preço FOB (item do invoice) × (qtd. C × % de C + qtd. D × % de D)
+# Política padrão: C 80%, D 100%. Por fornecedor (ex.: Orthogent): % de C conforme o % de A+B do item (faixas).
+# Ajustes: % por item ou geral do invoice (com motivo, histórico). Item > geral > política.
+# Reclassificação (só Engenharia de Processos): em lote ou parcial, com motivo; o fornecedor só vê a categoria final.
+# ---------------------------------------------------------------------------
+FAIXAS_ORTHOGENT = [[90, 0], [80, 50], [70, 60], [0, 80]]
+
+
+def politica_desconto(fornecedor_id):
+    db = get_db()
+    p = db.execute("SELECT * FROM politicas_desconto WHERE fornecedor_id = ?", (fornecedor_id,)).fetchone() \
+        or db.execute("SELECT * FROM politicas_desconto WHERE fornecedor_id = 0").fetchone()
+    d = dict(p)
+    d["faixas"] = json.loads(p["faixas"]) if p["faixas"] else []
+    d["propria"] = p["fornecedor_id"] != 0
+    return d
+
+
+def descrever_politica(p):
+    if p["tipo"] == "FAIXAS":
+        partes = []
+        for i, (minimo, pct) in enumerate(sorted(p["faixas"], key=lambda f: -f[0])):
+            partes.append(f"A+B ≥ {fmt_num(minimo, 0)}%: C {fmt_num(pct, 0)}%" if minimo > 0 else f"abaixo: C {fmt_num(pct, 0)}%")
+        return "C conforme o % de A+B do item (" + "; ".join(partes) + f"); D {fmt_num(p['pct_d'], 0)}%"
+    return f"C {fmt_num(p['pct_c'], 0)}% e D {fmt_num(p['pct_d'], 0)}% do preço FOB"
+
+
+def pct_c_politica(p, pct_ab):
+    if p["tipo"] == "FAIXAS":
+        for minimo, pct in sorted(p["faixas"], key=lambda f: -f[0]):
+            if pct_ab * 100 + 1e-9 >= minimo:
+                return pct
+        return p["faixas"][-1][1] if p["faixas"] else 0
+    return p["pct_c"]
+
+
+def ajustes_atuais(invoice_id):
+    """{produto ou None (geral): ajuste mais recente}"""
+    atuais = {}
+    for a in get_db().execute("SELECT a.*, u.nome AS usuario FROM desconto_ajustes a LEFT JOIN usuarios u ON u.id = a.criado_por"
+                              " WHERE a.invoice_id = ? ORDER BY a.id", (invoice_id,)):
+        atuais[a["produto"]] = a
+    return {k: v for k, v in atuais.items() if v["pct_c"] is not None or v["pct_d"] is not None}
+
+
+def calcular_desconto_inspecao(r):
+    """Cálculo do desconto do invoice a partir dos eventos (categoria final) e dos itens do invoice (preço FOB)."""
+    from collections import Counter
+    db = get_db()
+    pol = politica_desconto(r["fornecedor_id"])
+    ajustes = ajustes_atuais(r["id"])
+    geral = ajustes.get(None)
+    itens = {}
+    for x in r["itens"]:
+        if x["codigo"]:
+            k = x["codigo"].strip().upper()
+            it = itens.setdefault(k, {"codigo": x["codigo"].strip(), "qtd_invoice": 0, "preco": x["valor_unit"], "descricao": x["item"]})
+            it["qtd_invoice"] += x["quantidade"] or 0
+    qtd = {}
+    descr = {}
+    for e in db.execute("SELECT produto, descricao, categoria, quantidade FROM inspecao_eventos WHERE invoice_id = ?", (r["id"],)):
+        k = str(e["produto"] or "").strip().upper()
+        qtd.setdefault(k, Counter())[e["categoria"]] += e["quantidade"] or 0
+        descr.setdefault(k, e["descricao"])
+    linhas, divergencias = [], []
+    for k in sorted(set(itens) | set(qtd)):
+        c = qtd.get(k, Counter())
+        total = sum(c.values())
+        it = itens.get(k)
+        pct_ab = (c["A"] + c["B"]) / total if total else 0
+        aj = ajustes.get(k)
+        pc = pct_c_politica(pol, pct_ab)
+        pd = pol["pct_d"]
+        origem = "política"
+        if geral:
+            pc = geral["pct_c"] if geral["pct_c"] is not None else pc
+            pd = geral["pct_d"] if geral["pct_d"] is not None else pd
+            origem = "ajuste geral"
+        if aj:
+            pc = aj["pct_c"] if aj["pct_c"] is not None else pc
+            pd = aj["pct_d"] if aj["pct_d"] is not None else pd
+            origem = "ajuste do item"
+        preco = it["preco"] if it else None
+        desconto = round((preco or 0) * (c["C"] * pc + c["D"] * pd) / 100, 2)
+        linha = {"codigo": it["codigo"] if it else (k or "?"), "chave": k, "descricao": descr.get(k) or (it or {}).get("descricao"),
+                 "A": c["A"], "B": c["B"], "C": c["C"], "D": c["D"], "inspecionado": total,
+                 "qtd_invoice": it["qtd_invoice"] if it else None, "pct_ab": pct_ab, "preco": preco, "pct_c": pc,
+                 "pct_d": pd, "origem": origem, "ajuste": aj, "desconto": desconto}
+        if not it:
+            divergencias.append(f"{linha['codigo']}: inspecionado ({fmt_qtd(total)}) mas não está no invoice (sem preço FOB)")
+        elif abs(total - it["qtd_invoice"]) > 0.001:
+            divergencias.append(f"{linha['codigo']}: inspecionado {fmt_qtd(total)} × invoice {fmt_qtd(it['qtd_invoice'])}")
+        linhas.append(linha)
+    total_cat = Counter()
+    for l in linhas:
+        for cat in "ABCD":
+            total_cat[cat] += l[cat]
+    return {"linhas": linhas, "total": round(sum(l["desconto"] for l in linhas), 2), "politica": pol,
+            "politica_txt": descrever_politica(pol), "geral": geral, "divergencias": divergencias,
+            "valor_produtos": round(sum((it["preco"] or 0) * it["qtd_invoice"] for it in itens.values()), 2),
+            "total_cat": total_cat, "inspecionado": sum(total_cat.values())}
+
+
+@app.route("/inspecoes/<path:grupo>/reclassificar", methods=["POST"])
+@somente_admin
+def inspecao_reclassificar(grupo):
+    """Reclassificação em lote (eventos marcados) ou parcial (parte da quantidade de um evento), sempre com motivo."""
+    db = get_db()
+    f = request.form
+    volta = redirect(url_for("inspecao_grupo", grupo=grupo) + "#eventos")
+    para = f.get("para")
+    motivo = " ".join(f.get("motivo", "").split())[:300]
+    if para not in insp.CATEGORIAS or not motivo:
+        flash("Escolha a nova categoria e informe o motivo da reclassificação.", "erro")
+        return volta
+    ids = [int(x) for x in f.getlist("evento") if x.isdigit()]
+    eventos = db.execute(f"SELECT * FROM inspecao_eventos WHERE grupo = ? AND id IN ({','.join('?' * len(ids))})",
+                         (grupo, *ids)).fetchall() if ids else []
+    if not eventos:
+        flash("Marque os eventos a reclassificar.", "erro")
+        return volta
+    qtd_parcial = parse_num(f.get("quantidade")) if f.get("quantidade") else None
+    feitos, pecas = 0, 0
+    if qtd_parcial is not None:  # parcial: um único evento
+        e = eventos[0]
+        if len(eventos) != 1 or qtd_parcial <= 0 or qtd_parcial >= (e["quantidade"] or 0):
+            flash("Reclassificação parcial: marque um único evento e informe uma quantidade menor que a dele.", "erro")
+            return volta
+        if e["categoria"] == para:
+            flash("O evento já está nessa categoria.", "erro")
+            return volta
+        db.execute("UPDATE inspecao_eventos SET quantidade = ? WHERE id = ?", (round(e["quantidade"] - qtd_parcial, 4), e["id"]))
+        cols = [c for c in e.keys() if c not in ("id",)]
+        novo = dict(e)
+        novo.update(quantidade=qtd_parcial, categoria=para, reclass_por=g.usuario["id"], reclass_em=agora(), reclass_motivo=motivo,
+                    chave_origem=e["chave_origem"] or assinatura_evento(e) + "#0")
+        db.execute(f"INSERT INTO inspecao_eventos ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                   [novo[c] for c in cols])
+        if not e["chave_origem"]:
+            db.execute("UPDATE inspecao_eventos SET chave_origem = ? WHERE id = ?", (novo["chave_origem"], e["id"]))
+        db.execute("INSERT INTO inspecao_reclass (grupo, invoice_id, produto, comentario, quantidade, de, para, eventos, parcial,"
+                   " motivo, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)",
+                   (grupo, e["invoice_id"], e["produto"], e["comentario"], qtd_parcial, e["categoria"], para, motivo,
+                    g.usuario["id"], agora()))
+        feitos, pecas = 1, qtd_parcial
+    else:
+        from collections import defaultdict
+        resumo = defaultdict(lambda: [0, 0])
+        for e in eventos:
+            if e["categoria"] == para:
+                continue
+            db.execute("UPDATE inspecao_eventos SET categoria = ?, reclass_por = ?, reclass_em = ?, reclass_motivo = ?,"
+                       " chave_origem = COALESCE(chave_origem, ?) WHERE id = ?",
+                       (para, g.usuario["id"], agora(), motivo, assinatura_evento(e) + "#0", e["id"]))
+            k = (e["produto"], e["comentario"], e["categoria"])
+            resumo[k][0] += 1
+            resumo[k][1] += e["quantidade"] or 0
+            feitos += 1
+            pecas += e["quantidade"] or 0
+        for (produto, comentario, de), (n, q) in resumo.items():
+            db.execute("INSERT INTO inspecao_reclass (grupo, invoice_id, produto, comentario, quantidade, de, para, eventos,"
+                       " parcial, motivo, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+                       (grupo, eventos[0]["invoice_id"], produto, comentario, q, de, para, n, motivo, g.usuario["id"], agora()))
+    if eventos[0]["invoice_id"] and feitos:
+        registrar_evento(eventos[0]["invoice_id"], f"Inspeção: {fmt_qtd(pecas)} peça(s) reclassificada(s) para {para}",
+                         f"{feitos} evento(s){' (parcial)' if qtd_parcial is not None else ''} · {motivo}")
+    db.commit()
+    flash(f"{feitos} evento(s) reclassificado(s) para {para} ({fmt_qtd(pecas)} peça(s))." if feitos
+          else "Nada mudou: os eventos já estavam nessa categoria.", "ok" if feitos else "erro")
+    return volta
+
+
+@app.route("/invoices/<int:id>/desconto-ajuste", methods=["POST"])
+@somente_admin
+def desconto_ajuste(id):
+    """Ajuste do % de C/D de um item ou do invoice inteiro (vazio = volta à política), sempre com motivo."""
+    r = carregar_invoice(id)
+    f = request.form
+    motivo = " ".join(f.get("motivo", "").split())[:300]
+    produto = (f.get("produto") or "").strip().upper() or None
+    pc = parse_num(f.get("pct_c")) if (f.get("pct_c") or "").strip() else None
+    pd = parse_num(f.get("pct_d")) if (f.get("pct_d") or "").strip() else None
+    volta = redirect(url_for("inspecao_grupo", grupo=f"inv:{id}") + "#fechamento")
+    if not motivo:
+        flash("Informe o motivo do ajuste.", "erro")
+        return volta
+    for v in (pc, pd):
+        if v is not None and not (0 <= v <= 100):
+            flash("Os percentuais devem estar entre 0 e 100.", "erro")
+            return volta
+    get_db().execute("INSERT INTO desconto_ajustes (invoice_id, produto, pct_c, pct_d, motivo, criado_por, criado_em)"
+                     " VALUES (?, ?, ?, ?, ?, ?, ?)", (id, produto, pc, pd, motivo, g.usuario["id"], agora()))
+    alvo = f"item {produto}" if produto else "todos os itens"
+    txt = ("volta à política" if pc is None and pd is None else
+           f"C {fmt_num(pc, 0) + '%' if pc is not None else 'política'} · D {fmt_num(pd, 0) + '%' if pd is not None else 'política'}")
+    registrar_evento(id, f"Desconto: ajuste do % ({alvo})", f"{txt} · {motivo}")
+    get_db().commit()
+    flash(f"Ajuste salvo ({alvo}: {txt}).", "ok")
+    return volta
+
+
+@app.route("/invoices/<int:id>/desconto-versao", methods=["POST"])
+@somente_admin
+def desconto_versao(id):
+    """Salva uma versão do cálculo (a 1ª vai para o fornecedor; as seguintes são revisões, com motivo).
+    Se o inspecionado não bate com o invoice, pede confirmação antes."""
+    r = carregar_invoice(id)
+    calc = calcular_desconto_inspecao(r)
+    db = get_db()
+    ultima = db.execute("SELECT * FROM relatorios_versoes WHERE invoice_id = ? ORDER BY versao DESC LIMIT 1", (id,)).fetchone()
+    motivo = " ".join(request.form.get("motivo", "").split())[:300]
+    volta = redirect(url_for("inspecao_grupo", grupo=f"inv:{id}") + "#fechamento")
+    if not calc["inspecionado"]:
+        flash("Não há eventos de inspeção para calcular o desconto.", "erro")
+        return volta
+    if ultima and not motivo:
+        flash("Informe o motivo da revisão (o que mudou em relação à versão anterior).", "erro")
+        return volta
+    if calc["divergencias"] and not request.form.get("confirmar"):
+        return render_template("desconto_confirmar.html", r=r, calc=calc, motivo=motivo, versao=(ultima["versao"] + 1) if ultima else 1)
+    linhas = [{k: l[k] for k in ("codigo", "descricao", "A", "B", "C", "D", "inspecionado", "qtd_invoice", "preco", "pct_c",
+                                 "pct_d", "origem", "desconto")} for l in calc["linhas"]]
+    versao = (ultima["versao"] + 1) if ultima else 1
+    db.execute("INSERT INTO relatorios_versoes (invoice_id, versao, total, linhas, politica, motivo, divergencias, criado_por,"
+               " criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+               (id, versao, calc["total"], json.dumps(linhas), calc["politica_txt"], motivo or None,
+                json.dumps(calc["divergencias"]) if calc["divergencias"] else None, g.usuario["id"], agora()))
+    registrar_evento(id, f"Relatório de desconto: versão {versao} calculada ({fmt_moeda(calc['total'], r['moeda'])})",
+                     (motivo + " · " if motivo else "") + calc["politica_txt"]
+                     + (f" · diferenças de quantidade confirmadas: {len(calc['divergencias'])}" if calc["divergencias"] else ""))
+    db.commit()
+    flash(f"Versão {versao} do desconto salva: {fmt_moeda(calc['total'], r['moeda'])}.", "ok")
+    return volta
+
+
+@app.route("/politicas-desconto", methods=["GET", "POST"])
+@login_obrigatorio
+def politicas_desconto():
+    db = get_db()
+    admin = g.usuario["perfil"] == "admin"
+    if request.method == "POST":
+        if not admin:
+            abort(403)
+        f = request.form
+        fid = f.get("fornecedor_id", type=int)
+        if f.get("acao") == "remover" and fid:
+            db.execute("DELETE FROM politicas_desconto WHERE fornecedor_id = ?", (fid,))
+            db.commit()
+            flash("O fornecedor voltou a usar a política padrão.", "ok")
+            return redirect(url_for("politicas_desconto"))
+        tipo = f.get("tipo") if f.get("tipo") in ("FIXA", "FAIXAS") else "FIXA"
+        pc, pd = parse_num(f.get("pct_c")), parse_num(f.get("pct_d"))
+        faixas = []
+        for minimo, pct in zip(f.getlist("faixa_min"), f.getlist("faixa_pct")):
+            a, b = parse_num(minimo), parse_num(pct)
+            if a is not None and b is not None:
+                faixas.append([a, b])
+        if pd is None or (tipo == "FIXA" and pc is None) or (tipo == "FAIXAS" and not faixas):
+            flash("Preencha os percentuais da política.", "erro")
+            return redirect(url_for("politicas_desconto"))
+        if tipo == "FAIXAS" and not any(m == 0 for m, _p in faixas):
+            faixas.append([0, faixas[-1][1]])
+        db.execute("INSERT INTO politicas_desconto (fornecedor_id, tipo, pct_c, pct_d, faixas, atualizado_por, atualizado_em)"
+                   " VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(fornecedor_id) DO UPDATE SET tipo = excluded.tipo,"
+                   " pct_c = excluded.pct_c, pct_d = excluded.pct_d, faixas = excluded.faixas,"
+                   " atualizado_por = excluded.atualizado_por, atualizado_em = excluded.atualizado_em",
+                   (fid or 0, tipo, pc if tipo == "FIXA" else None, pd, json.dumps(sorted(faixas, key=lambda x: -x[0])) if tipo == "FAIXAS" else None,
+                    g.usuario["id"], agora()))
+        db.commit()
+        flash("Política de desconto salva.", "ok")
+        return redirect(url_for("politicas_desconto"))
+    pols = []
+    for p in db.execute("SELECT p.*, f.nome FROM politicas_desconto p LEFT JOIN fornecedores f ON f.id = p.fornecedor_id"
+                        " ORDER BY p.fornecedor_id <> 0, f.nome"):
+        d = dict(p)
+        d["faixas"] = json.loads(p["faixas"]) if p["faixas"] else []
+        d["texto"] = descrever_politica(d)
+        pols.append(d)
+    fornecedores = db.execute("SELECT id, nome FROM fornecedores WHERE id NOT IN (SELECT fornecedor_id FROM politicas_desconto)"
+                              " ORDER BY nome").fetchall()
+    return render_template("politicas_desconto.html", pols=pols, fornecedores=fornecedores, admin=admin,
+                           FAIXAS_ORTHOGENT=FAIXAS_ORTHOGENT)
 
 
 @app.route("/traducoes", methods=["GET", "POST"])

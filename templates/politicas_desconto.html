@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block titulo %}Políticas de desconto{% endblock %}
+{% block conteudo %}
+<p class="voltar"><a href="{{ url_for('inspecoes') }}">← Inspeções de recebimento</a></p>
+<h1>Políticas de desconto</h1>
+<p class="sub">Desconto por item = preço FOB × (qtd. C × % de C + qtd. D × % de D). Todos os fornecedores usam a política padrão, exceto os
+  que têm política própria. Política por faixas: o % de C depende do % de peças A+B do item.</p>
+<section class="bloco">
+  <table>
+    <thead><tr><th>Fornecedor</th><th>Regra</th><th>Atualizada</th><th></th></tr></thead>
+    <tbody>{% for p in pols %}
+      <tr><td><strong>{{ p.nome if p.fornecedor_id else 'Padrão (todos os demais)' }}</strong></td><td>{{ p.texto }}</td><td><small>{{ p.atualizado_em|data if p.atualizado_em else '—' }}</small></td>
+        <td>{% if admin and p.fornecedor_id %}<form method="post" onsubmit="return confirm('Voltar este fornecedor à política padrão?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="acao" value="remover"><input type="hidden" name="fornecedor_id" value="{{ p.fornecedor_id }}"><button class="btn pequeno link perigo-txt">Remover</button></form>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</section>
+{% if admin %}
+<section class="bloco">
+  <h2>Definir política</h2>
+  <form method="post" class="form-politica">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="grade">
+      <label>Fornecedor<select name="fornecedor_id"><option value="0">Padrão (todos os demais)</option>
+        {% for p in pols if p.fornecedor_id %}<option value="{{ p.fornecedor_id }}">{{ p.nome }}</option>{% endfor %}
+        {% for f in fornecedores %}<option value="{{ f.id }}">{{ f.nome }}</option>{% endfor %}</select></label>
+      <label>Tipo<select name="tipo" id="tipo-pol"><option value="FIXA">% fixo de C e D</option><option value="FAIXAS">% de C por faixa de A+B</option></select></label>
+      <label class="so-fixa">% de C<input name="pct_c" inputmode="decimal" value="80"></label>
+      <label>% de D<input name="pct_d" inputmode="decimal" value="100"></label>
+    </div>
+    <div class="so-faixas" hidden>
+      <p class="sub">Faixas (A+B mínimo → % de C). Ex. Orthogent: ≥90% → 0; ≥80% → 50; ≥70% → 60; abaixo → 80.</p>
+      {% for minimo, pct in FAIXAS_ORTHOGENT %}<div class="linha-form"><label>A+B a partir de (%)<input name="faixa_min" inputmode="decimal" value="{{ minimo }}"></label><label>% de C<input name="faixa_pct" inputmode="decimal" value="{{ pct }}"></label></div>{% endfor %}
+    </div>
+    <button class="btn primario">Salvar política</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+  (function () { const t = document.getElementById('tipo-pol'); if (!t) return;
+    const aj = () => { document.querySelector('.so-faixas').hidden = t.value !== 'FAIXAS'; document.querySelector('.so-fixa').hidden = t.value === 'FAIXAS'; };
+    t.addEventListener('change', aj); aj(); })();
+</script>
+{% endblock %}

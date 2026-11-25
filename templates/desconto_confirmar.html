@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block titulo %}Confirmar · {{ r.numero }}{% endblock %}
+{% block conteudo %}
+<h1>Quantidade inspecionada diferente do invoice</h1>
+<p class="sub">Invoice {{ r.numero }} · {{ r.fornecedor }}. Isso pode ser envio de amostras (que não são inspecionadas normalmente) ou a inspeção
+  ainda não terminada. Confira antes de salvar a versão {{ versao }} do desconto ({{ calc.total|moeda(r.moeda) }}).</p>
+<section class="bloco">
+  <ul class="lista-divergencias">{% for d in calc.divergencias %}<li>{{ d }}</li>{% endfor %}</ul>
+  <form method="post" action="{{ url_for('desconto_versao', id=r.id) }}" class="linha-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="confirmar" value="1"><input type="hidden" name="motivo" value="{{ motivo }}">
+    <button class="btn primario">Seguir assim e salvar a versão {{ versao }}</button>
+    <a class="btn link" href="{{ url_for('inspecao_grupo', grupo='inv:' ~ r.id) }}#fechamento">Voltar sem salvar</a>
+  </form>
+</section>
+{% endblock %}

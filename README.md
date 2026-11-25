@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.55)
+# Controle de Invoices e Descontos (v4.56)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -245,6 +245,17 @@ Em **Descontos → Inspeções de recebimento** (Engenharia de Processos importa
   tradução ficam pendentes (e vão impedir o relatório ao fornecedor). Eventos com REPORT DATE anterior a 01/07/2026 (antes da
   padronização dos termos) não geram pendência de tradução.
 - A aba "Acompanhamento de Relatórios" da planilha não é mais necessária: o acompanhamento é o da aba Descontos.
+
+### Fechamento do relatório de desconto (v4.56 — fase 2)
+Na tela de inspeção de cada invoice (ligado ao sistema), seção **Fechamento do relatório de desconto** (só a Engenharia de Processos altera):
+- **Cálculo** por item: desconto = preço FOB (item do invoice) × (qtd. C × % de C + qtd. D × % de D), sobre a **categoria final**.
+- **Políticas de desconto** (Inspeções → Políticas de desconto): padrão C 80% e D 100%; por fornecedor, % fixo ou **% de C por faixa
+  de A+B do item** (Orthogent: ≥90% → 0; ≥80% → 50%; ≥70% → 60%; abaixo → 80%; D 100%).
+- **Ajustes** de % por item ou geral do invoice, sempre com motivo e histórico (item vale mais que o geral; vazio volta à política).
+- **Reclassificação** (em lote, marcando grupos item → defeito ou eventos, ou **parcial**, dividindo um evento), sempre com motivo.
+  O histórico é interno: o fornecedor recebe só a categoria final. As reclassificações e divisões são mantidas nas próximas importações.
+- **Versões do desconto**: a versão 1 e as revisões (com motivo). Se a quantidade inspecionada não bate com o invoice (amostras ou
+  inspeção em andamento), aparece uma tela de confirmação antes de salvar.
 
 ### Fator de importação (v4.44)
 **Fator = 1 + custos não recuperáveis ÷ FOB em R$** (mesma conta da planilha de Follow Up de Importação).

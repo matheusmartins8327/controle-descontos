@@ -768,3 +768,13 @@ select.tipo-antigo { border-color: #e0a800; background: #fffbea; }
 .cat-a { background: #d4f0dc; color: #1d5a31; } .cat-b { background: #fff3c4; color: #6b5200; }
 .cat-c { background: #ffe0c2; color: #8a4500; } .cat-d { background: #fbd5d5; color: #8a1c1c; }
 .sem-trad { color: var(--suave); font-style: italic; }
+/* v4.56: fechamento do relatório de desconto */
+.tabela-calc td.ajustado { color: var(--pri-escuro); font-weight: 700; }
+.tabela-calc .ajuste-item summary { cursor: pointer; font-size: .8rem; color: var(--pri-escuro); }
+.tabela-calc .ajuste-item input { width: 70px; }
+.fech-acoes { display: flex; flex-direction: column; gap: .6rem; margin-top: .8rem; }
+.ajuste-geral summary, .por-defeito summary, .historico-ajustes summary { cursor: pointer; font-weight: 600; color: var(--pri-escuro); }
+.barra-reclass { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: .6rem; align-items: flex-end; background: #f3f7ff;
+  border: 1px solid var(--borda); border-radius: var(--raio); padding: .6rem .8rem; margin-bottom: .5rem; }
+.barra-reclass label { margin: 0; }
+.tabela-versoes .mini td { padding: .15rem .4rem; font-size: .8rem; }
