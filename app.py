@@ -51,7 +51,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.64"
+VERSAO = "4.65"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -93,12 +93,15 @@ CAMPOS_ETAPA = {
                     ("data_parametrizacao", "Data de parametrização", "data", True),
                     ("cor_canal", "Canal", "canal", True),
                     ("exigencias_anvisa", "Exigências da ANVISA", "texto", False),
+                    ("exigencia_status", "Situação da exigência", "exigencia", False),
                     ("data_desembaraco", "Data de desembaraço", "data", True),
                     ("numero_nf", "Número da NF", "linha", True)],
     "CHEGADA": [("data_prog_chegada", "Data programada de chegada", "data", True),
                 ("data_chegada", "Data real de chegada na fábrica", "data", True),
                 ("nf_liberada", "NF Liberada", "flag", True)],
 }
+# v4.65: situação da exigência do fiscal (canal amarelo/vermelho); vazio = sem exigência formal
+SITUACOES_EXIGENCIA = {"PENDENTE": "Pendente", "CUMPRIDA": "Cumprida", "FINALIZADA": "Finalizada"}
 TITULO_ETAPA = {"COLETA": "Coleta", "EMBARQUE": "Embarque", "DESEMBARACO": "Desembaraço", "CHEGADA": "Transporte Terrestre"}
 # Situação atual do invoice (calculada) e quem age nela
 SITUACOES = {
@@ -552,6 +555,8 @@ def init_db():
         if "data_parametrizacao" not in {r[1] for r in db.execute("PRAGMA table_info(invoices)")}:
             db.execute("ALTER TABLE invoices ADD COLUMN data_parametrizacao TEXT")
         # versão 4.20: número da NF (Desembaraço) e liberação do pagamento após a HAWB pela Engenharia
+        if "exigencia_status" not in {r[1] for r in db.execute("PRAGMA table_info(invoices)")}:
+            db.execute("ALTER TABLE invoices ADD COLUMN exigencia_status TEXT")  # v4.65
         colunas_inv = {r[1] for r in db.execute("PRAGMA table_info(invoices)")}
         for col, tipo in (("numero_nf", "TEXT"), ("pagamento_liberado_em", "TEXT"), ("pagamento_liberado_por", "INTEGER"),
                           ("pagamento_liberado_obs", "TEXT"), ("historico", "INTEGER NOT NULL DEFAULT 0"),
@@ -1174,7 +1179,7 @@ def gravar_deducao(did, iid, numero_destino, valor, moeda, origem_txt):
 app.jinja_env.globals.update(
     ANEXO_MAX_MB=ANEXO_MAX_MB,
     csrf_token=lambda: csrf_token(), PERFIS=PERFIS, SETORES=SETORES, MOEDAS=MOEDAS, CONDICOES=CONDICOES, SITUACOES=SITUACOES,
-    CAMPOS_ETAPA=CAMPOS_ETAPA, TITULO_ETAPA=TITULO_ETAPA, ORDEM_LOGISTICA=ORDEM_LOGISTICA, CORES_CANAL=CORES_CANAL,
+    CAMPOS_ETAPA=CAMPOS_ETAPA, TITULO_ETAPA=TITULO_ETAPA, SITUACOES_EXIGENCIA=SITUACOES_EXIGENCIA, ORDEM_LOGISTICA=ORDEM_LOGISTICA, CORES_CANAL=CORES_CANAL,
     STATUS_DESCONTO=STATUS_DESCONTO, TIPOS_PAGAMENTO=TIPOS_PAGAMENTO,
     pode=lambda perfil: pode(perfil), MAX_USUARIOS=MAX_USUARIOS, VERSAO=VERSAO, condicao_texto=condicao_texto,
     etapa_concluida=etapa_concluida, PRAZO_ANTECIPADO_DIAS=PRAZO_ANTECIPADO_DIAS, PRAZO_LIBERACAO_DIAS_UTEIS=PRAZO_LIBERACAO_DIAS_UTEIS, etapa_faltando=lambda r, e: etapa_faltando(r, e),
@@ -1702,7 +1707,8 @@ def ler_form_invoice():
 OPCIONAIS_CADASTRO = [("agente_carga", "Agente de carga"), ("despachante", "Despachante"),
                       ("data_prog_coleta", "Data programada de coleta")]
 # campos não obrigatórios que não geram pendência (grupo de consolidação também não, por não estar na lista acima)
-SEM_PENDENCIA = {"exigencias_anvisa"}
+SEM_PENDENCIA = {"exigencias_anvisa", "exigencia_status"}
+
 
 
 def criacao_faltando(r):
@@ -2233,6 +2239,8 @@ def aplicar_etapa(r, etapa, form):
             valor = data_valida(valor)
         elif tipo == "canal":
             valor = valor if valor in CORES_CANAL else None
+        elif tipo == "exigencia":
+            valor = valor if valor in SITUACOES_EXIGENCIA else None
         elif tipo == "flag":
             valor = 1 if valor else None
         else:
@@ -2344,43 +2352,43 @@ def importacao():
 
 
 def resumo_importacao(r):
-    """v4.64: frase curta com o momento atual do processo (aba Importação), a partir das datas já preenchidas."""
+    """v4.65: status do processo (aba Importação) → (título, detalhe, cor), na ordem de prioridade combinada."""
     def d(x):
         return fmt_data(x)[:5] if x else None
-    sit = r["situacao"]
-    if sit == "CRIACAO":
+    if r["situacao"] == "CRIACAO":
         falta = criacao_faltando(r)
-        return "Cadastro incompleto · falta " + ", ".join(falta[:2]).lower() + ("…" if len(falta) > 2 else "")
-    if sit == "COLETA":
-        if r["data_hawb"]:
-            return f"HAWB emitida em {d(r['data_hawb'])} · aguardando a coleta"
-        return "Aguardando a coleta" + (f" (programada para {d(r['data_prog_coleta'])})" if r["data_prog_coleta"] else "")
-    if sit == "EMBARQUE":
-        if r["eta_real"]:
-            return f"Chegou ao Brasil em {d(r['eta_real'])}" + (" · aguardando o banco de débito (Financeiro)"
-                                                                 if not r["banco_debito"] else "")
-        if r["etd_real"]:
-            return f"Embarcado em {d(r['etd_real'])}" + (f" · previsão de chegada {d(r['eta_planejado'])}"
-                                                          if r["eta_planejado"] else " · sem previsão de chegada")
-        return (f"Coletado em {d(r['data_coleta'])} · aguardando o embarque" if r["data_coleta"] else "Aguardando o embarque") \
-            + (f" (ETD planejado {d(r['etd_planejado'])})" if r["etd_planejado"] else "")
-    if sit == "DESEMBARACO":
-        if r["data_desembaraco"]:
-            falta = [x for x in ("número da NF" if not r["numero_nf"] else None,
-                                 "DUIMP anexada" if not tem_duimp(r) else None) if x]
-            return f"Desembaraçado em {d(r['data_desembaraco'])}" + (" · falta " + " e ".join(falta) if falta else "")
-        if r["cor_canal"] or r["data_parametrizacao"]:
-            return "Em desembaraço" + (f" · canal {r['cor_canal']}" if r["cor_canal"] else "") + \
-                (f" (parametrizado em {d(r['data_parametrizacao'])})" if r["data_parametrizacao"] else "")
-        if r["data_registro_br"]:
-            return f"DUIMP registrada em {d(r['data_registro_br'])} · aguardando a parametrização"
-        return f"No Brasil desde {d(r['eta_real'])} · aguardando o registro da DUIMP" if r["eta_real"] else "Aguardando o registro da DUIMP"
-    if sit == "CHEGADA":
-        txt = f"Desembaraçado em {d(r['data_desembaraco'])} · transporte terrestre" if r["data_desembaraco"] else "Transporte terrestre"
-        if r["data_prog_chegada"]:
-            txt += f" · chegada programada para {d(r['data_prog_chegada'])}"
-        return txt
-    return SITUACOES.get(sit, (sit,))[0]
+        return ("Cadastro incompleto", "falta " + ", ".join(falta[:2]).lower() + ("…" if len(falta) > 2 else ""), "neutro")
+    if r["data_chegada"]:
+        return "Entregue na Quinelato", f"entregue em {d(r['data_chegada'])}", "verde"
+    if r["data_desembaraco"]:
+        return ("Desembaraçado — em transporte para a Quinelato",
+                f"entrega prevista para {fmt_data(r['data_prog_chegada'])}" if r["data_prog_chegada"] else "sem previsão de entrega",
+                "verde")
+    canal = r["cor_canal"]
+    if canal in ("Amarelo", "Vermelho"):
+        exig = r["exigencia_status"]
+        if exig == "PENDENTE":
+            return "Retido — exigência pendente", f"canal {canal.lower()}", "vermelho"
+        if exig == "CUMPRIDA":
+            return "Exigência cumprida — aguardando análise", f"canal {canal.lower()}", "amarelo"
+        if exig == "FINALIZADA":
+            return "Exigência finalizada — aguardando desembaraço", f"canal {canal.lower()}", "azul"
+        return "Em análise pelo fiscal — sem exigência até o momento", f"canal {canal.lower()}", canal == "Amarelo" and "amarelo" or "vermelho"
+    if r["data_parametrizacao"] and canal == "Verde":
+        return "Liberado — canal verde", f"parametrizado em {d(r['data_parametrizacao'])}", "verde"
+    if r["data_parametrizacao"]:
+        return "Em canal — aguardando parametrização", f"parametrizado em {d(r['data_parametrizacao'])}", "neutro"
+    if r["data_registro_br"]:
+        return "DUIMP emitida — aguardando parametrização", f"DUIMP emitida em {d(r['data_registro_br'])}", "neutro"
+    if r["eta_real"]:
+        return "Chegou no Brasil — aguardando DUIMP", f"chegou no BR em {d(r['eta_real'])}", "neutro"
+    if r["etd_real"]:
+        return "Em trânsito", (f"deve chegar no BR em {d(r['eta_planejado'])}" if r["eta_planejado"] else "sem previsão de chegada"), "neutro"
+    if r["data_coleta"]:
+        return ("Coletado — aguardando embarque", f"coletado em {d(r['data_coleta'])} · "
+                + (f"embarque previsto para {d(r['etd_planejado'])}" if r["etd_planejado"] else "sem previsão de embarque"), "neutro")
+    return ("Aguardando coleta", f"coleta programada para {d(r['data_prog_coleta'])}" if r["data_prog_coleta"]
+            else "sem coleta programada", "neutro")
 
 
 def ultima_informacao(r):
@@ -2402,6 +2410,8 @@ def ultima_informacao(r):
                 ultima = rotulo
             elif tipo == "canal":
                 ultima = f"Canal {v}"
+            elif tipo == "exigencia":
+                ultima = f"Exigência {SITUACOES_EXIGENCIA.get(v, v).lower()}"
             else:
                 ultima = f"{rotulo} {v}"
     return ultima

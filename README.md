@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.64)
+# Controle de Invoices e Descontos (v4.65)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -103,7 +103,10 @@ contagem por etapa (clique para filtrar), busca, a **última informação adicio
 um invoice, todas as informações das etapas 2 a 5 aparecem lado a lado para editar e salvar de uma vez (mesmas regras da tela
 do invoice). Cadastros incompletos levam a "Completar cadastro". Todos veem; só a Importação edita.
 Invoices com a **NF Liberada** marcada ou com a **data real de chegada na fábrica** preenchida saem da aba.
-Cada linha mostra só o invoice, o fornecedor e um **resumo** do momento do processo (ex.: "HAWB emitida em 17/11 · aguardando a coleta"; v4.64).
+Cada linha mostra só o invoice, o fornecedor e o **status** do processo (v4.65), na ordem: Entregue na Quinelato · Desembaraçado — em
+transporte para a Quinelato · canal amarelo/vermelho: Em análise pelo fiscal / Exigência finalizada / Exigência cumprida / Retido —
+exigência pendente (campo **Situação da exigência** no Desembaraço) · Liberado — canal verde · Em canal — aguardando parametrização ·
+DUIMP emitida · Chegou no Brasil · Em trânsito · Coletado — aguardando embarque · Aguardando coleta (com o detalhe de datas e as cores).
 Invoices com o mesmo **grupo de consolidação** (carga consolidada) aparecem juntos, um embaixo do outro, num quadro
 "Grupo de consolidação N"; a busca também aceita o número do grupo.
 Em cada grupo, **Preencher Coleta e Embarque para todo o grupo** grava de uma vez as datas da Coleta (HAWB, coleta real) e do

@@ -5,7 +5,8 @@
 <details class="painel-lanc painel-imp" id="inv-{{ r.id }}" {{ 'open' if aberto == r.id }}>
   <summary>
     <span class="pl-titulo"><strong>{{ r.numero }}</strong><span class="pl-forn">{{ r.fornecedor }}</span></span>
-    <span class="resumo-imp" title="{{ NOME_ETAPA[r.situacao] }}">{{ r.resumo_imp }}</span>
+    <span class="resumo-imp" title="{{ NOME_ETAPA[r.situacao] }}"><span class="status-imp st-{{ r.resumo_imp[2] }}">{{ r.resumo_imp[0] }}</span>
+      {% if r.resumo_imp[1] %}<small class="detalhe-imp">{{ r.resumo_imp[1] }}</small>{% endif %}</span>
     <span class="seta">▾</span>
   </summary>
   <div class="pl-corpo">
@@ -29,7 +30,8 @@
           {% else %}
           <label>{{ rotulo }}{{ ' *' if obrig }}
             {% if tipo == 'data' %}<input type="date" name="{{ campo }}" value="{{ r[campo] or '' }}">
-            {% elif tipo == 'canal' %}{% set cc = CORES_CANAL.get(r[campo]) %}<select name="{{ campo }}" class="sel-canal" onchange="var o=this.options[this.selectedIndex];this.style.background=o.style.background;this.style.color=o.style.color"{% if cc %} style="background:{{ cc[0] }};color:{{ cc[1] }}"{% endif %}>
+            {% elif tipo == 'exigencia' %}<select name="{{ campo }}"><option value="">Sem exigência formal</option>{% for k, t in SITUACOES_EXIGENCIA.items() %}<option value="{{ k }}" {{ 'selected' if r[campo] == k }}>{{ t }}</option>{% endfor %}</select>
+          {% elif tipo == 'canal' %}{% set cc = CORES_CANAL.get(r[campo]) %}<select name="{{ campo }}" class="sel-canal" onchange="var o=this.options[this.selectedIndex];this.style.background=o.style.background;this.style.color=o.style.color"{% if cc %} style="background:{{ cc[0] }};color:{{ cc[1] }}"{% endif %}>
               <option value="" style="background:#fff;color:#212529">—</option>{% for c, cor in CORES_CANAL.items() %}<option value="{{ c }}" {{ 'selected' if r[campo] == c }} style="background:{{ cor[0] }};color:{{ cor[1] }}">{{ c }}</option>{% endfor %}</select>
             {% elif tipo == 'linha' %}<input name="{{ campo }}" value="{{ r[campo] or '' }}" autocomplete="off">
             {% else %}<textarea name="{{ campo }}" rows="1">{{ r[campo] or '' }}</textarea>{% endif %}

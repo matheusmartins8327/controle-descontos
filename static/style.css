@@ -792,3 +792,10 @@ select.tipo-antigo { border-color: #e0a800; background: #fffbea; }
 /* v4.64: aba Importação — linha só com invoice, fornecedor e resumo do processo */
 .painel-imp > summary .pl-titulo { flex: 0 0 auto; min-width: 230px; }
 .resumo-imp { flex: 1; color: var(--txt); font-size: .92rem; }
+
+/* v4.65: status do processo na aba Importação */
+.status-imp { display: inline-block; padding: .15rem .6rem; border-radius: 99px; font-size: .82rem; font-weight: 600; margin-right: .4rem; }
+.st-verde { background: #d4f0dc; color: #1d5a31; } .st-amarelo { background: #fff3c4; color: #6b5200; }
+.st-vermelho { background: #fbd5d5; color: #8a1c1c; } .st-azul { background: #dbe7fd; color: #1849a9; }
+.st-neutro { background: #eef1f6; color: #344054; }
+.detalhe-imp { color: var(--suave); }
