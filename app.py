@@ -50,7 +50,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.56"
+VERSAO = "4.57"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -3736,73 +3736,184 @@ def calcular_desconto_inspecao(r):
             "total_cat": total_cat, "inspecionado": sum(total_cat.values())}
 
 
+def reclassificar_eventos(eventos, para, motivo, qtd_parcial=None):
+    """Reclassifica eventos (de um ou vários invoices) ou parte de um evento. Devolve (eventos, peças, erro).
+    Grava o histórico por invoice e não faz commit."""
+    from collections import defaultdict
+    db = get_db()
+    if qtd_parcial is not None:  # parcial: um único evento, dividido
+        e = eventos[0]
+        if len(eventos) != 1 or qtd_parcial <= 0 or qtd_parcial >= (e["quantidade"] or 0):
+            return 0, 0, "Reclassificação parcial: marque um único evento e informe uma quantidade menor que a dele."
+        if e["categoria"] == para:
+            return 0, 0, "O evento já está nessa categoria."
+        db.execute("UPDATE inspecao_eventos SET quantidade = ? WHERE id = ?", (round(e["quantidade"] - qtd_parcial, 4), e["id"]))
+        cols = [c for c in e.keys() if c != "id"]
+        novo = dict(e)
+        novo.update(quantidade=qtd_parcial, categoria=para, reclass_por=g.usuario["id"], reclass_em=agora(), reclass_motivo=motivo,
+                    chave_origem=e["chave_origem"] or assinatura_evento(e) + "#0")
+        db.execute(f"INSERT INTO inspecao_eventos ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", [novo[c] for c in cols])
+        if not e["chave_origem"]:
+            db.execute("UPDATE inspecao_eventos SET chave_origem = ? WHERE id = ?", (novo["chave_origem"], e["id"]))
+        db.execute("INSERT INTO inspecao_reclass (grupo, invoice_id, produto, comentario, quantidade, de, para, eventos, parcial,"
+                   " motivo, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)",
+                   (e["grupo"], e["invoice_id"], e["produto"], e["comentario"], qtd_parcial, e["categoria"], para, motivo,
+                    g.usuario["id"], agora()))
+        if e["invoice_id"]:
+            registrar_evento(e["invoice_id"], f"Inspeção: {fmt_qtd(qtd_parcial)} peça(s) reclassificada(s) para {para}",
+                             f"1 evento (parcial) · {motivo}")
+        return 1, qtd_parcial, None
+    resumo = defaultdict(lambda: [0, 0])
+    por_invoice = defaultdict(lambda: [0, 0])
+    feitos, pecas = 0, 0
+    for e in eventos:
+        if e["categoria"] == para:
+            continue
+        db.execute("UPDATE inspecao_eventos SET categoria = ?, reclass_por = ?, reclass_em = ?, reclass_motivo = ?,"
+                   " chave_origem = COALESCE(chave_origem, ?) WHERE id = ?",
+                   (para, g.usuario["id"], agora(), motivo, assinatura_evento(e) + "#0", e["id"]))
+        resumo[(e["grupo"], e["invoice_id"], e["produto"], e["comentario"], e["categoria"])][0] += 1
+        resumo[(e["grupo"], e["invoice_id"], e["produto"], e["comentario"], e["categoria"])][1] += e["quantidade"] or 0
+        por_invoice[e["invoice_id"]][0] += 1
+        por_invoice[e["invoice_id"]][1] += e["quantidade"] or 0
+        feitos += 1
+        pecas += e["quantidade"] or 0
+    for (grupo, iid, produto, comentario, de), (n, q) in resumo.items():
+        db.execute("INSERT INTO inspecao_reclass (grupo, invoice_id, produto, comentario, quantidade, de, para, eventos,"
+                   " parcial, motivo, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+                   (grupo, iid, produto, comentario, q, de, para, n, motivo, g.usuario["id"], agora()))
+    for iid, (n, q) in por_invoice.items():
+        if iid:
+            registrar_evento(iid, f"Inspeção: {fmt_qtd(q)} peça(s) reclassificada(s) para {para}", f"{n} evento(s) · {motivo}")
+    return feitos, pecas, None
+
+
+def ler_reclassificacao(f):
+    """(para, motivo, quantidade parcial, erro) do formulário de reclassificação."""
+    para = f.get("para")
+    motivo = " ".join(f.get("motivo", "").split())[:300]
+    if para not in insp.CATEGORIAS or not motivo:
+        return None, None, None, "Escolha a nova categoria e informe o motivo da reclassificação."
+    qtd = parse_num(f.get("quantidade")) if (f.get("quantidade") or "").strip() else None
+    return para, motivo, qtd, None
+
+
+def mensagem_reclass(feitos, pecas, para, erro):
+    if erro:
+        flash(erro, "erro")
+    elif feitos:
+        flash(f"{feitos} evento(s) reclassificado(s) para {para} ({fmt_qtd(pecas)} peça(s)).", "ok")
+    else:
+        flash("Nada mudou: os eventos já estavam nessa categoria.", "erro")
+
+
 @app.route("/inspecoes/<path:grupo>/reclassificar", methods=["POST"])
 @somente_admin
 def inspecao_reclassificar(grupo):
     """Reclassificação em lote (eventos marcados) ou parcial (parte da quantidade de um evento), sempre com motivo."""
     db = get_db()
-    f = request.form
     volta = redirect(url_for("inspecao_grupo", grupo=grupo) + "#eventos")
-    para = f.get("para")
-    motivo = " ".join(f.get("motivo", "").split())[:300]
-    if para not in insp.CATEGORIAS or not motivo:
-        flash("Escolha a nova categoria e informe o motivo da reclassificação.", "erro")
+    para, motivo, qtd, erro = ler_reclassificacao(request.form)
+    if erro:
+        flash(erro, "erro")
         return volta
-    ids = [int(x) for x in f.getlist("evento") if x.isdigit()]
+    ids = [int(x) for x in request.form.getlist("evento") if x.isdigit()]
     eventos = db.execute(f"SELECT * FROM inspecao_eventos WHERE grupo = ? AND id IN ({','.join('?' * len(ids))})",
                          (grupo, *ids)).fetchall() if ids else []
     if not eventos:
         flash("Marque os eventos a reclassificar.", "erro")
         return volta
-    qtd_parcial = parse_num(f.get("quantidade")) if f.get("quantidade") else None
-    feitos, pecas = 0, 0
-    if qtd_parcial is not None:  # parcial: um único evento
-        e = eventos[0]
-        if len(eventos) != 1 or qtd_parcial <= 0 or qtd_parcial >= (e["quantidade"] or 0):
-            flash("Reclassificação parcial: marque um único evento e informe uma quantidade menor que a dele.", "erro")
-            return volta
-        if e["categoria"] == para:
-            flash("O evento já está nessa categoria.", "erro")
-            return volta
-        db.execute("UPDATE inspecao_eventos SET quantidade = ? WHERE id = ?", (round(e["quantidade"] - qtd_parcial, 4), e["id"]))
-        cols = [c for c in e.keys() if c not in ("id",)]
-        novo = dict(e)
-        novo.update(quantidade=qtd_parcial, categoria=para, reclass_por=g.usuario["id"], reclass_em=agora(), reclass_motivo=motivo,
-                    chave_origem=e["chave_origem"] or assinatura_evento(e) + "#0")
-        db.execute(f"INSERT INTO inspecao_eventos ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
-                   [novo[c] for c in cols])
-        if not e["chave_origem"]:
-            db.execute("UPDATE inspecao_eventos SET chave_origem = ? WHERE id = ?", (novo["chave_origem"], e["id"]))
-        db.execute("INSERT INTO inspecao_reclass (grupo, invoice_id, produto, comentario, quantidade, de, para, eventos, parcial,"
-                   " motivo, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)",
-                   (grupo, e["invoice_id"], e["produto"], e["comentario"], qtd_parcial, e["categoria"], para, motivo,
-                    g.usuario["id"], agora()))
-        feitos, pecas = 1, qtd_parcial
-    else:
-        from collections import defaultdict
-        resumo = defaultdict(lambda: [0, 0])
-        for e in eventos:
-            if e["categoria"] == para:
-                continue
-            db.execute("UPDATE inspecao_eventos SET categoria = ?, reclass_por = ?, reclass_em = ?, reclass_motivo = ?,"
-                       " chave_origem = COALESCE(chave_origem, ?) WHERE id = ?",
-                       (para, g.usuario["id"], agora(), motivo, assinatura_evento(e) + "#0", e["id"]))
-            k = (e["produto"], e["comentario"], e["categoria"])
-            resumo[k][0] += 1
-            resumo[k][1] += e["quantidade"] or 0
-            feitos += 1
-            pecas += e["quantidade"] or 0
-        for (produto, comentario, de), (n, q) in resumo.items():
-            db.execute("INSERT INTO inspecao_reclass (grupo, invoice_id, produto, comentario, quantidade, de, para, eventos,"
-                       " parcial, motivo, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
-                       (grupo, eventos[0]["invoice_id"], produto, comentario, q, de, para, n, motivo, g.usuario["id"], agora()))
-    if eventos[0]["invoice_id"] and feitos:
-        registrar_evento(eventos[0]["invoice_id"], f"Inspeção: {fmt_qtd(pecas)} peça(s) reclassificada(s) para {para}",
-                         f"{feitos} evento(s){' (parcial)' if qtd_parcial is not None else ''} · {motivo}")
-    db.commit()
-    flash(f"{feitos} evento(s) reclassificado(s) para {para} ({fmt_qtd(pecas)} peça(s))." if feitos
-          else "Nada mudou: os eventos já estavam nessa categoria.", "ok" if feitos else "erro")
+    feitos, pecas, erro = reclassificar_eventos(eventos, para, motivo, qtd)
+    if not erro:
+        db.commit()
+    mensagem_reclass(feitos, pecas, para, erro)
     return volta
+
+
+# ---------- base de dados completa (v4.57): consulta e reclassificação de eventos de qualquer invoice ----------
+FILTROS_BASE = ("fornecedor", "invoice", "item", "categoria", "defeito", "de", "ate", "reclass")
+
+
+def consulta_base(args):
+    """(SQL WHERE, parâmetros) a partir dos filtros da tela da base de dados."""
+    where, params = ["1 = 1"], []
+    if args.get("fornecedor"):
+        where.append("(lower(COALESCE(f.nome, '')) LIKE ? OR lower(COALESCE(e.fornecedor_excel, '')) LIKE ?)")
+        params += [f"%{args['fornecedor'].strip().lower()}%"] * 2
+    if args.get("invoice"):
+        where.append("(lower(COALESCE(i.numero, '')) LIKE ? OR lower(COALESCE(e.invoice_excel, '')) LIKE ? OR e.numero_nf = ?)")
+        params += [f"%{args['invoice'].strip().lower()}%"] * 2 + [args["invoice"].strip()]
+    if args.get("item"):
+        where.append("lower(COALESCE(e.produto, '')) LIKE ?")
+        params.append(f"%{args['item'].strip().lower()}%")
+    if args.get("categoria") in insp.CATEGORIAS:
+        where.append("e.categoria = ?")
+        params.append(args["categoria"])
+    if args.get("defeito"):
+        where.append("lower(COALESCE(e.comentario, '')) LIKE ?")
+        params.append(f"%{args['defeito'].strip().lower()}%")
+    if data_valida(args.get("de")):
+        where.append("substr(COALESCE(e.report_date, ''), 1, 10) >= ?")
+        params.append(data_valida(args.get("de")))
+    if data_valida(args.get("ate")):
+        where.append("substr(COALESCE(e.report_date, ''), 1, 10) <= ?")
+        params.append(data_valida(args.get("ate")))
+    if args.get("reclass") == "1":
+        where.append("(e.categoria IS NOT e.categoria_original OR e.reclass_em IS NOT NULL)")
+    return " AND ".join(where), params
+
+
+SQL_BASE = ("FROM inspecao_eventos e LEFT JOIN invoices i ON i.id = e.invoice_id"
+            " LEFT JOIN fornecedores f ON f.id = i.fornecedor_id")
+
+
+@app.route("/inspecoes-base", methods=["GET", "POST"])
+@login_obrigatorio
+def inspecoes_base():
+    """Base de dados de inspeção (todos os invoices), com filtros e reclassificação em lote."""
+    db = get_db()
+    admin = g.usuario["perfil"] == "admin"
+    if request.method == "POST":
+        if not admin:
+            abort(403)
+        f = request.form
+        filtros = {k: f.get("f_" + k, "") for k in FILTROS_BASE}
+        volta = redirect(url_for("inspecoes_base", **{k: v for k, v in filtros.items() if v}, pagina=f.get("pagina", 1)))
+        para, motivo, qtd, erro = ler_reclassificacao(f)
+        if erro:
+            flash(erro, "erro")
+            return volta
+        if f.get("todos_do_filtro"):
+            where, params = consulta_base(filtros)
+            eventos = db.execute(f"SELECT e.* {SQL_BASE} WHERE {where}", params).fetchall()
+            if qtd is not None:
+                flash("A reclassificação parcial é feita num evento por vez (marque só ele).", "erro")
+                return volta
+        else:
+            ids = [int(x) for x in f.getlist("evento") if x.isdigit()]
+            eventos = db.execute(f"SELECT * FROM inspecao_eventos WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall() if ids else []
+        if not eventos:
+            flash("Marque os eventos a reclassificar.", "erro")
+            return volta
+        feitos, pecas, erro = reclassificar_eventos(eventos, para, motivo, qtd)
+        if not erro:
+            db.commit()
+        mensagem_reclass(feitos, pecas, para, erro)
+        return volta
+    args = {k: request.args.get(k, "") for k in FILTROS_BASE}
+    where, params = consulta_base(args)
+    total, pecas = db.execute(f"SELECT COUNT(*), COALESCE(SUM(e.quantidade), 0) {SQL_BASE} WHERE {where}", params).fetchone()
+    por_pagina = 300
+    pagina = max(1, request.args.get("pagina", 1, type=int))
+    paginas = max(1, -(-total // por_pagina))
+    pagina = min(pagina, paginas)
+    eventos = db.execute(f"SELECT e.*, i.numero AS invoice_sistema, f.nome AS fornecedor_sistema {SQL_BASE} WHERE {where}"
+                         " ORDER BY substr(COALESCE(e.report_date, ''), 1, 10) DESC, e.grupo, e.produto, e.ordem"
+                         f" LIMIT {por_pagina} OFFSET {(pagina - 1) * por_pagina}", params).fetchall()
+    glos = glossario()
+    linhas = [{"e": e, "en": insp.traduzir(e["comentario"], glos)[0]} for e in eventos]
+    return render_template("inspecoes_base.html", linhas=linhas, total=total, pecas=pecas, args=args, pagina=pagina,
+                           paginas=paginas, admin=admin, filtrado=any(args.values()))
 
 
 @app.route("/invoices/<int:id>/desconto-ajuste", methods=["POST"])

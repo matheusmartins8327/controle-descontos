@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block titulo %}Base de dados de inspeção{% endblock %}
+{% block conteudo %}
+<p class="voltar"><a href="{{ url_for('descontos') }}">← Descontos</a> · <a href="{{ url_for('inspecoes') }}">Inspeções por invoice</a></p>
+<h1>Base de dados de inspeção</h1>
+<p class="sub">Todos os eventos importados do Agregador MEGA, de todos os invoices. Filtre e marque os eventos para reclassificar
+  (só a Engenharia de Processos). A reclassificação é interna: o fornecedor recebe só a categoria final.</p>
+
+<form method="get" class="bloco filtros-base">
+  <div class="grade">
+    <label>Fornecedor<input name="fornecedor" value="{{ args.fornecedor }}"></label>
+    <label>Invoice ou NF<input name="invoice" value="{{ args.invoice }}"></label>
+    <label>Item<input name="item" value="{{ args.item }}" placeholder="ex.: SF.310"></label>
+    <label>Categoria<select name="categoria"><option value="">Todas</option>{% for c in ['A','B','C','D'] %}<option {{ 'selected' if args.categoria == c }}>{{ c }}</option>{% endfor %}</select></label>
+    <label>Defeito (comentário do MEGA)<input name="defeito" value="{{ args.defeito }}" placeholder="ex.: limpeza"></label>
+    <label>REPORT DATE de<input type="date" name="de" value="{{ args.de }}"></label>
+    <label>até<input type="date" name="ate" value="{{ args.ate }}"></label>
+    <label class="flag-etapa"><input type="checkbox" name="reclass" value="1" {{ 'checked' if args.reclass == '1' }}> Só reclassificados</label>
+  </div>
+  <div class="linha-form"><button class="btn primario">Filtrar</button>{% if filtrado %}<a class="btn link" href="{{ url_for('inspecoes_base') }}">Limpar</a>{% endif %}
+    <span class="sub"><strong>{{ total }}</strong> evento(s) · {{ pecas|qtd }} peça(s){% if paginas > 1 %} · página {{ pagina }} de {{ paginas }}{% endif %}</span></div>
+</form>
+
+<form method="post" id="form-reclass">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="pagina" value="{{ pagina }}">
+  {% for k, v in args.items() %}<input type="hidden" name="f_{{ k }}" value="{{ v }}">{% endfor %}
+  <section class="bloco">
+    {% if admin %}
+    <div class="barra-reclass">
+      <strong><span id="n-sel">0</span> evento(s) marcado(s)</strong> <small>(<span id="q-sel">0</span> peça(s))</small>
+      <label>Reclassificar para<select name="para"><option value="">—</option>{% for c in ['A','B','C','D'] %}<option>{{ c }}</option>{% endfor %}</select></label>
+      <label>Só parte da quantidade<input name="quantidade" inputmode="decimal" placeholder="vazio = tudo" title="Só com um evento marcado: divide o evento"></label>
+      <label class="cresce">Motivo *<input name="motivo" placeholder="Ex.: erro interno de classificação"></label>
+      <button class="btn primario">Reclassificar</button>
+      {% if filtrado and total > linhas|length %}<label class="flag-etapa"><input type="checkbox" name="todos_do_filtro" value="1" id="todos-filtro"> aplicar a todos os {{ total }} eventos do filtro</label>{% endif %}
+    </div>
+    {% endif %}
+    {% if linhas %}
+    <div class="rolagem">
+    <table class="tabela-filtro" data-rotulo="eventos">
+      <thead><tr>{% if admin %}<th data-filtro="nenhum"><input type="checkbox" id="marcar-pagina" title="Marcar os eventos visíveis"></th>{% endif %}
+        <th data-filtro="lista">Fornecedor</th><th data-filtro="lista">Invoice</th><th data-filtro="lista">Item</th><th class="num" data-filtro="nenhum" data-tipo="numero">Qtd.</th>
+        <th data-filtro="lista">Cat.</th><th data-filtro="texto">Comentário (MEGA)</th><th data-filtro="texto">Inglês</th><th data-filtro="texto" data-tipo="data">Report date</th><th data-filtro="lista">Inspetor</th></tr></thead>
+      <tbody>
+      {% for x in linhas %}{% set e = x.e %}
+        <tr>{% if admin %}<td><input type="checkbox" name="evento" value="{{ e.id }}" class="sel-ev" data-q="{{ e.quantidade or 0 }}"></td>{% endif %}
+          <td><small>{{ e.fornecedor_sistema or e.fornecedor_excel or '—' }}</small></td>
+          <td><a href="{{ url_for('inspecao_grupo', grupo=e.grupo) }}">{{ e.invoice_sistema or e.invoice_excel or '—' }}</a>{% if not e.invoice_id %} <small class="etiqueta-xls">Excel</small>{% endif %}</td>
+          <td>{{ e.produto }}</td><td class="num">{{ e.quantidade|qtd }}</td>
+          <td data-filtro="{{ e.categoria }}"><span class="cat cat-{{ (e.categoria or '')|lower }}">{{ e.categoria }}</span>{% if e.categoria != e.categoria_original %} <small title="{{ e.reclass_motivo or '' }}">(era {{ e.categoria_original }})</small>{% endif %}</td>
+          <td><small>{{ e.comentario or '' }}</small></td><td><small>{{ x.en or '—' }}</small></td>
+          <td data-ordem="{{ e.report_date or '' }}">{{ (e.report_date or '')[:10]|data if e.report_date else '—' }}</td><td><small>{{ e.inspetor or '' }}</small></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% if paginas > 1 %}<div class="linha-form paginacao">
+      {% if pagina > 1 %}<a class="btn" href="{{ url_for('inspecoes_base', pagina=pagina - 1, **args) }}">← Anterior</a>{% endif %}
+      <span>Página {{ pagina }} de {{ paginas }}</span>
+      {% if pagina < paginas %}<a class="btn" href="{{ url_for('inspecoes_base', pagina=pagina + 1, **args) }}">Próxima →</a>{% endif %}</div>{% endif %}
+    {% else %}<p class="vazio">Nenhum evento encontrado.</p>{% endif %}
+  </section>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const evs = () => Array.from(document.querySelectorAll('.sel-ev'));
+  const atualizar = () => {
+    const sel = evs().filter(c => c.checked), n = document.getElementById('n-sel'); if (!n) return;
+    n.textContent = sel.length;
+    document.getElementById('q-sel').textContent = sel.reduce((s, c) => s + parseFloat(c.dataset.q || 0), 0).toLocaleString('pt-BR');
+  };
+  document.addEventListener('change', e => { if (e.target.classList && e.target.classList.contains('sel-ev')) atualizar(); });
+  const mp = document.getElementById('marcar-pagina');
+  if (mp) mp.addEventListener('change', () => { evs().forEach(c => { if (c.closest('tr').offsetParent !== null) c.checked = mp.checked; }); atualizar(); });
+  const f = document.getElementById('form-reclass');
+  if (f) f.addEventListener('submit', ev => {
+    const todos = document.getElementById('todos-filtro');
+    const n = todos && todos.checked ? {{ total }} : evs().filter(c => c.checked).length;
+    if (!n) { ev.preventDefault(); alert('Marque os eventos a reclassificar.'); return; }
+    if (!confirm('Reclassificar ' + n + ' evento(s)?')) ev.preventDefault();
+  });
+})();
+</script>
+{% endblock %}
