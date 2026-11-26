@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block titulo %}Relatório ao fornecedor · {{ r.numero }}{% endblock %}
+{% block conteudo %}
+<p class="voltar"><a href="{{ url_for('inspecao_grupo', grupo='inv:' ~ r.id) }}#fechamento">← Fechamento do relatório · {{ r.numero }}</a></p>
+<h1>Relatório ao fornecedor · versão {{ v.versao }}</h1>
+<p class="sub">{{ r.fornecedor }} · invoice {{ r.numero }} · desconto <strong>{{ v.total|moeda(r.moeda) }}</strong> · {{ eventos }} evento(s).
+  Confira a prévia do e-mail e o Excel antes de enviar. Ao enviar, {{ 'o desconto do invoice é criado (versão 1)' if v.versao == 1 else 'o desconto do invoice é revalidado com o relatório revisado' }}
+  e o relatório fica registrado.</p>
+{% for b in bloqueios %}<div class="duimp-aviso">{{ b }}</div>{% endfor %}
+
+<form method="post" class="relatorio-grade">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <section class="bloco">
+    <h2>E-mail</h2>
+    <label>Para (e-mails do fornecedor) *<input name="para" value="{{ campos.para }}" placeholder="contato@fornecedor.com; outro@fornecedor.com"></label>
+    <label>Cópia (interna)<input name="cc" value="{{ campos.cc }}" placeholder="pessoa@quinelato.com.br; ..."></label>
+    <label>Assunto<input name="assunto" value="{{ campos.assunto }}"></label>
+    <label>Link do OneDrive (relatórios individuais por item)<input name="link" value="{{ campos.link }}" placeholder="https://...sharepoint.com/..."></label>
+    <label>Saudação<input name="saudacao" value="{{ textos.saudacao }}"></label>
+    <label>Introdução<textarea name="introducao" rows="2">{{ textos.introducao }}</textarea></label>
+    <label>Texto do desconto<textarea name="desconto" rows="5">{{ textos.desconto }}</textarea></label>
+    <label>Fechamento<textarea name="fechamento" rows="3">{{ textos.fechamento }}</textarea></label>
+    <label>Cargo na assinatura<input name="cargo" value="{{ campos.cargo }}"></label>
+    <p class="sub">Anexo: <strong>{{ nome }}</strong> (abas Inspection Results e Discount Policy; Data Base e Price (FOB) ocultas).
+      O e-mail do fornecedor e a cópia ficam salvos para o próximo relatório.</p>
+    <div class="linha-form acoes-relatorio">
+      <button class="btn" name="acao" value="atualizar">Atualizar prévia</button>
+      <button class="btn" name="acao" value="baixar">Baixar o Excel</button>
+      {% if not bloqueios %}
+      <button class="btn primario" name="acao" value="enviar" {{ 'disabled' if not conta_ok }}
+        onclick="return confirm('Enviar o relatório v{{ v.versao }} ao fornecedor? O desconto do invoice será atualizado para {{ v.total|moeda(r.moeda) }}.')">Enviar ao fornecedor</button>
+      <button class="btn link" name="acao" value="registrar" onclick="return confirm('Registrar o relatório v{{ v.versao }} como enviado por fora do sistema (sem enviar e-mail)? O desconto do invoice será atualizado.')">Registrar sem enviar e-mail</button>
+      {% endif %}
+    </div>
+    {% if not conta_ok %}<small class="erro-texto">Conta de envio de e-mails não configurada (aba E-mails): use "Baixar o Excel" e "Registrar sem enviar e-mail".</small>{% endif %}
+  </section>
+  <section class="bloco">
+    <h2>Prévia do e-mail</h2>
+    <p class="sub"><strong>Assunto:</strong> {{ campos.assunto }}<br><strong>Para:</strong> {{ campos.para or '—' }}{% if campos.cc %}<br><strong>Cc:</strong> {{ campos.cc }}{% endif %}</p>
+    <div class="previa-email">{{ html|safe }}</div>
+  </section>
+</form>
+{% endblock %}

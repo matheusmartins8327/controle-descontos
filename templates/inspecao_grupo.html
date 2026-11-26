@@ -71,13 +71,17 @@
   {% if versoes %}
   <h3>Versões do desconto</h3>
   <table class="tabela-versoes">
-    <thead><tr><th>Versão</th><th>Data</th><th class="num">Desconto</th><th>Motivo</th><th>Por</th><th></th></tr></thead>
+    <thead><tr><th>Versão</th><th>Data</th><th class="num">Desconto</th><th>Motivo</th><th>Por</th><th>Relatório ao fornecedor</th><th></th></tr></thead>
     <tbody>{% for v in versoes %}
       <tr><td>v{{ v.versao }}</td><td>{{ v.criado_em|data }}</td><td class="num"><strong>{{ v.total|moeda(m) }}</strong></td><td>{{ v.motivo or 'Primeira versão' }}{% if v.divergencias %} <small>(com diferença de quantidade confirmada)</small>{% endif %}</td><td>{{ v.usuario or '—' }}</td>
+        <td>{% if v.aplicado_em %}<span class="ciencia c-ok">{{ 'Enviado' if v.email_id else 'Registrado' }} {{ v.aplicado_em|data }}</span>{% if v.arquivo_id %} <a href="{{ url_for('arquivo_ver', aid=v.arquivo_id) }}" target="_blank" rel="noopener">Excel</a>{% endif %}
+          {% elif admin and loop.first %}<a class="btn pequeno primario" href="{{ url_for('relatorio_fornecedor', id=r.id, versao=v.versao) }}">Gerar relatório e e-mail (prévia)</a>
+          {% else %}<small>—</small>{% endif %}</td>
         <td><details><summary>Itens</summary><table class="mini">{% for l in versao_json(v) if l.desconto %}<tr><td>{{ l.codigo }}</td><td class="num">C {{ l.C|qtd }} · D {{ l.D|qtd }}</td><td class="num">{{ l.pct_c|num(0) }}% / {{ l.pct_d|num(0) }}%</td><td class="num">{{ l.desconto|moeda(m) }}</td></tr>{% endfor %}</table><small>{{ v.politica }}</small></details></td></tr>
     {% endfor %}</tbody>
   </table>
-  <p class="sub">Na próxima etapa, a versão gerada vira o relatório Excel e o e-mail ao fornecedor (com prévia), e o valor passa para o desconto do invoice.</p>
+  <p class="sub">A última versão gera o Excel e o e-mail ao fornecedor (com prévia). Ao enviar, o valor vai para o desconto do invoice
+    (versão 1: desconto com o relatório anexado; revisões: revalidação com o relatório revisado) e a importação semanal deixa de mudar os eventos deste invoice.</p>
   {% endif %}
   {% if ajustes_hist %}<details class="historico-ajustes"><summary>Histórico de ajustes de % ({{ ajustes_hist|length }})</summary>
     <ul>{% for a in ajustes_hist %}<li>{{ a.criado_em|data }} · {{ a.usuario or '—' }} · {{ 'item ' ~ a.produto if a.produto else 'geral' }}:

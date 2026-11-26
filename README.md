@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.60)
+# Controle de Invoices e Descontos (v4.61)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -262,6 +262,18 @@ Na tela de inspeção de cada invoice (ligado ao sistema), seção **Fechamento 
   (em lote, parcial ou para todos os eventos do filtro), com motivo.
 - **Versões do desconto**: a versão 1 e as revisões (com motivo). Se a quantidade inspecionada não bate com o invoice (amostras ou
   inspeção em andamento), aparece uma tela de confirmação antes de salvar.
+
+### Relatório ao fornecedor (v4.61 — fase 3)
+Na tabela de versões do fechamento, a última versão tem **"Gerar relatório e e-mail (prévia)"**:
+- **Excel em inglês**, só com os dados do invoice: *Inspection Results* (item → defeito × A/B/C/D, com grupos que abrem e fecham),
+  *Discount Policy* (cálculo), *Data Base* e *Price (FOB)* ocultas. Categoria final apenas (sem histórico de reclassificação).
+- **E-mail** no modelo atual (saudação, resumo A/B/C/D com %, legenda, qualidade por item e análise de defeitos em tabelas coloridas,
+  link do OneDrive, texto do desconto com prazo de 7 dias, assinatura), **com prévia e textos editáveis** antes do envio.
+  E-mails do fornecedor e cópia interna ficam salvos para os próximos relatórios.
+- **Ao enviar** (ou "Registrar sem enviar e-mail", se enviado por fora): versão 1 cria o desconto do invoice (status Enviado ao
+  fornecedor, com o Excel como relatório de inspeção); revisões fazem a **revalidação** do desconto com o motivo da versão e o Excel
+  revisado. A importação semanal deixa de alterar os eventos do invoice.
+- Bloqueios: termos sem tradução, versão que não é a última, já enviada, ou eventos/cálculo alterados depois da versão.
 
 ### Fator de importação (v4.44)
 **Fator = 1 + custos não recuperáveis ÷ FOB em R$** (mesma conta da planilha de Follow Up de Importação).

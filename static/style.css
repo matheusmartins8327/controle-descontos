@@ -782,3 +782,9 @@ select.tipo-antigo { border-color: #e0a800; background: #fffbea; }
 @media (max-width: 900px) { .filtros-base .grade { grid-template-columns: 1fr 1fr; } }
 .paginacao { gap: .8rem; align-items: center; margin-top: .6rem; }
 .falha-era { color: var(--suave); font-style: italic; }
+
+/* v4.61: relatório ao fornecedor */
+.relatorio-grade { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 1rem; align-items: start; }
+@media (max-width: 1000px) { .relatorio-grade { grid-template-columns: 1fr; } }
+.previa-email { border: 1px solid var(--borda); border-radius: var(--raio); padding: 1rem; background: #fff; overflow-x: auto; }
+.acoes-relatorio { gap: .5rem; flex-wrap: wrap; margin-top: .6rem; }
