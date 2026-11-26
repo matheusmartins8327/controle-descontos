@@ -50,7 +50,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.58"
+VERSAO = "4.59"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -352,6 +352,12 @@ CREATE TABLE IF NOT EXISTS relatorios_versoes (
     criado_por INTEGER REFERENCES usuarios(id), criado_em TEXT NOT NULL,
     aplicado_em TEXT                      -- fase 3: quando vira o desconto do invoice (relatório enviado)
 );
+-- versão 4.59: nome do fornecedor no MEGA -> nome no sistema
+CREATE TABLE IF NOT EXISTS fornecedor_mega (
+    nome_mega TEXT PRIMARY KEY COLLATE NOCASE,
+    nome_sistema TEXT NOT NULL,
+    atualizado_por INTEGER REFERENCES usuarios(id), atualizado_em TEXT
+);
 CREATE TABLE IF NOT EXISTS traducao_termos (
     chave TEXT PRIMARY KEY,               -- termo normalizado (maiúsculas, sem acento)
     texto_pt TEXT, texto_en TEXT NOT NULL,
@@ -587,6 +593,10 @@ def init_db():
             for f in db.execute("SELECT id FROM fornecedores WHERE lower(nome) LIKE '%orthogent%'").fetchall():
                 db.execute("INSERT OR IGNORE INTO politicas_desconto (fornecedor_id, tipo, pct_d, faixas) VALUES (?, 'FAIXAS', 100, ?)",
                            (f[0], json.dumps(FAIXAS_ORTHOGENT)))
+        # versão 4.59: relação inicial dos nomes de fornecedor MEGA × sistema
+        if db.execute("SELECT 1 FROM configuracoes WHERE chave = 'v459_fornecedor_mega'").fetchone() is None:
+            db.executemany("INSERT OR IGNORE INTO fornecedor_mega (nome_mega, nome_sistema) VALUES (?, ?)", FORNECEDORES_MEGA_INICIAL)
+            db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v459_fornecedor_mega', '1')")
         # versão 4.22: invoices/pagamentos lançados pela carga de histórico (dados do passado)
         if "historico" not in {r[1] for r in db.execute("PRAGMA table_info(pagamentos)")}:
             db.execute("ALTER TABLE pagamentos ADD COLUMN historico INTEGER NOT NULL DEFAULT 0")
@@ -3317,14 +3327,56 @@ def assinatura_evento(e):
                     ("produto", "seq", "quantidade", "criterio", "comentario", "data_inspecao", "cod_inspetor", "lote"))
 
 
+# v4.59: o MEGA usa outro nome para o fornecedor (ex.: "DR. FRIGZ INTERNATIONAL PVT LTD" = "Dr. Frigz")
+FORNECEDORES_MEGA_INICIAL = [
+    ("AR INSTRUMED", "AR"), ("ARTIFOL ENTERPRISES", "Artifol"), ("BONADENT MANUFACTURING CO.", "Bonadent"),
+    ("DENTACRAFT INSTRUMENTS", "Dentacraft"), ("DR. FRIGZ INTERNATIONAL PVT LTD", "Dr. Frigz"),
+    ("FIZZA SURGICAL INTERNACIONAL", "Fizza"), ("GEMKIND", "Gemkind"), ("HAWK INSTRUMENTS", "Hawk"),
+    ("Kummas Corporation", "Kummas"), ("LIBRA SURGICAL INSTRUMENTS", "Libra"), ("M.A.ARAIN BROTHERS PVT. LTD", "M.A. Arain"),
+    ("MEDISPOREX PRIVATE LIMITED", "Medisporex"), ("ORTHOGENT ENGINEERING", "Orthogent"),
+    ("PANORAMA INTERNATIONAL", "Panorama"), ("Rocky Surgimed Manufacturing INC", "Rocky"), ("SAMICO INDUSTRIES", "Samico"),
+    ("SHEFFIELD SURGICAL INSTRUMENTS", "Sheffield"), ("TECHNIMEN AGHA (PVT) LTD.", "Technimen"),
+    ("TONTARRA MEDIZINTECHNIK GMBH", "Tontarra"), ("TRIMED PVT LTD", "Trimed"), ("WELDON INSTRUMENTS", "Weldon"),
+    ("ZEPF MEDICAL INSTRUMENTS GMBH ®", "Zepf"),
+]
+
+
+def mapa_fornecedor_mega():
+    return {" ".join(r["nome_mega"].split()).lower(): r["nome_sistema"]
+            for r in get_db().execute("SELECT nome_mega, nome_sistema FROM fornecedor_mega")}
+
+
+def fornecedor_sistema(nome_mega, mapa=None):
+    """Nome do fornecedor no sistema para o nome que vem do MEGA (sem relação cadastrada, o próprio nome do MEGA)."""
+    if not nome_mega:
+        return nome_mega
+    mapa = mapa if mapa is not None else mapa_fornecedor_mega()
+    return mapa.get(" ".join(str(nome_mega).split()).lower(), nome_mega)
+
+
+app.jinja_env.globals["fornecedor_sistema"] = lambda n: fornecedor_sistema(n)
+
+
+def numeros_candidatos(invoice_excel):
+    """O Excel escreve "26000069 - DR.FRIGZ" ou "ORTHOGENT - 92-786-OGE-342": cada parte pode ser o número."""
+    t = str(invoice_excel or "").strip()
+    partes = [p.strip() for p in re.split(r"\s+-\s+", t) if p.strip()]
+    return list(dict.fromkeys([t] + partes))
+
+
 def vincular_eventos(eventos):
-    """Preenche invoice_id e grupo de cada evento. Devolve avisos (NF vazia etc.)."""
+    """Preenche invoice_id e grupo de cada evento. Devolve avisos (NF vazia etc.).
+    1º pela NF de entrada; sem NF cadastrada, pelo número do invoice dentro do fornecedor (relação MEGA × sistema);
+    por fim, pelo número sozinho, se for único."""
     db = get_db()
-    por_nf, por_numero = {}, {}
-    for i in db.execute("SELECT id, numero, numero_nf FROM invoices WHERE cancelado_em IS NULL"):
+    por_nf, por_numero, por_forn_numero = {}, {}, {}
+    for i in db.execute("SELECT i.id, i.numero, i.numero_nf, lower(f.nome) AS forn FROM invoices i"
+                        " JOIN fornecedores f ON f.id = i.fornecedor_id WHERE i.cancelado_em IS NULL"):
         if i["numero_nf"]:
             por_nf.setdefault(str(i["numero_nf"]).strip().lstrip("0"), []).append(i["id"])
         por_numero.setdefault(i["numero"].strip().lower(), []).append(i["id"])
+        por_forn_numero.setdefault((i["forn"], i["numero"].strip().lower()), []).append(i["id"])
+    mapa = mapa_fornecedor_mega()
     sem_nf = 0
     for e in eventos:
         nf = str(e.get("numero_nf") or "").strip()
@@ -3336,9 +3388,12 @@ def vincular_eventos(eventos):
         if ids and len(ids) == 1:
             iid = ids[0]
         else:
-            ids = por_numero.get(insp.numero_invoice_excel(e.get("invoice_excel")).lower())
-            if ids and len(ids) == 1:
-                iid = ids[0]
+            forn = str(fornecedor_sistema(e.get("fornecedor_excel"), mapa) or "").strip().lower()
+            for num in numeros_candidatos(e.get("invoice_excel")):
+                ids = por_forn_numero.get((forn, num.lower())) or por_numero.get(num.lower())
+                if ids and len(ids) == 1:
+                    iid = ids[0]
+                    break
         e["invoice_id"] = iid
         e["grupo"] = f"inv:{iid}" if iid else "xls:" + (str(e.get("invoice_excel") or "").strip() or f"NF {nf or '?'}")
         crit = insp.categoria_do_criterio(e.get("criterio"))
@@ -3349,6 +3404,63 @@ def vincular_eventos(eventos):
     if sem_nf:
         avisos.append(f"{sem_nf} evento(s) sem NF de entrada (NUMERO_NF) na planilha: confira a extração.")
     return avisos
+
+
+def religar_grupos():
+    """Grupos sem vínculo ("Excel") que agora encontram o invoice (NF cadastrada ou relação de fornecedor nova)
+    passam a ser do invoice. Só quando o invoice ainda não tem eventos. Devolve quantos foram ligados."""
+    db = get_db()
+    ligados = 0
+    for (grupo,) in db.execute("SELECT DISTINCT grupo FROM inspecao_eventos WHERE grupo LIKE 'xls:%'").fetchall():
+        e = dict(db.execute("SELECT numero_nf, invoice_excel, fornecedor_excel, criterio, categoria FROM inspecao_eventos"
+                            " WHERE grupo = ? LIMIT 1", (grupo,)).fetchone())
+        vincular_eventos([e])
+        iid = e["invoice_id"]
+        if iid and not db.execute("SELECT 1 FROM inspecao_eventos WHERE grupo = ?", (f"inv:{iid}",)).fetchone():
+            db.execute("UPDATE inspecao_eventos SET grupo = ?, invoice_id = ? WHERE grupo = ?", (f"inv:{iid}", iid, grupo))
+            db.execute("UPDATE inspecao_reclass SET grupo = ?, invoice_id = ? WHERE grupo = ?", (f"inv:{iid}", iid, grupo))
+            registrar_evento(iid, "Inspeção de recebimento ligada ao invoice", f"Eventos do Excel \"{grupo[4:]}\"")
+            ligados += 1
+    return ligados
+
+
+@app.route("/inspecoes/fornecedores", methods=["GET", "POST"])
+@login_obrigatorio
+def fornecedores_mega():
+    """Relação entre o nome do fornecedor no MEGA e no sistema."""
+    db = get_db()
+    admin = g.usuario["perfil"] == "admin"
+    if request.method == "POST":
+        if not admin:
+            abort(403)
+        n = 0
+        for mega, sistema in zip(request.form.getlist("nome_mega"), request.form.getlist("nome_sistema")):
+            mega, sistema = " ".join(mega.split()), " ".join(sistema.split())
+            if not mega:
+                continue
+            if sistema:
+                db.execute("INSERT INTO fornecedor_mega (nome_mega, nome_sistema, atualizado_por, atualizado_em) VALUES (?, ?, ?, ?)"
+                           " ON CONFLICT(nome_mega) DO UPDATE SET nome_sistema = excluded.nome_sistema,"
+                           " atualizado_por = excluded.atualizado_por, atualizado_em = excluded.atualizado_em",
+                           (mega, sistema, g.usuario["id"], agora()))
+            else:
+                db.execute("DELETE FROM fornecedor_mega WHERE nome_mega = ?", (mega,))
+            n += 1
+        ligados = religar_grupos()
+        db.commit()
+        flash(f"Relação salva.{f' {ligados} invoice(s) de inspeção passaram a estar ligados ao sistema.' if ligados else ''}", "ok")
+        return redirect(url_for("fornecedores_mega"))
+    rel = {" ".join(r["nome_mega"].split()).lower(): r for r in db.execute("SELECT * FROM fornecedor_mega")}
+    nomes_mega = {}
+    for r in db.execute("SELECT fornecedor_excel AS n, COUNT(*) AS q FROM inspecao_eventos WHERE fornecedor_excel IS NOT NULL"
+                        " GROUP BY fornecedor_excel"):
+        nomes_mega[" ".join(r["n"].split()).lower()] = (r["n"], r["q"])
+    linhas = []
+    for k in sorted(set(rel) | set(nomes_mega)):
+        nome = nomes_mega.get(k, (rel[k]["nome_mega"] if k in rel else k, 0))
+        linhas.append({"mega": nome[0], "eventos": nome[1], "sistema": rel[k]["nome_sistema"] if k in rel else ""})
+    sistema = [f["nome"] for f in db.execute("SELECT nome FROM fornecedores ORDER BY nome")]
+    return render_template("fornecedores_mega.html", linhas=linhas, sistema=sistema, admin=admin)
 
 
 def grupos_atuais():
@@ -3402,7 +3514,7 @@ def plano_importacao(eventos):
         fora = sorted({str(e["produto"]).strip() for e in evs if iid and itens_inv
                        and str(e["produto"] or "").strip().upper() not in itens_inv})
         linhas.append({"grupo": gk, "invoice_id": iid, "invoice": inv["numero"] if inv else evs[0].get("invoice_excel"),
-                       "fornecedor": inv["fornecedor"] if inv else evs[0].get("fornecedor_excel"),
+                       "fornecedor": inv["fornecedor"] if inv else fornecedor_sistema(evs[0].get("fornecedor_excel")),
                        "nf": evs[0].get("numero_nf"), "eventos": len(evs), "atuais": atual["qtd"] if atual else 0,
                        "acao": acao, "itens_fora": fora,
                        "data": max((str(e.get("data_inclusao") or "") for e in evs), default="")})
@@ -3475,7 +3587,9 @@ def inspecoes():
         "SELECT i.id, i.numero, f.nome AS fornecedor, d.status AS desconto_status FROM invoices i"
         " JOIN fornecedores f ON f.id = i.fornecedor_id LEFT JOIN descontos d ON d.invoice_id = i.id")}
     lista = []
+    mapa = mapa_fornecedor_mega()
     for r in resumo.values():
+        r["fornecedor"] = fornecedor_sistema(r["fornecedor"], mapa)
         inv = invs.get(r["invoice_id"])
         if inv:
             r["invoice"], r["fornecedor"], r["desconto_status"] = inv["numero"], inv["fornecedor"], inv["desconto_status"]
@@ -3565,6 +3679,7 @@ def inspecoes_previa(token):
                            " atualizado_em) VALUES (?, ?, ?, 'planilha', ?, ?)",
                            [(k, k.capitalize(), v, g.usuario["id"], agora()) for k, v in termos_novos.items()])
             n_termos = len(termos_novos)
+        religar_grupos()
         resumo = {"novos": sum(1 for p in aplicar if p["acao"] == "novo"),
                   "atualizados": sum(1 for p in aplicar if p["acao"] == "atualizar"), "termos": n_termos}
         db.execute("UPDATE inspecao_importacoes SET resumo = ? WHERE id = ?", (json.dumps(resumo), mid))
@@ -3838,7 +3953,7 @@ def consulta_base(args):
     """(SQL WHERE, parâmetros) a partir dos filtros da tela da base de dados."""
     where, params = ["1 = 1"], []
     if args.get("fornecedor"):  # v4.58: escolhido na lista (nome do sistema ou, sem vínculo, o do Excel)
-        where.append("COALESCE(f.nome, e.fornecedor_excel, '') = ?")
+        where.append("COALESCE(f.nome, fm.nome_sistema, e.fornecedor_excel, '') = ?")
         params.append(args["fornecedor"])
     if args.get("invoice"):  # o valor é o grupo do invoice
         where.append("e.grupo = ?")
@@ -3864,7 +3979,8 @@ def consulta_base(args):
 
 
 SQL_BASE = ("FROM inspecao_eventos e LEFT JOIN invoices i ON i.id = e.invoice_id"
-            " LEFT JOIN fornecedores f ON f.id = i.fornecedor_id")
+            " LEFT JOIN fornecedores f ON f.id = i.fornecedor_id"
+            " LEFT JOIN fornecedor_mega fm ON fm.nome_mega = trim(e.fornecedor_excel)")
 
 
 @app.route("/inspecoes-base", methods=["GET", "POST"])
@@ -3907,13 +4023,13 @@ def inspecoes_base():
     pagina = max(1, request.args.get("pagina", 1, type=int))
     paginas = max(1, -(-total // por_pagina))
     pagina = min(pagina, paginas)
-    eventos = db.execute(f"SELECT e.*, i.numero AS invoice_sistema, f.nome AS fornecedor_sistema {SQL_BASE} WHERE {where}"
+    eventos = db.execute(f"SELECT e.*, i.numero AS invoice_sistema, COALESCE(f.nome, fm.nome_sistema) AS fornecedor_sistema {SQL_BASE} WHERE {where}"
                          " ORDER BY substr(COALESCE(e.report_date, ''), 1, 10) DESC, e.grupo, e.produto, e.ordem"
                          f" LIMIT {por_pagina} OFFSET {(pagina - 1) * por_pagina}", params).fetchall()
     glos = glossario()
     linhas = [{"e": e, "en": insp.traduzir(e["comentario"], glos)[0]} for e in eventos]
     opcoes = db.execute(f"SELECT e.grupo, COALESCE(i.numero, e.invoice_excel, e.grupo) AS invoice,"
-                        f" COALESCE(f.nome, e.fornecedor_excel, '') AS fornecedor, MAX(substr(COALESCE(e.report_date, ''), 1, 10)) AS data"
+                        f" COALESCE(f.nome, fm.nome_sistema, e.fornecedor_excel, '') AS fornecedor, MAX(substr(COALESCE(e.report_date, ''), 1, 10)) AS data"
                         f" {SQL_BASE} GROUP BY e.grupo ORDER BY fornecedor, data DESC").fetchall()
     fornecedores = sorted({o["fornecedor"] for o in opcoes if o["fornecedor"]}, key=str.lower)
     return render_template("inspecoes_base.html", linhas=linhas, total=total, pecas=pecas, args=args, pagina=pagina,

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block titulo %}Fornecedores MEGA × sistema{% endblock %}
+{% block conteudo %}
+<p class="voltar"><a href="{{ url_for('inspecoes') }}">← Inspeções de recebimento</a></p>
+<h1>Fornecedores MEGA × sistema</h1>
+<p class="sub">O MEGA usa outro nome para o fornecedor. Esta relação mostra o nome do sistema nas telas de inspeção e ajuda a ligar a
+  inspeção ao invoice quando não há NF cadastrada (procura o número do invoice dentro do fornecedor). Ao salvar, os invoices de
+  inspeção que estavam sem vínculo e agora encontram o invoice passam a ficar ligados.</p>
+<section class="bloco">
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <datalist id="nomes-sistema">{% for n in sistema %}<option value="{{ n }}">{% endfor %}</datalist>
+    <table>
+      <thead><tr><th>Fornecedor no MEGA</th><th class="num">Eventos importados</th><th>Fornecedor no sistema</th></tr></thead>
+      <tbody>
+      {% for l in linhas %}
+        <tr class="{{ 'linha-atencao' if not l.sistema }}"><td>{{ l.mega }}<input type="hidden" name="nome_mega" value="{{ l.mega }}"></td><td class="num">{{ l.eventos or '' }}</td>
+          <td><input name="nome_sistema" value="{{ l.sistema }}" list="nomes-sistema" {{ 'disabled' if not admin }} placeholder="sem relação"></td></tr>
+      {% endfor %}
+      {% if admin %}<tr><td><input name="nome_mega" placeholder="Novo nome no MEGA"></td><td></td><td><input name="nome_sistema" list="nomes-sistema" placeholder="Nome no sistema"></td></tr>{% endif %}
+      </tbody>
+    </table>
+    {% if admin %}<button class="btn primario">Salvar relação</button> <small>Deixe o nome do sistema vazio para remover a relação.</small>{% endif %}
+  </form>
+</section>
+{% endblock %}

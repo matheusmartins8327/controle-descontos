@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.58)
+# Controle de Invoices e Descontos (v4.59)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -234,6 +234,9 @@ Em **Descontos → Inspeções de recebimento** (Engenharia de Processos importa
   com relatório já enviado (estes não mudam; só avisa). A primeira carga pode ser a base completa desde 2025.
 - **Vínculo com o invoice** pela **NF de entrada** (NUMERO_NF = número da NF do Desembaraço). Sem NF cadastrada, pelo número do invoice
   da coluna INVOICE (sem o nome do fornecedor do fim); sem vínculo, o invoice aparece como está no Excel. NF vazia na planilha gera aviso.
+- **Fornecedores MEGA × sistema** (v4.59): relação entre o nome do fornecedor no MEGA e no sistema (ex.: "DR. FRIGZ INTERNATIONAL
+  PVT LTD" = "Dr. Frigz"), editável em Inspeções → Fornecedores MEGA × sistema. As telas mostram o nome do sistema e, sem NF, o
+  invoice é procurado pelo número dentro do fornecedor (o Excel escreve "26000069 - DR.FRIGZ" ou "ORTHOGENT - 92-786-OGE-342").
 - Como não há código único do evento, a comparação é por invoice: os eventos são trocados pelos da extração mais recente e as
   **reclassificações já feitas são mantidas** para o mesmo evento. Categoria diferente do critério do MEGA (feita na planilha) fica
   registrada como reclassificação.

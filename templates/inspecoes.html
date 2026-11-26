@@ -17,6 +17,7 @@
   {% endif %}
   <a class="btn" href="{{ url_for('inspecoes_base') }}">Base de dados</a>
   <a class="btn" href="{{ url_for('politicas_desconto') }}">Políticas de desconto</a>
+  <a class="btn" href="{{ url_for('fornecedores_mega') }}">Fornecedores MEGA × sistema</a>
   <a class="btn {{ 'primario' if pendentes_total }}" href="{{ url_for('traducoes') }}">Termos de tradução{% if pendentes_total %} · {{ pendentes_total }} pendente(s){% endif %}</a>
 </div>
 {% if importacoes %}<p class="sub">Últimas importações: {% for m in importacoes %}{{ m.criado_em|data }} ({{ m.usuario or '—' }}, {{ m.eventos }} evento(s) em {{ m.grupos }} invoice(s)){{ '; ' if not loop.last }}{% endfor %}</p>{% endif %}
