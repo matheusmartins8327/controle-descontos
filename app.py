@@ -50,7 +50,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.57"
+VERSAO = "4.58"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -3837,12 +3837,12 @@ FILTROS_BASE = ("fornecedor", "invoice", "item", "categoria", "defeito", "de", "
 def consulta_base(args):
     """(SQL WHERE, parâmetros) a partir dos filtros da tela da base de dados."""
     where, params = ["1 = 1"], []
-    if args.get("fornecedor"):
-        where.append("(lower(COALESCE(f.nome, '')) LIKE ? OR lower(COALESCE(e.fornecedor_excel, '')) LIKE ?)")
-        params += [f"%{args['fornecedor'].strip().lower()}%"] * 2
-    if args.get("invoice"):
-        where.append("(lower(COALESCE(i.numero, '')) LIKE ? OR lower(COALESCE(e.invoice_excel, '')) LIKE ? OR e.numero_nf = ?)")
-        params += [f"%{args['invoice'].strip().lower()}%"] * 2 + [args["invoice"].strip()]
+    if args.get("fornecedor"):  # v4.58: escolhido na lista (nome do sistema ou, sem vínculo, o do Excel)
+        where.append("COALESCE(f.nome, e.fornecedor_excel, '') = ?")
+        params.append(args["fornecedor"])
+    if args.get("invoice"):  # o valor é o grupo do invoice
+        where.append("e.grupo = ?")
+        params.append(args["invoice"])
     if args.get("item"):
         where.append("lower(COALESCE(e.produto, '')) LIKE ?")
         params.append(f"%{args['item'].strip().lower()}%")
@@ -3912,7 +3912,12 @@ def inspecoes_base():
                          f" LIMIT {por_pagina} OFFSET {(pagina - 1) * por_pagina}", params).fetchall()
     glos = glossario()
     linhas = [{"e": e, "en": insp.traduzir(e["comentario"], glos)[0]} for e in eventos]
+    opcoes = db.execute(f"SELECT e.grupo, COALESCE(i.numero, e.invoice_excel, e.grupo) AS invoice,"
+                        f" COALESCE(f.nome, e.fornecedor_excel, '') AS fornecedor, MAX(substr(COALESCE(e.report_date, ''), 1, 10)) AS data"
+                        f" {SQL_BASE} GROUP BY e.grupo ORDER BY fornecedor, data DESC").fetchall()
+    fornecedores = sorted({o["fornecedor"] for o in opcoes if o["fornecedor"]}, key=str.lower)
     return render_template("inspecoes_base.html", linhas=linhas, total=total, pecas=pecas, args=args, pagina=pagina,
+                           opcoes_invoice=opcoes, opcoes_fornecedor=fornecedores,
                            paginas=paginas, admin=admin, filtrado=any(args.values()))
 
 

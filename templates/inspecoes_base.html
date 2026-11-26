@@ -8,8 +8,10 @@
 
 <form method="get" class="bloco filtros-base">
   <div class="grade">
-    <label>Fornecedor<input name="fornecedor" value="{{ args.fornecedor }}"></label>
-    <label>Invoice ou NF<input name="invoice" value="{{ args.invoice }}"></label>
+    <label>Fornecedor<select name="fornecedor" id="sel-fornecedor"><option value="">Todos</option>
+      {% for f in opcoes_fornecedor %}<option value="{{ f }}" {{ 'selected' if args.fornecedor == f }}>{{ f }}</option>{% endfor %}</select></label>
+    <label>Invoice<select name="invoice" id="sel-invoice"><option value="">Todos</option>
+      {% for o in opcoes_invoice %}<option value="{{ o.grupo }}" data-forn="{{ o.fornecedor }}" {{ 'selected' if args.invoice == o.grupo }}>{{ o.invoice }}{% if args.fornecedor == '' %} · {{ o.fornecedor[:25] }}{% endif %}</option>{% endfor %}</select></label>
     <label>Item<input name="item" value="{{ args.item }}" placeholder="ex.: SF.310"></label>
     <label>Categoria<select name="categoria"><option value="">Todas</option>{% for c in ['A','B','C','D'] %}<option {{ 'selected' if args.categoria == c }}>{{ c }}</option>{% endfor %}</select></label>
     <label>Defeito (comentário do MEGA)<input name="defeito" value="{{ args.defeito }}" placeholder="ex.: limpeza"></label>
@@ -65,6 +67,13 @@
 {% block scripts %}
 <script>
 (function () {
+  // a lista de invoices mostra só os do fornecedor escolhido
+  const sf = document.getElementById('sel-fornecedor'), si = document.getElementById('sel-invoice');
+  if (sf && si) {
+    const filtrar = () => { Array.from(si.options).forEach(o => { if (o.value) o.hidden = !!sf.value && o.dataset.forn !== sf.value; });
+      if (si.selectedOptions[0] && si.selectedOptions[0].hidden) si.value = ''; };
+    sf.addEventListener('change', filtrar); filtrar();
+  }
   const evs = () => Array.from(document.querySelectorAll('.sel-ev'));
   const atualizar = () => {
     const sel = evs().filter(c => c.checked), n = document.getElementById('n-sel'); if (!n) return;
