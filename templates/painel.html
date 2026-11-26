@@ -23,6 +23,18 @@
   {% endfor %}
 </section>
 
+{% if alertas_imp %}
+<details class="bloco alertas-imp" {{ 'open' if alertas_imp|length <= 8 }}>
+  <summary><strong>Alertas da importação</strong> <span class="cont">{{ alertas_imp|length }}</span>
+    <small>· ETA vencida, prazo da exigência vencido, parado em canal amarelo/vermelho há 5 dias ou mais, entrega prevista vencida, HAWB não preenchida, sem atualização há 7 dias</small></summary>
+  <div class="rolagem"><table class="tabela-rel">
+    <thead><tr><th>Invoice</th><th>Alerta</th><th>Detalhe</th><th>Status</th></tr></thead>
+    <tbody>{% for p, alerta, det in alertas_imp %}<tr><td><a href="{{ url_for('invoice_detalhe', id=p.id) }}">{{ p.fornecedor }} · {{ p.invoice }}</a></td>
+      <td><strong>{{ alerta }}</strong></td><td>{{ det }}</td><td><span class="status-imp st-{{ p.status_cor }}">{{ p.status_titulo }}</span></td></tr>{% endfor %}</tbody>
+  </table></div>
+</details>
+{% endif %}
+
 <section class="bloco">
   <h2>Fluxo por invoice</h2>
   <form class="filtros" method="get">

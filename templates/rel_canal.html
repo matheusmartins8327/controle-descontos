@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block titulo %}Importações por canal{% endblock %}
+{% block conteudo %}
+{% include "_rel_abas.html" %}
+<form class="barra-acoes" method="get" action="{{ url_for('relatorio_canal') }}">
+  <label>Tipo<select name="tipo">
+    {% for k, t in [('amarelo', 'Canal amarelo'), ('amarelo_vermelho', 'Canal amarelo + vermelho'), ('vermelho', 'Canal vermelho'), ('verde', 'Canal verde'), ('todos', 'Todos os canais')] %}
+    <option value="{{ k }}" {{ 'selected' if tipo == k }}>{{ t }}</option>{% endfor %}</select></label>
+  <label>De<input type="date" name="de" value="{{ de }}" required></label>
+  <label>Até<input type="date" name="ate" value="{{ ate }}" required></label>
+  <button class="btn primario">Gerar relatório</button>
+  <span class="espaco"></span>
+  <a class="btn" href="{{ url_for('relatorio_canal', fmt='xlsx', tipo=tipo, de=de, ate=ate) }}">Baixar Excel</a>
+  <a class="btn" href="{{ url_for('relatorio_canal', fmt='pdf', tipo=tipo, de=de, ate=ate) }}">Baixar PDF</a>
+</form>
+<p class="sub">Processos com data de parametrização dentro do período e canal do tipo escolhido, por data de parametrização e fornecedor.</p>
+<section class="bloco">
+  <h2>{{ rel.titulo }} <small>· {{ periodo }}</small></h2>
+  {% if rel.linhas %}
+  <div class="rolagem"><table class="tabela-rel tabela-canal">
+    <thead><tr>{% for c in rel.cab %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for l in rel.linhas %}{% set p = rel.processos[loop.index0] %}<tr>
+      {% for v in l %}<td>{% if loop.index0 == 1 %}<a href="{{ url_for('invoice_detalhe', id=p.id) }}">{{ v }}</a>{% else %}{{ v }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="vazio">Nenhuma importação parametrizada neste período.</p>{% endif %}
+</section>
+{% endblock %}

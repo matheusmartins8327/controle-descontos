@@ -39,6 +39,8 @@ from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_t
 import duimp as leitor_duimp  # leitura do extrato da DUIMP (PDF) para o fator de importação
 import inspecoes as insp  # inspeção de recebimento (Agregador MEGA) e tradução por termo
 import relatorio as rel  # Excel e e-mail do relatório de inspeção ao fornecedor
+import relatorios_imp as rimp  # v4.66: relatórios e indicadores da importação (regras de status e de dias)
+import exportar_imp as exp_imp  # v4.66: Excel e PDF dos relatórios da importação
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -51,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.65"
+VERSAO = "4.66"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -94,6 +96,8 @@ CAMPOS_ETAPA = {
                     ("cor_canal", "Canal", "canal", True),
                     ("exigencias_anvisa", "Exigências da ANVISA", "texto", False),
                     ("exigencia_status", "Situação da exigência", "exigencia", False),
+                    ("exigencia_acao", "Ação tomada na exigência", "texto", False),
+                    ("exigencia_prazo", "Prazo de resposta da exigência", "data", False),
                     ("data_desembaraco", "Data de desembaraço", "data", True),
                     ("numero_nf", "Número da NF", "linha", True)],
     "CHEGADA": [("data_prog_chegada", "Data programada de chegada", "data", True),
@@ -557,6 +561,9 @@ def init_db():
         # versão 4.20: número da NF (Desembaraço) e liberação do pagamento após a HAWB pela Engenharia
         if "exigencia_status" not in {r[1] for r in db.execute("PRAGMA table_info(invoices)")}:
             db.execute("ALTER TABLE invoices ADD COLUMN exigencia_status TEXT")  # v4.65
+        for col in ("exigencia_acao", "exigencia_prazo"):  # v4.66
+            if col not in {r[1] for r in db.execute("PRAGMA table_info(invoices)")}:
+                db.execute(f"ALTER TABLE invoices ADD COLUMN {col} TEXT")
         colunas_inv = {r[1] for r in db.execute("PRAGMA table_info(invoices)")}
         for col, tipo in (("numero_nf", "TEXT"), ("pagamento_liberado_em", "TEXT"), ("pagamento_liberado_por", "INTEGER"),
                           ("pagamento_liberado_obs", "TEXT"), ("historico", "INTEGER NOT NULL DEFAULT 0"),
@@ -1459,7 +1466,8 @@ def painel():
     for r in lista:
         r["progresso"] = progresso_fluxo(r)
         r["fator"], r["fator_final"] = fator_resumido(r["id"], r) if r["situacao"] != "CANCELADO" else (None, False)
-    return render_template("painel.html", invoices=lista, contagem=contagem, fornecedores=fornecedores,
+    alertas_imp = rimp.alertas(processos_importacao(invoices), hj)  # v4.66
+    return render_template("painel.html", invoices=lista, contagem=contagem, fornecedores=fornecedores, alertas_imp=alertas_imp,
                            filtro_sit=filtro_sit, filtro_forn=filtro_forn, filtro_moeda=filtro_moeda, busca=busca,
                            hoje=hj, ETAPAS_PAINEL=ETAPAS_PAINEL)
 
@@ -1707,7 +1715,7 @@ def ler_form_invoice():
 OPCIONAIS_CADASTRO = [("agente_carga", "Agente de carga"), ("despachante", "Despachante"),
                       ("data_prog_coleta", "Data programada de coleta")]
 # campos não obrigatórios que não geram pendência (grupo de consolidação também não, por não estar na lista acima)
-SEM_PENDENCIA = {"exigencias_anvisa", "exigencia_status"}
+SEM_PENDENCIA = {"exigencias_anvisa", "exigencia_status", "exigencia_acao", "exigencia_prazo"}
 
 
 
@@ -2352,43 +2360,44 @@ def importacao():
 
 
 def resumo_importacao(r):
-    """v4.65: status do processo (aba Importação) → (título, detalhe, cor), na ordem de prioridade combinada."""
-    def d(x):
-        return fmt_data(x)[:5] if x else None
+    """v4.65: status do processo (aba Importação) → (título, detalhe, cor). v4.66: mesmas regras dos relatórios."""
     if r["situacao"] == "CRIACAO":
         falta = criacao_faltando(r)
         return ("Cadastro incompleto", "falta " + ", ".join(falta[:2]).lower() + ("…" if len(falta) > 2 else ""), "neutro")
-    if r["data_chegada"]:
-        return "Entregue na Quinelato", f"entregue em {d(r['data_chegada'])}", "verde"
-    if r["data_desembaraco"]:
-        return ("Desembaraçado — em transporte para a Quinelato",
-                f"entrega prevista para {fmt_data(r['data_prog_chegada'])}" if r["data_prog_chegada"] else "sem previsão de entrega",
-                "verde")
-    canal = r["cor_canal"]
-    if canal in ("Amarelo", "Vermelho"):
-        exig = r["exigencia_status"]
-        if exig == "PENDENTE":
-            return "Retido — exigência pendente", f"canal {canal.lower()}", "vermelho"
-        if exig == "CUMPRIDA":
-            return "Exigência cumprida — aguardando análise", f"canal {canal.lower()}", "amarelo"
-        if exig == "FINALIZADA":
-            return "Exigência finalizada — aguardando desembaraço", f"canal {canal.lower()}", "azul"
-        return "Em análise pelo fiscal — sem exigência até o momento", f"canal {canal.lower()}", canal == "Amarelo" and "amarelo" or "vermelho"
-    if r["data_parametrizacao"] and canal == "Verde":
-        return "Liberado — canal verde", f"parametrizado em {d(r['data_parametrizacao'])}", "verde"
-    if r["data_parametrizacao"]:
-        return "Em canal — aguardando parametrização", f"parametrizado em {d(r['data_parametrizacao'])}", "neutro"
-    if r["data_registro_br"]:
-        return "DUIMP emitida — aguardando parametrização", f"DUIMP emitida em {d(r['data_registro_br'])}", "neutro"
-    if r["eta_real"]:
-        return "Chegou no Brasil — aguardando DUIMP", f"chegou no BR em {d(r['eta_real'])}", "neutro"
-    if r["etd_real"]:
-        return "Em trânsito", (f"deve chegar no BR em {d(r['eta_planejado'])}" if r["eta_planejado"] else "sem previsão de chegada"), "neutro"
-    if r["data_coleta"]:
-        return ("Coletado — aguardando embarque", f"coletado em {d(r['data_coleta'])} · "
-                + (f"embarque previsto para {d(r['etd_planejado'])}" if r["etd_planejado"] else "sem previsão de embarque"), "neutro")
-    return ("Aguardando coleta", f"coleta programada para {d(r['data_prog_coleta'])}" if r["data_prog_coleta"]
-            else "sem coleta programada", "neutro")
+    _k, titulo, detalhe, cor = rimp.status(processo_de(r))
+    return titulo, detalhe, cor
+
+
+def processo_de(r, extra=None):
+    """Invoice → processo no formato dos relatórios da importação (relatorios_imp)."""
+    e = extra or {}
+    return {
+        "id": r.get("id"), "fornecedor": r.get("fornecedor"), "pais": e.get("pais"), "invoice": r.get("numero"),
+        "valor": r.get("valor_invoice"), "moeda": r.get("moeda"), "agente": r.get("agente_carga"), "despachante": r.get("despachante"),
+        "consolidacao": r.get("grupo_consolidacao"), "duimp": e.get("duimp"),
+        "coleta_prevista": r.get("data_prog_coleta"), "data_coleta": r.get("data_coleta"), "etd_previsto": r.get("etd_planejado"),
+        "etd_real": r.get("etd_real"), "hawb": r.get("data_hawb"), "eta_prevista": r.get("eta_planejado"), "eta_real": r.get("eta_real"),
+        "data_duimp": r.get("data_registro_br"), "data_parametrizacao": r.get("data_parametrizacao"), "canal": r.get("cor_canal"),
+        "exig_descricao": r.get("exigencias_anvisa"), "exig_acao": r.get("exigencia_acao"), "exig_status": r.get("exigencia_status"),
+        "exig_prazo": r.get("exigencia_prazo"), "data_desembaraco": r.get("data_desembaraco"),
+        "entrega_prevista": r.get("data_prog_chegada"), "entrega_real": r.get("data_chegada"), "obs": r.get("obs"),
+        "criado_em": r.get("criado_em"), "ultima_atualizacao": e.get("ultima"),
+        "itens": [{"codigo": x["codigo"], "descricao": x["item"], "quantidade": x["quantidade"]} for x in r.get("itens", [])],
+    }
+
+
+def processos_importacao(invoices=None):
+    """Processos dos relatórios da importação: invoices não cancelados e fora da carga de histórico, com o status
+    recalculado agora (tela, Excel e PDF usam sempre esta mesma lista)."""
+    db = get_db()
+    invoices = invoices if invoices is not None else todos_invoices()
+    paises = {r["id"]: r["cidade"] for r in db.execute("SELECT id, cidade FROM fornecedores")}
+    duimps = {r["invoice_id"]: r["numero"] for r in db.execute("SELECT invoice_id, numero FROM duimp_dados WHERE numero IS NOT NULL")}
+    ultimas = {r[0]: r[1] for r in db.execute("SELECT invoice_id, MAX(criado_em) FROM eventos GROUP BY invoice_id")}
+    res = [processo_de(r, {"pais": paises.get(r["fornecedor_id"]), "duimp": duimps.get(r["id"]),
+                           "ultima": ultimas.get(r["id"])})
+           for r in invoices if not r["cancelado_em"] and not r["historico"]]
+    return rimp.com_status(res)
 
 
 def ultima_informacao(r):
@@ -2402,7 +2411,7 @@ def ultima_informacao(r):
     for etapa in ORDEM_LOGISTICA:
         for campo, rotulo, tipo, _obrig in CAMPOS_ETAPA[etapa]:
             v = r[campo]
-            if not v or tipo == "texto":
+            if not v or tipo == "texto" or campo == "exigencia_prazo":
                 continue
             if tipo == "data":
                 ultima = f"{rotulo} {fmt_data(v)}"
@@ -4783,10 +4792,302 @@ def usuario_form(id=None):
 # ---------------------------------------------------------------------------
 # Relatórios e indicadores (planejado - próxima versão)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# v4.66: Relatórios da importação (indicadores, itens por situação, importações por canal, mensal e semanal).
+# Tudo é calculado a partir das datas dos processos, na hora: a tela, o Excel e o PDF usam as mesmas funções
+# (relatorios_imp) e cada download recalcula com os dados atuais.
+# ---------------------------------------------------------------------------
+def _baixar(conteudo, nome, mime):
+    return send_file(io.BytesIO(conteudo), download_name=nome, as_attachment=True, mimetype=mime)
+
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _pdf_disponivel():
+    try:
+        import reportlab  # noqa: F401
+        return True
+    except ImportError:
+        flash("A biblioteca de PDF (reportlab) ainda não está instalada no servidor. Em Sistema, use "
+              "\"Verificar e instalar atualização\" ou rode: pip install --user reportlab", "erro")
+        return False
+
+
+def _gerado_em():
+    return agora_dt().strftime("%d/%m/%Y %H:%M")
+
+
+def _periodo_args(padrao="mes_anterior"):
+    """(de, ate) do formulário; sem datas, o mês anterior completo."""
+    de, ate = request.args.get("de") or "", request.args.get("ate") or ""
+    try:
+        date.fromisoformat(de)
+        date.fromisoformat(ate)
+    except ValueError:
+        h = date.fromisoformat(hoje())
+        fim = h.replace(day=1) - timedelta(days=1)
+        de, ate = fim.replace(day=1).isoformat(), fim.isoformat()
+    if de > ate:
+        de, ate = ate, de
+    return de, ate
+
+
+def _txt_periodo(de, ate):
+    return f"{rimp.dma(de)} a {rimp.dma(ate)}"
+
+
+def _valor_ind(chave, par):
+    """Valor de indicador para o Excel: número (1 casa; % em 0 a 100) ou "—"."""
+    v = par[0]
+    if v is None:
+        return "—"
+    return round(v * 100, 1) if rimp.FORMATO_IND[chave] == "pct" else round(v, 1)
+
+
 @app.route("/relatorios")
+@app.route("/relatorios/indicadores.<fmt>")
 @login_obrigatorio
-def relatorios():
-    return render_template("relatorios.html")
+def relatorios(fmt=None):
+    dim = request.args.get("dim") if request.args.get("dim") in rimp.DIMENSOES else "fornecedor"
+    procs = processos_importacao()
+    ind = rimp.indicadores(procs, dim)
+    cartoes = rimp.cartoes_indicadores(ind["estat"])
+    if fmt == "xlsx":
+        abas = [{"nome": "Resumo", "titulo": f"Indicadores da importação · gerado em {_gerado_em()}",
+                 "cab": ["Indicador", "Valor", "Processos considerados", "Como é calculado"],
+                 "linhas": [["Processos no total", ind["estat"]["total"], "", ""],
+                            ["Entregues na Quinelato", ind["estat"]["entregues"], "", ""],
+                            ["Em andamento", ind["estat"]["andamento"], "", ""]]
+                 + [[r + (" (%)" if f == "pct" else " (dias)"), _valor_ind(k, ind["estat"][k]), ind["estat"][k][1], e]
+                    for k, r, f, e in rimp.INDICADORES]}]
+        for d, titulo in rimp.DIMENSOES.items():
+            cab = [{"fornecedor": "Fornecedor", "agente": "Agente de carga", "despachante": "Despachante"}[d],
+                   "Processos", "Entregues"] + [r + (" (%)" if f == "pct" else " (dias)") for _k, r, f, _e in rimp.INDICADORES]
+            linhas = [[nome, e["total"], e["entregues"]] + [_valor_ind(k, e[k]) for k, *_r in rimp.INDICADORES]
+                      for nome, e in rimp.por_grupo(procs, d)]
+            abas.append({"nome": titulo, "cab": cab, "linhas": linhas})
+        return _baixar(exp_imp.xlsx(abas), f"indicadores-importacao-{hoje()}.xlsx", XLSX_MIME)
+    if fmt == "pdf":
+        if not _pdf_disponivel():
+            return redirect(url_for("relatorios", dim=dim))
+        pdf = exp_imp.Pdf("Indicadores da importação", rimp.DIMENSOES[dim], paisagem=True)
+        pdf.cartoes(cartoes, 5)
+        pdf.h2("Visão geral")
+        pdf.graficos_lado_a_lado([(t, s, f, None) for t, s, f in ind["graficos"]])
+        pdf.grafico(ind["largo"][0], ind["largo"][1], "n", altura=150, cores=False)
+        pdf.quebra()
+        pdf.h2(rimp.DIMENSOES[dim])
+        pdf.graficos_lado_a_lado([(t, s, f, False) for t, s, f in ind["graf_dim"]])
+        pdf.h2(f"Tabela {rimp.DIMENSOES[dim].lower()}")
+        pdf.tabela([ind["titulo_dim"].capitalize(), "Proc.", "Entr."] + [r for _k, r, _f, _e in rimp.INDICADORES],
+                   [[n, e["total"], e["entregues"]] + [rimp.fmt_ind(k, e[k]) for k, *_r in rimp.INDICADORES]
+                    for n, e in ind["grupos"]], [16, 5, 5] + [8] * len(rimp.INDICADORES))
+        pdf.espaco()
+        pdf.p("Cada média considera só os processos que têm as duas datas envolvidas; o número entre parênteses é a "
+              "quantidade de processos usados no cálculo. \"—\" = sem dados suficientes.")
+        return _baixar(pdf.bytes(_gerado_em()), f"indicadores-importacao-{hoje()}.pdf", "application/pdf")
+    return render_template("rel_indicadores.html", ind=ind, cartoes=cartoes, dim=dim, rimp=rimp, aba="indicadores")
+
+
+@app.route("/relatorios/itens")
+@app.route("/relatorios/itens.<fmt>")
+@login_obrigatorio
+def relatorio_itens(fmt=None):
+    hj = hoje()
+    procs = processos_importacao()
+    rel_ = rimp.itens_por_situacao(procs, hj)
+    if fmt == "xlsx":
+        abas = [{"nome": "Visao Geral Processos", "cab": rimp.CAB_VISAO_GERAL, "linhas": rimp.linhas_visao_geral(procs, hj)},
+                {"nome": "Visao Item a Item", "cab": rimp.CAB_ITENS, "linhas": rimp.linhas_itens(procs)}]
+        return _baixar(exp_imp.xlsx(abas), f"itens-por-situacao-{hj}.xlsx", XLSX_MIME)
+    if fmt == "csv":
+        return _baixar(exp_imp.csv_bytes(rimp.CAB_ITENS, rimp.linhas_itens(procs)), f"itens-por-situacao-{hj}.csv",
+                       "text/csv")
+    if fmt == "pdf":
+        if not _pdf_disponivel():
+            return redirect(url_for("relatorio_itens"))
+        pdf = exp_imp.Pdf("Itens por situação", "processos ainda não entregues na Quinelato", paisagem=True)
+        pdf.cartoes(_cartoes_itens(rel_), 5)
+        pdf.graficos_lado_a_lado([("Processos por situação", rel_["graf_status"], "n", False),
+                                  ("Processos por canal", rel_["graf_canal"], "n", None)])
+        pdf.h2("Processos")
+        pdf.tabela(rimp.CAB_VISAO_GERAL, rimp.linhas_visao_geral(procs, hj), [10, 10, 12, 8, 22, 7, 8, 6, 8])
+        for t in rel_["tabelas"]:
+            pdf.h2(f"{t['titulo']} · {rimp.plural(t['processos'], 'processo', 'processos')}")
+            pdf.tabela(["Código", "Descrição", "Quantidade", "Invoices"],
+                       [[l["codigo"], l["descricao"], l["quantidade"], ", ".join(l["invoices"])] for l in t["linhas"]],
+                       [10, 40, 8, 20], vazio="Sem itens cadastrados nestes processos.")
+        if rel_["retidos"]:
+            pdf.h2("Itens retidos")
+            linhas = []
+            for x in rel_["retidos"]:
+                p = x["processo"]
+                for it in x["itens"] or [{"codigo": "", "descricao": "(sem itens cadastrados)", "quantidade": None}]:
+                    linhas.append([p["fornecedor"], p["invoice"], p["status_titulo"], it["codigo"], it["descricao"],
+                                   it["quantidade"], p.get("exig_descricao") or "Sem exigência formal"])
+            pdf.tabela(["Fornecedor", "Invoice", "Status", "Código", "Descrição", "Qtd.", "Exigência"], linhas,
+                       [10, 9, 16, 8, 22, 5, 20])
+        return _baixar(pdf.bytes(_gerado_em()), f"itens-por-situacao-{hj}.pdf", "application/pdf")
+    return render_template("rel_itens.html", rel=rel_, cartoes=_cartoes_itens(rel_), rimp=rimp, aba="itens",
+                           hoje=hj)
+
+
+def _cartoes_itens(rel_):
+    valor = " · ".join(fmt_moeda(v, m) for m, v in sorted(rel_["valor_transito"].items())) or "—"
+    return [("Processos ativos", str(len(rel_["ativos"])), "neutro", "ainda não entregues"),
+            ("Em trânsito", str(rel_["em_transito"]), "neutro", ""),
+            ("Atrasados", str(rel_["atrasados"]), "vermelho" if rel_["atrasados"] else "neutro", "ETA prevista vencida"),
+            ("No prazo", str(rel_["no_prazo"]), "verde" if rel_["no_prazo"] else "neutro", ""),
+            ("Valor em trânsito", valor, "neutro", "processos com status Em trânsito")]
+
+
+@app.route("/relatorios/canal")
+@app.route("/relatorios/canal.<fmt>")
+@login_obrigatorio
+def relatorio_canal(fmt=None):
+    tipo = request.args.get("tipo") if request.args.get("tipo") in rimp.TIPOS_CANAL else "amarelo"
+    de, ate = _periodo_args()
+    rel_ = rimp.importacoes_por_canal(processos_importacao(), tipo, de, ate)
+    periodo = f"Período: {_txt_periodo(de, ate)}"
+    nome = f"importacoes-canal-{tipo.replace('_', '-')}-{de}-a-{ate}"
+    if fmt == "xlsx":
+        return _baixar(exp_imp.xlsx_canal(rel_["titulo"], periodo, rel_["cab"], rel_["linhas"]), nome + ".xlsx", XLSX_MIME)
+    if fmt == "pdf":
+        if not _pdf_disponivel():
+            return redirect(url_for("relatorio_canal", tipo=tipo, de=de, ate=ate))
+        pdf = exp_imp.Pdf(rel_["titulo"], periodo)
+        pdf.tabela(rel_["cab"], rel_["linhas"], vazio="Nenhuma importação parametrizada neste período.")
+        return _baixar(pdf.bytes(_gerado_em()), nome + ".pdf", "application/pdf")
+    return render_template("rel_canal.html", rel=rel_, tipo=tipo, de=de, ate=ate, periodo=periodo, rimp=rimp, aba="canal")
+
+
+@app.route("/relatorios/mensal")
+@app.route("/relatorios/mensal.<fmt>")
+@login_obrigatorio
+def relatorio_mensal(fmt=None):
+    de, ate = _periodo_args()
+    m = rimp.relatorio_mensal(processos_importacao(), de, ate)
+    periodo = _txt_periodo(de, ate)
+    nome = f"relatorio-mensal-importacao-{de}-a-{ate}"
+
+    def abertos(lista):
+        return [[q["fornecedor"], q["invoice"], q["status_titulo"], q["ultima_mov_txt"], q["dias_parado"],
+                 rimp.dma(rimp.inicio(q))] for q in lista]
+    cab_abertos = ["Fornecedor", "Invoice", "Status no fim do período", "Última movimentação", "Dias parado", "Início"]
+    cab_cheg = ["Fornecedor", "Invoice", "ETA prevista", "ETA real", "Diferença (dias)", "Peças"]
+
+    def chegadas():
+        return [[p["fornecedor"], p["invoice"], rimp.dma(p.get("eta_prevista")) if p.get("eta_prevista") else "—",
+                 rimp.dma(p["eta_real"]), _dif(p.get("eta_prevista"), p["eta_real"]),
+                 rimp.qtd_itens(p) if p["itens"] else "sem itens"] for p in m["chegadas"]]
+    cab_ent = ["Fornecedor", "Invoice", "Entrega prevista", "Entrega real", "Diferença (dias)", "Peças"]
+
+    def entregas():
+        return [[p["fornecedor"], p["invoice"], rimp.dma(p.get("entrega_prevista")) if p.get("entrega_prevista") else "—",
+                 rimp.dma(p["entrega_real"]), _dif(p.get("entrega_prevista"), p["entrega_real"]),
+                 rimp.qtd_itens(p) if p["itens"] else "sem itens"] for p in m["entregas"]]
+    resumo = ([["Eventos: " + r, n] for r, n in m["contagem_eventos"]]
+              + [["Parametrizações em canal " + c.lower() if c != "Sem canal" else "Parametrizações sem canal", n]
+                 for c, n in m["param_canal"]]
+              + [["Chegadas: " + r.lower(), n] for r, n in m["pontualidade"]]
+              + [[f"Peças — {k.lower()}", v["pecas"] if v["processos"] else "—"] for k, v in m["pecas"].items()]
+              + [[f"Processos sem itens — {k.lower()}", v["sem_itens"]] for k, v in m["pecas"].items()]
+              + [["Processos em aberto no fim do período", len(m["abertos"])],
+                 ["Pendências herdadas (começaram antes do período)", len(m["herdadas"])]])
+    if fmt == "xlsx":
+        abas = [{"nome": "Resumo", "titulo": f"Relatório mensal da importação · {periodo}", "cab": ["Indicador", "Quantidade"],
+                 "linhas": resumo},
+                {"nome": "Linha do tempo", "cab": ["Data", "Evento", "Fornecedor", "Invoice", "Detalhe"],
+                 "linhas": [[rimp.dma(e["data"]), e["evento"], e["processo"]["fornecedor"], e["processo"]["invoice"],
+                             e["detalhe"]] for e in m["eventos"]]},
+                {"nome": "Chegadas", "cab": cab_cheg, "linhas": chegadas()},
+                {"nome": "Entregas", "cab": cab_ent, "linhas": entregas()},
+                {"nome": "Parametrizações", "cab": ["Fornecedor", "Invoice", "Data", "Canal"],
+                 "linhas": [[p["fornecedor"], p["invoice"], rimp.dma(p["data_parametrizacao"]), p.get("canal") or "—"]
+                            for p in m["parametrizacoes"]]},
+                {"nome": "Em aberto", "cab": cab_abertos, "linhas": abertos(m["abertos"])},
+                {"nome": "Pendências herdadas", "cab": cab_abertos, "linhas": abertos(m["herdadas"])}]
+        return _baixar(exp_imp.xlsx(abas), nome + ".xlsx", XLSX_MIME)
+    if fmt == "pdf":
+        if not _pdf_disponivel():
+            return redirect(url_for("relatorio_mensal", de=de, ate=ate))
+        pdf = exp_imp.Pdf("Relatório mensal da importação", periodo, paisagem=True)
+        pc = m["pecas"]
+        pdf.cartoes([("Eventos no período", str(len(m["eventos"])), "neutro", ""),
+                     ("Chegadas ao Brasil", str(len(m["chegadas"])), "neutro", ""),
+                     ("Entregas na Quinelato", str(len(m["entregas"])), "neutro", ""),
+                     ("Em aberto no fim do período", str(len(m["abertos"])), "neutro", ""),
+                     ("Pendências herdadas", str(len(m["herdadas"])), "vermelho" if m["herdadas"] else "neutro",
+                      "começaram antes do período")]
+                    + [(f"Peças — {k.lower()}", rimp.num(v["pecas"], 0) if v["processos"] else "—", "neutro",
+                        f"{v['sem_itens']} sem itens cadastrados" if v["sem_itens"] else "") for k, v in pc.items()], 4)
+        pdf.graficos_lado_a_lado([("Eventos do período", m["contagem_eventos"], "n", False),
+                                  ("Parametrizações por canal", m["param_canal"], "n", None),
+                                  ("Pontualidade das chegadas", m["pontualidade"], "n", False),
+                                  ("Processos em aberto por situação", m["status_abertos"], "n", False)], 140)
+        pdf.h2("Pendências herdadas (começaram antes do período e continuam pendentes)")
+        pdf.tabela(cab_abertos, abertos(m["herdadas"]), [14, 10, 24, 22, 7, 8], vazio="Nenhuma pendência herdada.")
+        pdf.h2("Processos em aberto no fim do período")
+        pdf.tabela(cab_abertos, abertos(m["abertos"]), [14, 10, 24, 22, 7, 8], vazio="Nenhum processo em aberto.")
+        pdf.h2("Chegadas no Brasil no período")
+        pdf.tabela(cab_cheg, chegadas(), [16, 12, 10, 10, 8, 8], vazio="Nenhuma chegada no período.")
+        pdf.h2("Entregas na Quinelato no período")
+        pdf.tabela(cab_ent, entregas(), [16, 12, 10, 10, 8, 8], vazio="Nenhuma entrega no período.")
+        pdf.h2("Linha do tempo")
+        pdf.tabela(["Data", "Evento", "Fornecedor", "Invoice", "Detalhe"],
+                   [[rimp.dma(e["data"]), e["evento"], e["processo"]["fornecedor"], e["processo"]["invoice"], e["detalhe"]]
+                    for e in m["eventos"]], [8, 14, 16, 12, 10], vazio="Nenhum evento no período.")
+        return _baixar(pdf.bytes(_gerado_em()), nome + ".pdf", "application/pdf")
+    return render_template("rel_mensal.html", m=m, de=de, ate=ate, periodo=periodo, rimp=rimp, aba="mensal",
+                           dif=_dif)
+
+
+def _dif(previsto, real):
+    d = rimp.dias_entre(previsto, real)
+    return "—" if d is None else (f"+{d}" if d > 0 else str(d))
+
+
+FILTROS_SEMANAL = {"a_entregar": "A entregar", "entregues": "Entregues", "todos": "Todos"}
+
+
+@app.route("/relatorios/semanal")
+@app.route("/relatorios/semanal.<fmt>")
+@login_obrigatorio
+def relatorio_semanal(fmt=None):
+    hj = hoje()
+    filtro = request.args.get("filtro") if request.args.get("filtro") in FILTROS_SEMANAL else "a_entregar"
+    procs = rimp.ordenar(processos_importacao())
+    if filtro == "a_entregar":
+        lista = [p for p in procs if p["status"] != "ENTREGUE"]
+    elif filtro == "entregues":
+        lista = [p for p in procs if p["status"] == "ENTREGUE"]
+    else:
+        lista = procs
+    ids = {int(x) for x in request.args.getlist("ids") if x.isdigit()}
+    escolhidos = [p for p in procs if p["id"] in ids]
+    for p in escolhidos:
+        p["resumo"] = rimp.resumo_processo(p, hj)
+    if fmt in ("xlsx", "pdf") and not escolhidos:
+        flash("Escolha pelo menos um processo para o resumo semanal.", "erro")
+        return redirect(url_for("relatorio_semanal", filtro=filtro))
+    if fmt == "xlsx":
+        abas = [{"nome": "Resumo semanal", "cab": rimp.CAB_SEMANAL, "linhas": [rimp.linha_semanal(p, hj) for p in escolhidos],
+                 "larguras": [16, 12, 14, 18, 12, 12, 14, 30, 40, 40, 34, 34, 44, 40]}]
+        return _baixar(exp_imp.xlsx(abas), f"resumo-semanal-importacao-{hj}.xlsx", XLSX_MIME)
+    if fmt == "pdf":
+        if not _pdf_disponivel():
+            return redirect(url_for("relatorio_semanal", filtro=filtro, ids=sorted(ids)))
+        pdf = exp_imp.Pdf("Resumo semanal da importação", f"{rimp.plural(len(escolhidos), 'processo', 'processos')}")
+        for p in escolhidos:
+            pdf.h2(f"{p['fornecedor']} · {p['invoice']}")
+            dados = [["Status", p["status_titulo"]]] + [[r, v] for r, v in (
+                ("DUIMP", p.get("duimp")), ("País", p.get("pais")), ("Agente de carga", p.get("agente")),
+                ("Despachante", p.get("despachante")), ("Consolidação", p.get("consolidacao"))) if v]
+            pdf.tabela(["Dado", "Valor"], dados + [[r, t] for r, t in p["resumo"]], [12, 48])
+        return _baixar(pdf.bytes(_gerado_em()), f"resumo-semanal-importacao-{hj}.pdf", "application/pdf")
+    return render_template("rel_semanal.html", lista=lista, escolhidos=escolhidos, ids=ids, filtro=filtro,
+                           FILTROS_SEMANAL=FILTROS_SEMANAL, rimp=rimp, aba="semanal")
 
 
 # ---------------------------------------------------------------------------
@@ -5026,10 +5327,18 @@ def paineis_lancamentos(args):
     for e in db.execute("SELECT invoice_id, criado_em, status FROM emails WHERE fluxo = 'lancamentos_mega'"
                         " ORDER BY id"):
         avisos[e["invoice_id"]] = e
+    # v4.66: processos concluídos saem da lista (a não ser que ainda tenham custo a lançar no MEGA)
+    concluidos = {r["id"] for r in todos_invoices() if r["situacao"] == "CONCLUIDO"}
     paineis = []
     for inv in invoices:
         lista = lancs.get(inv["id"], [])
         if inv["cancelado_em"] and not lista and filtro != "todos":
+            continue
+        a_lancar = any(not l["lancado_erp"] for l in lista)
+        if filtro == "concluidos":
+            if inv["id"] not in concluidos:
+                continue
+        elif inv["id"] in concluidos and filtro != "todos" and not a_lancar:
             continue
         if busca and busca not in inv["numero"].lower() and busca not in inv["fornecedor"].lower():
             continue

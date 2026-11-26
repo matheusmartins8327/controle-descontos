@@ -1,0 +1,5 @@
+<section class="cartoes-rel">
+  {% for rot, val, cor, obs in cartoes %}
+  <div class="cartao-rel c-{{ cor }}"><span class="v">{{ val }}</span><span class="r">{{ rot }}</span>{% if obs %}<small>{{ obs }}</small>{% endif %}</div>
+  {% endfor %}
+</section>

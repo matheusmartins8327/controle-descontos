@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block titulo %}Indicadores da importação{% endblock %}
+{% macro grafico(titulo, serie, formato, cores='', largo=False) %}
+<div class="grafico {{ 'largo' if largo }}"><h3>{{ titulo }}</h3><div class="area"><canvas data-serie='{{ serie|tojson }}' data-formato="{{ formato }}" data-cores="{{ cores }}"></canvas></div></div>
+{% endmacro %}
+{% block conteudo %}
+{% include "_rel_abas.html" %}
+<form class="barra-acoes" method="get" action="{{ url_for('relatorios') }}">
+  <label>Visão<select name="dim">{% for k, t in rimp.DIMENSOES.items() %}<option value="{{ k }}" {{ 'selected' if dim == k }}>{{ t }}</option>{% endfor %}</select></label>
+  <button class="btn primario">Gerar relatório</button>
+  <span class="espaco"></span>
+  <a class="btn" href="{{ url_for('relatorios', fmt='pdf', dim=dim) }}">Baixar PDF</a>
+  <a class="btn" href="{{ url_for('relatorios', fmt='xlsx', dim=dim) }}">Baixar Excel</a>
+</form>
+
+{% include "_rel_cartoes.html" %}
+
+<h2>Visão geral</h2>
+<div class="graficos">
+  {% for t, s, f in ind.graficos %}{{ grafico(t, s, f, 'canal' if 'canal' in t) }}{% endfor %}
+  {{ grafico(ind.largo[0], ind.largo[1], 'n', '', True) }}
+</div>
+
+<h2>{{ rimp.DIMENSOES[dim] }} <small>· o número entre parênteses é a quantidade de processos usados no cálculo</small></h2>
+<div class="graficos">
+  {% for t, s, f in ind.graf_dim %}{{ grafico(t, s, f) }}{% endfor %}
+</div>
+
+<section class="bloco">
+  <h2>Tabela {{ rimp.DIMENSOES[dim]|lower }}</h2>
+  <div class="rolagem"><table class="tabela-rel">
+    <thead><tr><th>{{ ind.titulo_dim|capitalize }}</th><th class="num">Processos</th><th class="num">Entregues</th>
+      {% for k, r, f, e in rimp.INDICADORES %}<th class="num" title="{{ e }}">{{ r }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for nome, e in ind.grupos %}
+      <tr><td>{{ nome }}</td><td class="num">{{ e.total }}</td><td class="num">{{ e.entregues }}</td>
+        {% for k, r, f, x in rimp.INDICADORES %}<td class="num" title="{{ e[k][1] }} processo(s) considerado(s)">{{ rimp.fmt_ind(k, e[k]) }}</td>{% endfor %}</tr>
+    {% else %}<tr><td colspan="12" class="vazio">Nenhum processo.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  <p class="sub" style="margin-top:.6rem">Como é calculado: {% for k, r, f, e in rimp.INDICADORES %}<strong>{{ r }}</strong> = {{ e }}{{ '; ' if not loop.last else '.' }}{% endfor %}
+    Cada média considera só os processos que têm as duas datas envolvidas.</p>
+</section>
+{% endblock %}
+{% block scripts %}{% include "_rel_graficos_js.html" %}{% endblock %}

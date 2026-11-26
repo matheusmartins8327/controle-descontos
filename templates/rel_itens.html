@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block titulo %}Itens por situação{% endblock %}
+{% block conteudo %}
+{% include "_rel_abas.html" %}
+<div class="barra-acoes">
+  <a class="btn primario" href="{{ url_for('relatorio_itens') }}">Gerar relatório</a>
+  <span class="espaco"></span>
+  <a class="btn" href="{{ url_for('relatorio_itens', fmt='csv') }}">Baixar CSV</a>
+  <a class="btn" href="{{ url_for('relatorio_itens', fmt='xlsx') }}">Baixar Excel</a>
+  <a class="btn" href="{{ url_for('relatorio_itens', fmt='pdf') }}">Baixar PDF</a>
+</div>
+<p class="sub">Item a item, onde está cada peça dos processos ainda não entregues. Cada item herda o status e o canal do processo.
+  "Atrasado" = ETA prevista vencida e ainda não chegou no Brasil.</p>
+{% include "_rel_cartoes.html" %}
+<div class="graficos">
+  <div class="grafico"><h3>Processos por situação</h3><div class="area"><canvas data-serie='{{ rel.graf_status|tojson }}' data-formato="n"></canvas></div></div>
+  <div class="grafico"><h3>Processos por canal</h3><div class="area"><canvas data-serie='{{ rel.graf_canal|tojson }}' data-formato="n" data-cores="canal"></canvas></div></div>
+</div>
+
+{% if rel.retidos %}
+<section class="bloco">
+  <h2>Itens retidos <small>· retido, exigência cumprida aguardando análise ou em análise pelo fiscal</small></h2>
+  <div class="rolagem"><table class="tabela-rel">
+    <thead><tr><th>Fornecedor</th><th>Invoice</th><th>Status</th><th>Código</th><th>Descrição</th><th class="num">Qtd.</th><th>Exigência</th></tr></thead>
+    <tbody>
+    {% for x in rel.retidos %}{% set p = x.processo %}
+      {% for it in x.itens or [{'codigo': '', 'descricao': '(sem itens cadastrados)', 'quantidade': none}] %}
+      <tr><td>{{ p.fornecedor }}</td><td><a href="{{ url_for('invoice_detalhe', id=p.id) }}">{{ p.invoice }}</a></td>
+        <td><span class="status-imp st-{{ p.status_cor }}">{{ p.status_titulo }}</span></td><td>{{ it.codigo }}</td><td>{{ it.descricao }}</td>
+        <td class="num">{{ it.quantidade|num(0) if it.quantidade is not none else '—' }}</td><td>{{ p.exig_descricao or 'Sem exigência formal' }}</td></tr>
+      {% endfor %}
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+
+{% for t in rel.tabelas %}
+<section class="bloco">
+  <h2>{{ t.titulo }} <small>· {{ rimp.plural(t.processos, 'processo', 'processos') }}{{ ' · ' ~ rimp.plural(t.sem_itens, 'processo sem itens cadastrados', 'processos sem itens cadastrados') if t.sem_itens }}</small></h2>
+  {% if t.linhas %}
+  <div class="rolagem"><table class="tabela-rel">
+    <thead><tr><th>Código</th><th>Descrição</th><th class="num">Quantidade</th><th>Invoices</th></tr></thead>
+    <tbody>{% for l in t.linhas %}<tr><td>{{ l.codigo }}</td><td>{{ l.descricao }}</td><td class="num">{{ l.quantidade|num(0) }}</td><td>{{ l.invoices|join(', ') }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="vazio">Sem itens cadastrados nestes processos.</p>{% endif %}
+</section>
+{% else %}
+<p class="vazio">Nenhum processo em andamento.</p>
+{% endfor %}
+{% endblock %}
+{% block scripts %}{% include "_rel_graficos_js.html" %}{% endblock %}

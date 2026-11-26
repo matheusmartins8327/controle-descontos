@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block titulo %}Resumo semanal{% endblock %}
+{% block conteudo %}
+{% include "_rel_abas.html" %}
+<form method="get" action="{{ url_for('relatorio_semanal') }}" id="form-semanal">
+  <div class="barra-acoes">
+    <label>Mostrar<select name="filtro" onchange="this.form.submit()">{% for k, t in FILTROS_SEMANAL.items() %}<option value="{{ k }}" {{ 'selected' if filtro == k }}>{{ t }}</option>{% endfor %}</select></label>
+    <button type="button" class="btn" onclick="marcar(true)">Selecionar todos</button>
+    <button type="button" class="btn" onclick="marcar(false)">Limpar</button>
+    <span class="espaco"></span>
+    <button class="btn primario">Gerar resumo semanal</button>
+  </div>
+  <div class="selecao-semanal">
+    {% for p in lista %}
+    <label><input type="checkbox" name="ids" value="{{ p.id }}" {{ 'checked' if p.id in ids }}>
+      <span><strong>{{ p.fornecedor }} · {{ p.invoice }}</strong> <span class="status-imp st-{{ p.status_cor }}">{{ p.status_titulo }}</span></span></label>
+    {% else %}<p class="vazio" style="padding:.6rem">Nenhum processo neste filtro.</p>{% endfor %}
+  </div>
+</form>
+
+{% if escolhidos %}
+<div class="barra-acoes" style="margin-top:1.2rem">
+  <h2 style="margin:0">Resumo semanal <small>· {{ rimp.plural(escolhidos|length, 'processo', 'processos') }}</small></h2>
+  <span class="espaco"></span>
+  <a class="btn" href="{{ url_for('relatorio_semanal', fmt='pdf', filtro=filtro, ids=escolhidos|map(attribute='id')|list) }}">Baixar PDF</a>
+  <a class="btn" href="{{ url_for('relatorio_semanal', fmt='xlsx', filtro=filtro, ids=escolhidos|map(attribute='id')|list) }}">Baixar Excel</a>
+</div>
+{% for p in escolhidos %}
+<article class="resumo-proc">
+  <h3><a href="{{ url_for('invoice_detalhe', id=p.id) }}">{{ p.fornecedor }} · {{ p.invoice }}</a> <span class="status-imp st-{{ p.status_cor }}">{{ p.status_titulo }}</span></h3>
+  <div class="dados">{% for r, v in [('País', p.pais), ('DUIMP', p.duimp), ('Agente', p.agente), ('Despachante', p.despachante), ('Consolidação', p.consolidacao)] if v %}{{ r }}: {{ v }}{{ ' · ' if not loop.last }}{% endfor %}</div>
+  {% if p.resumo %}<dl>{% for r, t in p.resumo %}<dt>{{ r }}</dt><dd>{{ t }}</dd>{% endfor %}</dl>
+  {% else %}<p class="vazio">Nenhuma data preenchida ainda.</p>{% endif %}
+</article>
+{% endfor %}
+{% elif request.args.get('ids') is not none or request.args|length > 1 %}
+<p class="vazio" style="margin-top:1rem">Marque pelo menos um processo e clique em "Gerar resumo semanal".</p>
+{% endif %}
+<script>function marcar(v) { document.querySelectorAll('#form-semanal input[name=ids]').forEach(function (c) { c.checked = v; }); }</script>
+{% endblock %}

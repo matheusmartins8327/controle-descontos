@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.65)
+# Controle de Invoices e Descontos (v4.66)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -97,6 +97,22 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 **DUIMP enviada ao banco (v4.33):** depois de preenchida a data de emissão da DUIMP, o Financeiro marca na etapa Desembaraço
 a caixa **DUIMP enviada ao banco**. Não trava o processo, mas enquanto não for marcada fica uma pendência do Financeiro.
 (Invoices que já tinham chegado à fábrica antes desta versão não geram essa pendência.)
+
+**Aba Relatórios (v4.66):** relatórios da importação, todos calculados a partir das datas dos processos (nada digitado à mão),
+com as mesmas regras de status da aba Importação e recalculados a cada abertura/download (tela, Excel e PDF nunca se contradizem;
+"—" = sem dados suficientes; invoices da carga de histórico ficam de fora). Regras em `relatorios_imp.py`, arquivos em `exportar_imp.py`
+(Excel com openpyxl, PDF com reportlab; gráficos da tela com Chart.js 4.4.1 servido pelo próprio sistema em `static/vendor`).
+- **Indicadores**: 10 cartões, gráficos de visão geral e por fornecedor / agente de carga / despachante (barras com o valor e "Nome (n)").
+- **Itens por situação**: item a item dos processos não entregues; Excel com as abas "Visao Geral Processos" e "Visao Item a Item"; CSV; PDF.
+- **Importações por canal**: processos parametrizados no período no canal escolhido (cabeçalho amarelo), Excel e PDF.
+- **Relatório mensal**: linha do tempo, chegadas, entregas, parametrizações por canal, pontualidade, peças, processos em aberto
+  "como estavam na data final" e pendências herdadas; Excel com várias abas e PDF em paisagem.
+- **Resumo semanal**: escolha dos processos e texto-resumo de cada um; PDF e Excel.
+- **Alertas** no Painel: ETA vencida, prazo de resposta da exigência vencido, parado em canal amarelo/vermelho há 5+ dias, entrega
+  prevista vencida, HAWB não preenchida, sem atualização há 7+ dias.
+No Desembaraço há também **Ação tomada na exigência** e **Prazo de resposta da exigência** (opcionais).
+A aba **Lançamentos Financeiros** não mostra mais os processos concluídos (a não ser que ainda tenham custo a lançar no MEGA);
+eles ficam no filtro "Processos concluídos".
 
 **Aba Importação (v4.33):** lista os invoices em andamento nas etapas 1 a 5 (cadastro até o Transporte Terrestre), com
 contagem por etapa (clique para filtrar), busca, a **última informação adicionada** no cronograma do fluxo e as datas principais (HAWB, ETA, chegada). Ao abrir

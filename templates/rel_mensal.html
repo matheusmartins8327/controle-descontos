@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block titulo %}Relatório mensal{% endblock %}
+{% macro tabela_abertos(lista, vazio) %}
+  {% if lista %}
+  <div class="rolagem"><table class="tabela-rel">
+    <thead><tr><th>Fornecedor</th><th>Invoice</th><th>Status no fim do período</th><th>Última movimentação</th><th class="num">Dias parado</th><th>Início</th></tr></thead>
+    <tbody>{% for q in lista %}<tr><td>{{ q.fornecedor }}</td><td><a href="{{ url_for('invoice_detalhe', id=q.id) }}">{{ q.invoice }}</a></td>
+      <td><span class="status-imp st-{{ q.status_cor }}">{{ q.status_titulo }}</span></td><td>{{ q.ultima_mov_txt }}</td>
+      <td class="num">{{ q.dias_parado }}</td><td>{{ rimp.dma(rimp.inicio(q)) }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="vazio">{{ vazio }}</p>{% endif %}
+{% endmacro %}
+{% block conteudo %}
+{% include "_rel_abas.html" %}
+<form class="barra-acoes" method="get" action="{{ url_for('relatorio_mensal') }}">
+  <label>De<input type="date" name="de" value="{{ de }}" required></label>
+  <label>Até<input type="date" name="ate" value="{{ ate }}" required></label>
+  <button class="btn primario">Gerar relatório</button>
+  <span class="espaco"></span>
+  <a class="btn" href="{{ url_for('relatorio_mensal', fmt='pdf', de=de, ate=ate) }}">Baixar PDF</a>
+  <a class="btn" href="{{ url_for('relatorio_mensal', fmt='xlsx', de=de, ate=ate) }}">Baixar Excel</a>
+</form>
+<p class="sub">O que aconteceu de {{ periodo }} e o que continua pendente. Os processos em aberto são analisados como estavam na data final (datas posteriores são ignoradas).</p>
+
+{% set cartoes = [('Eventos no período', m.eventos|length|string, 'neutro', ''), ('Chegadas ao Brasil', m.chegadas|length|string, 'neutro', ''),
+                  ('Entregas na Quinelato', m.entregas|length|string, 'neutro', ''), ('Em aberto no fim do período', m.abertos|length|string, 'neutro', ''),
+                  ('Pendências herdadas', m.herdadas|length|string, 'vermelho' if m.herdadas else 'neutro', 'começaram antes do período')] %}
+{% set ns = namespace(c=cartoes) %}
+{% for k, v in m.pecas.items() %}{% set ns.c = ns.c + [('Peças — ' ~ k|lower, rimp.num(v.pecas, 0) if v.processos else '—', 'neutro', (v.sem_itens ~ ' processo(s) sem itens cadastrados: total incompleto') if v.sem_itens else '')] %}{% endfor %}
+{% with cartoes = ns.c %}{% include "_rel_cartoes.html" %}{% endwith %}
+
+<div class="graficos">
+  <div class="grafico"><h3>Eventos do período</h3><div class="area"><canvas data-serie='{{ m.contagem_eventos|tojson }}' data-formato="n"></canvas></div></div>
+  <div class="grafico"><h3>Parametrizações por canal</h3><div class="area"><canvas data-serie='{{ m.param_canal|tojson }}' data-formato="n" data-cores="canal"></canvas></div></div>
+  <div class="grafico"><h3>Pontualidade das chegadas</h3><div class="area"><canvas data-serie='{{ m.pontualidade|tojson }}' data-formato="n"></canvas></div></div>
+  <div class="grafico"><h3>Processos em aberto por situação</h3><div class="area"><canvas data-serie='{{ m.status_abertos|tojson }}' data-formato="n"></canvas></div></div>
+</div>
+
+<section class="bloco"><h2>Pendências herdadas <small>· começaram antes de {{ rimp.dma(de) }} e continuam pendentes</small></h2>
+  {{ tabela_abertos(m.herdadas, 'Nenhuma pendência herdada.') }}</section>
+<section class="bloco"><h2>Processos em aberto em {{ rimp.dma(ate) }} <small>· pela ordem das etapas e, em cada etapa, os mais parados primeiro</small></h2>
+  {{ tabela_abertos(m.abertos, 'Nenhum processo em aberto.') }}</section>
+
+<section class="bloco"><h2>Chegadas no Brasil</h2>
+  {% if m.chegadas %}<div class="rolagem"><table class="tabela-rel"><thead><tr><th>Fornecedor</th><th>Invoice</th><th>ETA prevista</th><th>ETA real</th><th class="num">Diferença (dias)</th><th class="num">Peças</th></tr></thead>
+  <tbody>{% for p in m.chegadas %}<tr><td>{{ p.fornecedor }}</td><td><a href="{{ url_for('invoice_detalhe', id=p.id) }}">{{ p.invoice }}</a></td><td>{{ rimp.dma(p.eta_prevista) }}</td><td>{{ rimp.dma(p.eta_real) }}</td>
+    <td class="num">{{ dif(p.eta_prevista, p.eta_real) }}</td><td class="num">{{ rimp.num(rimp.qtd_itens(p), 0) if p.itens else 'sem itens' }}</td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<p class="vazio">Nenhuma chegada no período.</p>{% endif %}</section>
+
+<section class="bloco"><h2>Entregas na Quinelato</h2>
+  {% if m.entregas %}<div class="rolagem"><table class="tabela-rel"><thead><tr><th>Fornecedor</th><th>Invoice</th><th>Entrega prevista</th><th>Entrega real</th><th class="num">Diferença (dias)</th><th class="num">Peças</th></tr></thead>
+  <tbody>{% for p in m.entregas %}<tr><td>{{ p.fornecedor }}</td><td><a href="{{ url_for('invoice_detalhe', id=p.id) }}">{{ p.invoice }}</a></td><td>{{ rimp.dma(p.entrega_prevista) }}</td><td>{{ rimp.dma(p.entrega_real) }}</td>
+    <td class="num">{{ dif(p.entrega_prevista, p.entrega_real) }}</td><td class="num">{{ rimp.num(rimp.qtd_itens(p), 0) if p.itens else 'sem itens' }}</td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<p class="vazio">Nenhuma entrega no período.</p>{% endif %}</section>
+
+<section class="bloco"><h2>Linha do tempo <small>· {{ m.eventos|length }} eventos</small></h2>
+  {% if m.eventos %}<div class="rolagem"><table class="tabela-rel"><thead><tr><th>Data</th><th>Evento</th><th>Fornecedor</th><th>Invoice</th><th>Detalhe</th></tr></thead>
+  <tbody>{% for e in m.eventos %}<tr><td>{{ rimp.dma(e.data) }}</td><td>{{ e.evento }}</td><td>{{ e.processo.fornecedor }}</td><td><a href="{{ url_for('invoice_detalhe', id=e.processo.id) }}">{{ e.processo.invoice }}</a></td><td>{{ e.detalhe }}</td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<p class="vazio">Nenhum evento no período.</p>{% endif %}</section>
+{% endblock %}
+{% block scripts %}{% include "_rel_graficos_js.html" %}{% endblock %}

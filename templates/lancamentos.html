@@ -19,11 +19,12 @@
 <form class="filtros" method="get">
   <input name="q" value="{{ args.get('q', '') }}" placeholder="Buscar invoice ou fornecedor">
   <select name="filtro">
-    <option value="">Invoices ativos</option>
+    <option value="">Invoices ativos (sem os concluídos)</option>
     <option value="pendentes_erp" {{ 'selected' if args.get('filtro') == 'pendentes_erp' }}>Com custos a lançar no MEGA</option>
     <option value="com" {{ 'selected' if args.get('filtro') == 'com' }}>Somente com custos apontados</option>
     <option value="sem" {{ 'selected' if args.get('filtro') == 'sem' }}>Somente sem custos apontados</option>
-    <option value="todos" {{ 'selected' if args.get('filtro') == 'todos' }}>Todos (inclui cancelados)</option>
+    <option value="concluidos" {{ 'selected' if args.get('filtro') == 'concluidos' }}>Processos concluídos</option>
+    <option value="todos" {{ 'selected' if args.get('filtro') == 'todos' }}>Todos (inclui concluídos e cancelados)</option>
   </select>
   <button class="btn">Filtrar</button>
   {% if args.get('q') or args.get('filtro') %}<a class="btn link" href="{{ url_for('lancamentos') }}">Limpar</a>{% endif %}
