@@ -8,7 +8,8 @@
   e o relatório fica registrado.</p>
 {% for b in bloqueios %}<div class="duimp-aviso">{{ b }}</div>{% endfor %}
 
-<form method="post" class="relatorio-grade">
+{% if pago_integral %}<div class="duimp-aviso">Este invoice já foi pago integralmente: o texto do desconto diz que o valor será deduzido do próximo invoice (nada fica retido neste).</div>{% endif %}
+<form method="post" class="relatorio-grade" enctype="multipart/form-data">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <section class="bloco">
     <h2>E-mail</h2>
@@ -20,7 +21,11 @@
     <label>Introdução<textarea name="introducao" rows="2">{{ textos.introducao }}</textarea></label>
     <label>Texto do desconto<textarea name="desconto" rows="5">{{ textos.desconto }}</textarea></label>
     <label>Fechamento<textarea name="fechamento" rows="3">{{ textos.fechamento }}</textarea></label>
+    <label>Nome na assinatura<input name="nome" value="{{ campos.nome }}"></label>
     <label>Cargo na assinatura<input name="cargo" value="{{ campos.cargo }}"></label>
+    <label>Imagem da assinatura da empresa (banner) {% if img %}<small>· salva</small>{% endif %}<input type="file" name="imagem_assinatura" accept=".png,.jpg,.jpeg,.gif">
+      <small>{{ 'Envie outra para trocar. ' if img else 'Envie uma vez (PNG/JPG); vai embutida em todos os relatórios. ' }}Clique em "Atualizar prévia" depois de escolher.</small></label>
+    {% if img %}<label class="flag-etapa"><input type="checkbox" name="remover_imagem" value="1"> Remover a imagem da assinatura</label>{% endif %}
     <p class="sub">Anexo: <strong>{{ nome }}</strong> (abas Inspection Results e Discount Policy; Data Base e Price (FOB) ocultas).
       O e-mail do fornecedor e a cópia ficam salvos para o próximo relatório.</p>
     <div class="linha-form acoes-relatorio">

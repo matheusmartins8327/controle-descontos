@@ -211,28 +211,74 @@ def frase_categorias(tot):
     return f"We have analysed a total of {num_br(total)} units. " + ", ".join(partes) + "."
 
 
-def textos_padrao(info, total_desconto, moeda_txt):
+def textos_padrao(info, total_desconto, moeda_txt, pago_integral=False):
+    """Textos editáveis do e-mail. pago_integral: o invoice já foi pago inteiro, então nada é retido nele e o desconto
+    é todo deduzido do próximo invoice."""
     rev = info["versao"] > 1
+    aprovacao = ("Please review the discount value and return to us with your approval. "
+                 "If we don't receive it within a 7-day period, we will consider it approved.")
+    if total_desconto <= 0.005:
+        desconto = "No discount will be applied to this invoice."
+    elif pago_integral:
+        desconto = (f"The total discount for this invoice is {moeda_txt}. As this invoice has already been fully paid, the "
+                    "discounted value for all units classified as C and D will be deducted from the next invoice, once we "
+                    "agree on a new shipment. " + aprovacao)
+    else:
+        desconto = (f"The total discount for this invoice is {moeda_txt}. We will deduct the discounted value for all units "
+                    "classified as C and D from the shipment's invoice. Once we agree on a new shipment, we will deduct the "
+                    "remaining amount from the current invoice from the new invoice, allowing us to settle the outstanding "
+                    "balance on the current invoice. " + aprovacao)
     return {
         "saudacao": f"Dear {info['fornecedor_curto']} team,",
-        "introducao": (f"We have revised the inspection results of invoice {info['invoice']} - {info['fornecedor_curto']} "
-                       f"(revision {info['versao']}), and below you can find the updated results:" if rev else
-                       f"We have finished inspecting the items from invoice {info['invoice']} - {info['fornecedor_curto']}, "
-                       "and below you can find the results:"),
-        "desconto": (f"The total discount for this invoice is {moeda_txt}. We will deduct the discounted value for all units "
-                     "classified as C and D from the shipment's invoice. Once we agree on a new shipment, we will deduct the "
-                     "remaining amount from the current invoice from the new invoice, allowing us to settle the outstanding "
-                     "balance on the current invoice. Please review the discount value and return to us with your approval. "
-                     "If we don't receive it within a 7-day period, we will consider it approved."
-                     if total_desconto > 0.005 else
-                     "No discount will be applied to this invoice."),
+        "introducao": (f"We have revised the inspection results of invoice {info['invoice']} (revision {info['versao']}), "
+                       "and below you can find the updated results:" if rev else
+                       f"We have finished inspecting the items from invoice {info['invoice']}, and below you can find the results:"),
+        "desconto": desconto,
         "fechamento": ("We hope this analysis helps you understand the issues we found and the solution. Feel free to get in "
                        "touch and ask any questions, we will gladly answer as soon as possible. Thank you very much for your "
                        "time and effort."),
     }
 
 
-def corpo_email(info, eventos, textos, link, assinatura_nome, assinatura_cargo):
+# assinatura padrão da empresa (avisos legais em português e inglês, como no Outlook)
+AVISO_LEGAL = (
+    '<p style="margin:14px 0 0 0;font-family:Calibri,Arial,sans-serif;font-size:7.5pt;color:#1f1f1f;line-height:1.35">'
+    "Esta mensagem contém informação confidencial e/ou privilegiada. Se você não for o destinatário ou a pessoa autorizada a "
+    "receber esta mensagem, não pode usar, copiar ou divulgar as informações nela contidas ou tomar qualquer ação baseada nessas "
+    "informações. Se você recebeu esta mensagem por engano, por favor, avise imediatamente o remetente, respondendo ao e-mail e "
+    "em seguida apague-o. Comunicações pela Internet não podem ser garantidas quanto à pontualidade, segurança ou inexistência "
+    "de erros ou vírus. O remetente por esta razão não se responsabiliza por qualquer erro, omissão ou mesmo opiniões e "
+    "declarações contidas no conteúdo desta mensagem.<br>"
+    "Em atenção às hipóteses legais e aos princípios previstos na Lei 13.709/18 - Lei Geral de Proteção de Dados, informações "
+    "pessoais aqui tratadas serão de uso restrito e utilizadas exclusivamente para a finalidade à qual se destinam e pelo tempo "
+    "necessário ao tratamento, sendo vedado seu uso para finalidades diversas. Caso possua alguma dúvida ou queira informações "
+    "sobre o tratamento de seus dados pessoais, consulte nossa "
+    '<a href="https://www.quinelato.com.br/politica_de_privacidade">Política de Privacidade</a> ou entre em contato com nosso '
+    'Encarregado de Proteção de Dados, através do e-mail: <a href="mailto:dpo@quinelato.com.br">dpo@quinelato.com.br</a>.<br>'
+    "-----------------------------------<br>"
+    "This e-mail may contain confidential or privileged information and is intended solely for the person to whom it is "
+    "addressed. If you have received this e-mail in error, please notify the sender immediately and destroy this e-mail. Any "
+    "unauthorized copying, disclosure or distribution of the material in this e-mail is strictly forbidden. We will not be "
+    "liable for direct, indirect, special or consequential damages arising from the alteration of this e-mail, or as a result "
+    "of any virus being passed on or as a result of transmission of this e-mail in general.<br>"
+    "In view of the legal hypotheses and principles provided for in Law 13.709/18 - General Data Protection Law, personal "
+    "information treated here will be of restricted use and used exclusively for the purpose for which it is intended and for "
+    "the time necessary for the treatment, its use being prohibited for different purposes. If you have any questions or would "
+    "like information about the processing of your personal data, please contact our Data Protection Officer via email: "
+    '<a href="mailto:dpo@quinelato.com.br">dpo@quinelato.com.br</a>.</p>')
+
+
+def assinatura(nome, cargo, imagem_src=None):
+    p = 'style="margin:0 0 12px 0;font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#1f1f1f"'
+    azul = 'style="margin:0;font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;color:#1F4E9A"'
+    html = (f"<p {p}>Best regards,</p><br>"
+            f"<p {azul}>{escape(nome)}</p><p {azul}>{escape(cargo)}</p><br>")
+    if imagem_src:
+        html += f'<p style="margin:12px 0 0 0"><img src="{escape(imagem_src)}" alt="Quinelato" width="500" style="display:block;max-width:500px;height:auto"></p>'
+    return html + AVISO_LEGAL
+
+
+def corpo_email(info, eventos, textos, link, assinatura_nome, assinatura_cargo, imagem_src=None):
     tot, por_item, matriz = resumo(eventos)
     p = 'style="margin:0 0 12px 0;font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#1f1f1f"'
     h = 'style="margin:18px 0 8px 0;font-family:Calibri,Arial,sans-serif;font-size:12pt;color:#1F3864"'
@@ -292,6 +338,6 @@ def corpo_email(info, eventos, textos, link, assinatura_nome, assinatura_cargo):
     partes.append(f'<p style="margin:16px 0 12px 0;font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#1f1f1f">'
                   f"{escape(textos['desconto'])}</p>")
     partes.append(f"<p {p}>{escape(textos['fechamento'])}</p>")
-    partes.append(f"<p {p}>Best regards,<br><br><b>{escape(assinatura_nome)}</b><br>{escape(assinatura_cargo)}</p>")
+    partes.append(assinatura(assinatura_nome, assinatura_cargo, imagem_src))
     return ('<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#1f1f1f;max-width:900px">'
             + "".join(partes) + "</div>")

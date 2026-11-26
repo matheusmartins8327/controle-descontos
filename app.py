@@ -51,7 +51,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.61"
+VERSAO = "4.62"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -4164,6 +4164,15 @@ def desconto_versao(id):
 # do invoice (versão 1: desconto com o relatório anexado; revisões: revalidação com o relatório revisado)
 # ---------------------------------------------------------------------------
 CARGO_ASSINATURA_PADRAO = "Suppliers Development Analyst"
+CID_ASSINATURA = "assinatura-quinelato"
+
+
+def imagem_assinatura():
+    aid = config("assinatura_imagem")
+    if not aid or not str(aid).isdigit():
+        return None
+    a = get_db().execute("SELECT * FROM arquivos WHERE id = ?", (int(aid),)).fetchone()
+    return a if a is not None and os.path.exists(caminho_anexo(a)) else None
 
 
 def salvar_arquivo_bytes(origem, origem_id, nome, conteudo):
@@ -4281,7 +4290,9 @@ def relatorio_fornecedor(id, versao):
     forn = db.execute("SELECT * FROM fornecedores WHERE id = ?", (r["fornecedor_id"],)).fetchone()
     f = request.form if request.method == "POST" else {}
     total_txt = f"{r['moeda']} {rel.num_br(v['total'], 2)}"
-    padrao = rel.textos_padrao(info, v["total"], total_txt)
+    # invoice já pago inteiro: nada fica retido nele, o desconto vai todo para o próximo invoice
+    pago_integral = r["principal_pago"] >= r["valor_invoice"] - TOLERANCIA and r["principal_pago"] > TOLERANCIA
+    padrao = rel.textos_padrao(info, v["total"], total_txt, pago_integral)
     textos = {k: (f.get(k) if f.get(k) is not None else padrao[k]) for k in padrao}
     campos = {
         "para": f.get("para", forn["emails_relatorio"] or ""),
@@ -4290,8 +4301,28 @@ def relatorio_fornecedor(id, versao):
                          + (f" (Revision {versao})" if versao > 1 else "")),
         "link": f.get("link", ""),
         "cargo": f.get("cargo", config("relatorio_cargo", CARGO_ASSINATURA_PADRAO)),
+        "nome": f.get("nome", config(f"relatorio_nome_{g.usuario['id']}", g.usuario["nome"])),
     }
-    html = rel.corpo_email(info, eventos, textos, campos["link"].strip(), g.usuario["nome"], campos["cargo"])
+    # imagem da assinatura da empresa (enviada uma vez; vai embutida no e-mail)
+    if request.method == "POST" and request.files.get("imagem_assinatura") and request.files["imagem_assinatura"].filename:
+        arq = request.files["imagem_assinatura"]
+        ext = arq.filename.rsplit(".", 1)[-1].lower()
+        if ext not in ("png", "jpg", "jpeg", "gif"):
+            flash("A imagem da assinatura deve ser PNG, JPG ou GIF.", "erro")
+        else:
+            aid_img, _c = salvar_arquivo_bytes("assinatura", 0, "assinatura." + ext, arq.read())
+            salvar_config("assinatura_imagem", str(aid_img))
+            db.commit()
+            flash("Imagem da assinatura salva: vai em todos os relatórios.", "ok")
+    img = imagem_assinatura()
+    if request.method == "POST" and f.get("remover_imagem"):
+        salvar_config("assinatura_imagem", None)
+        db.commit()
+        img = None
+    html_previa = rel.corpo_email(info, eventos, textos, campos["link"].strip(), campos["nome"], campos["cargo"],
+                                  url_for("arquivo_baixar", aid=img["id"]) if img else None)
+    html = rel.corpo_email(info, eventos, textos, campos["link"].strip(), campos["nome"], campos["cargo"],
+                           "cid:" + CID_ASSINATURA if img else None)
     nome = rel.nome_arquivo(info)
     acao = f.get("acao") if request.method == "POST" else None
     if acao == "baixar":
@@ -4323,6 +4354,7 @@ def relatorio_fornecedor(id, versao):
                 db.execute("UPDATE fornecedores SET emails_relatorio = ? WHERE id = ?", (campos["para"], r["fornecedor_id"]))
                 salvar_config("relatorio_cc", campos["cc"] or None)
             salvar_config("relatorio_cargo", campos["cargo"] or None)
+            salvar_config(f"relatorio_nome_{g.usuario['id']}", campos["nome"] or None)
             db.execute("UPDATE relatorios_versoes SET aplicado_em = ?, email_id = ?, arquivo_id = ?, enviado_por = ? WHERE id = ?",
                        (agora(), email_id, aid, g.usuario["id"], v["id"]))
             registrar_evento(id, f"Relatório de inspeção v{versao} " + ("enviado ao fornecedor" if acao == "enviar"
@@ -4341,7 +4373,8 @@ def relatorio_fornecedor(id, versao):
             else:
                 flash(f"Relatório v{versao} registrado como enviado por fora do sistema. O desconto do invoice foi atualizado.", "ok")
             return volta
-    return render_template("relatorio_previa.html", r=r, v=v, info=info, html=html, campos=campos, textos=textos,
+    return render_template("relatorio_previa.html", r=r, v=v, info=info, html=html_previa, campos=campos, textos=textos, img=img,
+                           pago_integral=pago_integral,
                            bloqueios=bloqueios, nome=nome, conta_ok=conta_configurada(), eventos=len(eventos))
 
 
@@ -6229,6 +6262,12 @@ def montar_mensagem(assunto, html, para, cc, anexos=None):
         msg["Cc"] = ", ".join(lista_emails(cc))
     msg.set_content(texto_simples(html))
     msg.add_alternative(html, subtype="html")
+    if "cid:" + CID_ASSINATURA in html:  # v4.62: imagem da assinatura da empresa embutida no corpo
+        img = imagem_assinatura()
+        if img:
+            with open(caminho_anexo(img), "rb") as arq:
+                sub_tipo = (mimetypes.guess_type(img["nome"])[0] or "image/png").split("/", 1)[1]
+                msg.get_payload()[1].add_related(arq.read(), maintype="image", subtype=sub_tipo, cid=f"<{CID_ASSINATURA}>")
     for caminho, nome in anexos or []:
         if not os.path.exists(caminho):
             continue
