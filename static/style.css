@@ -781,3 +781,4 @@ select.tipo-antigo { border-color: #e0a800; background: #fffbea; }
 .filtros-base .grade { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 @media (max-width: 900px) { .filtros-base .grade { grid-template-columns: 1fr 1fr; } }
 .paginacao { gap: .8rem; align-items: center; margin-top: .6rem; }
+.falha-era { color: var(--suave); font-style: italic; }

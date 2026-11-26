@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.59)
+# Controle de Invoices e Descontos (v4.60)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -255,7 +255,7 @@ Na tela de inspeção de cada invoice (ligado ao sistema), seção **Fechamento 
 - **Políticas de desconto** (Inspeções → Políticas de desconto): padrão C 80% e D 100%; por fornecedor, % fixo ou **% de C por faixa
   de A+B do item** (Orthogent: ≥90% → 0; ≥80% → 50%; ≥70% → 60%; abaixo → 80%; D 100%).
 - **Ajustes** de % por item ou geral do invoice, sempre com motivo e histórico (item vale mais que o geral; vazio volta à política).
-- **Reclassificação** (em lote, marcando grupos item → defeito ou eventos, ou **parcial**, dividindo um evento), sempre com motivo.
+- **Reclassificação** (v4.60: muda a categoria e/ou corrige a **falha encontrada** — o comentário; a original fica guardada) (em lote, marcando grupos item → defeito ou eventos, ou **parcial**, dividindo um evento), sempre com motivo.
   O histórico é interno: o fornecedor recebe só a categoria final. As reclassificações e divisões são mantidas nas próximas importações.
 - **Base de dados de inspeção** (botão na aba Descontos, v4.57): todos os eventos de todos os invoices, com filtros (fornecedor e
   invoice em listas de seleção, item, categoria, defeito, período da REPORT DATE, só reclassificados), 300 por página, e a mesma reclassificação

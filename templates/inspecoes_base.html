@@ -30,9 +30,11 @@
     {% if admin %}
     <div class="barra-reclass">
       <strong><span id="n-sel">0</span> evento(s) marcado(s)</strong> <small>(<span id="q-sel">0</span> peça(s))</small>
-      <label>Reclassificar para<select name="para"><option value="">—</option>{% for c in ['A','B','C','D'] %}<option>{{ c }}</option>{% endfor %}</select></label>
-      <label>Só parte da quantidade<input name="quantidade" inputmode="decimal" placeholder="vazio = tudo" title="Só com um evento marcado: divide o evento"></label>
+      <label>Categoria<select name="para"><option value="">— manter —</option>{% for c in ['A','B','C','D'] %}<option>{{ c }}</option>{% endfor %}</select></label>
+      <label class="cresce">Falha encontrada <small>(vazio = manter)</small><input name="comentario" list="falhas-conhecidas" placeholder="Ex.: ACABAMENTO / AFIAÇÃO"></label>
+    <label>Só parte da quantidade<input name="quantidade" inputmode="decimal" placeholder="vazio = tudo" title="Só com um evento marcado: divide o evento"></label>
       <label class="cresce">Motivo *<input name="motivo" placeholder="Ex.: erro interno de classificação"></label>
+    <datalist id="falhas-conhecidas">{% for t in falhas_conhecidas %}<option value="{{ t }}">{% endfor %}</datalist>
       <button class="btn primario">Reclassificar</button>
       {% if filtrado and total > linhas|length %}<label class="flag-etapa"><input type="checkbox" name="todos_do_filtro" value="1" id="todos-filtro"> aplicar a todos os {{ total }} eventos do filtro</label>{% endif %}
     </div>
@@ -50,7 +52,7 @@
           <td><a href="{{ url_for('inspecao_grupo', grupo=e.grupo) }}">{{ e.invoice_sistema or e.invoice_excel or '—' }}</a>{% if not e.invoice_id %} <small class="etiqueta-xls">Excel</small>{% endif %}</td>
           <td>{{ e.produto }}</td><td class="num">{{ e.quantidade|qtd }}</td>
           <td data-filtro="{{ e.categoria }}"><span class="cat cat-{{ (e.categoria or '')|lower }}">{{ e.categoria }}</span>{% if e.categoria != e.categoria_original %} <small title="{{ e.reclass_motivo or '' }}">(era {{ e.categoria_original }})</small>{% endif %}</td>
-          <td><small>{{ e.comentario or '' }}</small></td><td><small>{{ x.en or '—' }}</small></td>
+          <td><small>{{ e.comentario or '' }}</small>{% if e.comentario_original %}<small class="bloco-linha falha-era" title="{{ e.reclass_motivo or '' }}">era: {{ e.comentario_original }}</small>{% endif %}</td><td><small>{{ x.en or '—' }}</small></td>
           <td data-ordem="{{ e.report_date or '' }}">{{ (e.report_date or '')[:10]|data if e.report_date else '—' }}</td><td><small>{{ e.inspetor or '' }}</small></td></tr>
       {% endfor %}
       </tbody>
