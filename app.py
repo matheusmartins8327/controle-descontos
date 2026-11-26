@@ -51,7 +51,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.63"
+VERSAO = "4.64"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2324,6 +2324,7 @@ def importacao():
     for r in lista:
         r["falta"] = criacao_faltando(r) if r["situacao"] == "CRIACAO" else etapa_faltando(r, r["situacao"])
         r["ultima_info"] = ultima_informacao(r)
+        r["resumo_imp"] = resumo_importacao(r)
     ordem = {e: i for i, e in enumerate(ETAPAS_IMPORTACAO)}
     lista.sort(key=lambda r: (ordem[r["situacao"]], r["data_prog_chegada"] or r["eta_planejado"] or "9999", r["id"]))
     contagem = {e: sum(1 for r in lista if r["situacao"] == e) for e in ETAPAS_IMPORTACAO}
@@ -2340,6 +2341,46 @@ def importacao():
                            CAMPOS_GRUPO=CAMPOS_GRUPO, chave_grupo=chave_grupo, contagem=contagem, total=total, etapa=etapa, busca=busca,
                            ETAPAS_IMPORTACAO=ETAPAS_IMPORTACAO, aberto=request.args.get("aberto", type=int),
                            editar=pode("importacao"))
+
+
+def resumo_importacao(r):
+    """v4.64: frase curta com o momento atual do processo (aba Importação), a partir das datas já preenchidas."""
+    def d(x):
+        return fmt_data(x)[:5] if x else None
+    sit = r["situacao"]
+    if sit == "CRIACAO":
+        falta = criacao_faltando(r)
+        return "Cadastro incompleto · falta " + ", ".join(falta[:2]).lower() + ("…" if len(falta) > 2 else "")
+    if sit == "COLETA":
+        if r["data_hawb"]:
+            return f"HAWB emitida em {d(r['data_hawb'])} · aguardando a coleta"
+        return "Aguardando a coleta" + (f" (programada para {d(r['data_prog_coleta'])})" if r["data_prog_coleta"] else "")
+    if sit == "EMBARQUE":
+        if r["eta_real"]:
+            return f"Chegou ao Brasil em {d(r['eta_real'])}" + (" · aguardando o banco de débito (Financeiro)"
+                                                                 if not r["banco_debito"] else "")
+        if r["etd_real"]:
+            return f"Embarcado em {d(r['etd_real'])}" + (f" · previsão de chegada {d(r['eta_planejado'])}"
+                                                          if r["eta_planejado"] else " · sem previsão de chegada")
+        return (f"Coletado em {d(r['data_coleta'])} · aguardando o embarque" if r["data_coleta"] else "Aguardando o embarque") \
+            + (f" (ETD planejado {d(r['etd_planejado'])})" if r["etd_planejado"] else "")
+    if sit == "DESEMBARACO":
+        if r["data_desembaraco"]:
+            falta = [x for x in ("número da NF" if not r["numero_nf"] else None,
+                                 "DUIMP anexada" if not tem_duimp(r) else None) if x]
+            return f"Desembaraçado em {d(r['data_desembaraco'])}" + (" · falta " + " e ".join(falta) if falta else "")
+        if r["cor_canal"] or r["data_parametrizacao"]:
+            return "Em desembaraço" + (f" · canal {r['cor_canal']}" if r["cor_canal"] else "") + \
+                (f" (parametrizado em {d(r['data_parametrizacao'])})" if r["data_parametrizacao"] else "")
+        if r["data_registro_br"]:
+            return f"DUIMP registrada em {d(r['data_registro_br'])} · aguardando a parametrização"
+        return f"No Brasil desde {d(r['eta_real'])} · aguardando o registro da DUIMP" if r["eta_real"] else "Aguardando o registro da DUIMP"
+    if sit == "CHEGADA":
+        txt = f"Desembaraçado em {d(r['data_desembaraco'])} · transporte terrestre" if r["data_desembaraco"] else "Transporte terrestre"
+        if r["data_prog_chegada"]:
+            txt += f" · chegada programada para {d(r['data_prog_chegada'])}"
+        return txt
+    return SITUACOES.get(sit, (sit,))[0]
 
 
 def ultima_informacao(r):

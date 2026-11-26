@@ -4,15 +4,8 @@
 {% macro painel(r) %}{% set NOME_ETAPA = {'CRIACAO': 'Cadastro (1)', 'COLETA': 'Coleta (2)', 'EMBARQUE': 'Embarque (3)', 'DESEMBARACO': 'Desembaraço (4)', 'CHEGADA': 'Transporte Terrestre (5)'} %}
 <details class="painel-lanc painel-imp" id="inv-{{ r.id }}" {{ 'open' if aberto == r.id }}>
   <summary>
-    <span class="pl-titulo"><strong>{{ r.numero }}</strong><span class="pl-forn">{{ r.fornecedor }}</span>
-      <span class="etapa-tag e-{{ r.situacao|lower }}">{{ NOME_ETAPA[r.situacao] }}</span>
-      {% if r.grupo_consolidacao %}<span class="grupo-mini" title="Grupo de consolidação">Grupo {{ r.grupo_consolidacao }}</span>{% endif %}
-      {% if r.ultima_info %}<small class="falta-imp" title="Última informação adicionada no cronograma do fluxo">último: <b>{{ r.ultima_info }}</b></small>{% endif %}</span>
-    <span class="imp-datas">
-      <span title="Data da HAWB">HAWB <b>{{ r.data_hawb|data }}</b></span>
-      <span title="ETA real ou planejado">ETA <b>{{ (r.eta_real or r.eta_planejado)|data }}</b>{% if r.eta_planejado and not r.eta_real %}<small> plan.</small>{% endif %}</span>
-      <span title="Chegada na fábrica (real ou programada)">Chegada <b>{{ (r.data_chegada or r.data_prog_chegada)|data }}</b>{% if r.data_prog_chegada and not r.data_chegada %}<small> prog.</small>{% endif %}</span>
-    </span>
+    <span class="pl-titulo"><strong>{{ r.numero }}</strong><span class="pl-forn">{{ r.fornecedor }}</span></span>
+    <span class="resumo-imp" title="{{ NOME_ETAPA[r.situacao] }}">{{ r.resumo_imp }}</span>
     <span class="seta">▾</span>
   </summary>
   <div class="pl-corpo">

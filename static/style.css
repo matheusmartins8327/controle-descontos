@@ -788,3 +788,7 @@ select.tipo-antigo { border-color: #e0a800; background: #fffbea; }
 @media (max-width: 1000px) { .relatorio-grade { grid-template-columns: 1fr; } }
 .previa-email { border: 1px solid var(--borda); border-radius: var(--raio); padding: 1rem; background: #fff; overflow-x: auto; }
 .acoes-relatorio { gap: .5rem; flex-wrap: wrap; margin-top: .6rem; }
+
+/* v4.64: aba Importação — linha só com invoice, fornecedor e resumo do processo */
+.painel-imp > summary .pl-titulo { flex: 0 0 auto; min-width: 230px; }
+.resumo-imp { flex: 1; color: var(--txt); font-size: .92rem; }
