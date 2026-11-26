@@ -221,8 +221,9 @@ def textos_padrao(info, total_desconto, moeda_txt, pago_integral=False):
         desconto = "No discount will be applied to this invoice."
     elif pago_integral:
         desconto = (f"The total discount for this invoice is {moeda_txt}. As this invoice has already been fully paid, the "
-                    "discounted value for all units classified as C and D will be deducted from the next invoice, once we "
-                    "agree on a new shipment. " + aprovacao)
+                    "discounted value for all units classified as C and D will be deducted from the next invoice. Please "
+                    "review the discount value and return it to us with your approval. If we don't receive it within 7 days, "
+                    "we will consider it approved.")
     else:
         desconto = (f"The total discount for this invoice is {moeda_txt}. We will deduct the discounted value for all units "
                     "classified as C and D from the shipment's invoice. Once we agree on a new shipment, we will deduct the "

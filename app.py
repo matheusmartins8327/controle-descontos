@@ -51,7 +51,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.62"
+VERSAO = "4.63"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -4207,8 +4207,8 @@ def dados_relatorio(r, v):
         k = (x["codigo"] or "").strip().upper()
         it = itens.setdefault(k, {"codigo": (x["codigo"] or "").strip(), "descricao": x["item"], "quantidade": 0, "preco": x["valor_unit"]})
         it["quantidade"] += x["quantidade"] or 0
-    curto = r["fornecedor"].upper()
-    info = {"fornecedor": nome_mega or r["fornecedor"], "fornecedor_curto": curto, "invoice": r["numero"], "moeda": r["moeda"],
+    # v4.63: em todo o relatório (e-mail, assunto, Excel e nome do arquivo) vale o nome do fornecedor cadastrado no sistema
+    info = {"fornecedor": r["fornecedor"], "fornecedor_curto": r["fornecedor"], "invoice": r["numero"], "moeda": r["moeda"],
             "versao": v["versao"], "data": hoje()}
     return info, json.loads(v["linhas"]), eventos, list(itens.values()), sorted(pendentes)
 

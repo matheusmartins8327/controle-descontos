@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.62)
+# Controle de Invoices e Descontos (v4.63)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -270,6 +270,7 @@ Na tabela de versões do fechamento, a última versão tem **"Gerar relatório e
 - **E-mail** no modelo atual (saudação, resumo A/B/C/D com %, legenda, qualidade por item e análise de defeitos em tabelas coloridas,
   link do OneDrive, texto do desconto com prazo de 7 dias, assinatura), **com prévia e textos editáveis** antes do envio.
   E-mails do fornecedor e cópia interna ficam salvos para os próximos relatórios.
+- v4.63: o fornecedor aparece sempre com o **nome cadastrado no sistema** (e-mail, assunto, Excel e nome do arquivo).
 - v4.62: o texto cita só o código do invoice (sem o nome do fornecedor); se o invoice já foi **pago integralmente**, o texto do
   desconto diz que o valor será deduzido do próximo invoice (nada retido neste); **assinatura padrão da empresa** (nome e cargo,
   imagem/banner enviada uma vez na prévia e embutida no e-mail, avisos legais em português e inglês).
