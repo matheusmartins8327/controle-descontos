@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.66)
+# Controle de Invoices e Descontos (v4.67)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -97,6 +97,11 @@ Toda vez que o sistema é aberto pelo `Iniciar Controle de Descontos.bat`, ele v
 **DUIMP enviada ao banco (v4.33):** depois de preenchida a data de emissão da DUIMP, o Financeiro marca na etapa Desembaraço
 a caixa **DUIMP enviada ao banco**. Não trava o processo, mas enquanto não for marcada fica uma pendência do Financeiro.
 (Invoices que já tinham chegado à fábrica antes desta versão não geram essa pendência.)
+
+**E-mail do relatório de inspeção (v4.67):** mostra também o **desenvolvimento da qualidade** do fornecedor nos últimos 5
+invoices inspecionados (ou quantos houver), com unidades, % A+B e a barra A/B/C/D de cada um. O invoice do relatório é sempre
+o último da lista: só entram os inspecionados antes dele (pela data de inspeção; na mesma data, pela ordem do número do invoice),
+inclusive os que só existem na base do MEGA (relação de nomes MEGA × sistema). Categorias finais, já com as reclassificações.
 
 **Aba Relatórios (v4.66):** relatórios da importação, todos calculados a partir das datas dos processos (nada digitado à mão),
 com as mesmas regras de status da aba Importação e recalculados a cada abertura/download (tela, Excel e PDF nunca se contradizem;

@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.66"
+VERSAO = "4.67"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -4273,6 +4273,44 @@ def dados_relatorio(r, v):
     return info, json.loads(v["linhas"]), eventos, list(itens.values()), sorted(pendentes)
 
 
+def chave_natural(t):
+    """'INV-10' depois de 'INV-9' (números comparados como números)."""
+    return [(0, int(p), "") if p.isdigit() else (1, 0, p.lower()) for p in re.split(r"(\d+)", t) if p]
+
+
+def historico_qualidade(r, n=5):
+    """v4.67: desenvolvimento da qualidade do fornecedor nos últimos n invoices inspecionados (o atual é o último).
+    Usa a base de inspeção inteira: invoices do sistema e os que só existem no Excel do MEGA (pela relação de nomes
+    MEGA × sistema). Categoria final de cada evento. Devolve [{invoice, data, A, B, C, D, total, atual}]."""
+    db = get_db()
+    grupos = {}
+    for e in db.execute(
+            "SELECT e.grupo, e.invoice_id, e.invoice_excel, e.categoria, e.quantidade, substr(e.report_date, 1, 10) AS data,"
+            " i.numero FROM inspecao_eventos e LEFT JOIN invoices i ON i.id = e.invoice_id"
+            " LEFT JOIN fornecedor_mega fm ON fm.nome_mega = trim(e.fornecedor_excel)"
+            " WHERE (i.fornecedor_id = ? AND i.cancelado_em IS NULL) OR (e.invoice_id IS NULL"
+            " AND lower(trim(COALESCE(fm.nome_sistema, e.fornecedor_excel))) = lower(trim(?)))",
+            (r["fornecedor_id"], r["fornecedor"])):
+        gr = grupos.setdefault(e["grupo"], {"invoice": e["numero"] or insp.numero_invoice_excel(e["invoice_excel"]) or e["grupo"],
+                                            "data": None, "A": 0, "B": 0, "C": 0, "D": 0, "atual": e["invoice_id"] == r["id"]})
+        if e["categoria"] in ("A", "B", "C", "D"):
+            gr[e["categoria"]] += e["quantidade"] or 0
+        if e["data"] and (gr["data"] is None or e["data"] > gr["data"]):
+            gr["data"] = e["data"]
+    lista = [x for x in grupos.values() if x["A"] + x["B"] + x["C"] + x["D"] > 0]
+    for x in lista:
+        x["total"] = x["A"] + x["B"] + x["C"] + x["D"]
+    atual = next((x for x in lista if x["atual"]), None)
+    if atual is None:
+        return []
+    # o invoice do relatório é sempre o último: só entram os inspecionados antes dele (nunca os posteriores, nem
+    # num relatório revisado depois). Mesma data de inspeção: vale a ordem do número do invoice (01 antes de 02).
+    def ordem(x):
+        return (x["data"] or "", chave_natural(str(x["invoice"])))
+    anteriores = sorted([x for x in lista if not x["atual"] and ordem(x) < ordem(atual)], key=ordem)
+    return anteriores[-(n - 1):] + [atual] if n > 1 else [atual]
+
+
 def versao_confere(r, v):
     """A versão salva ainda corresponde aos eventos e ao cálculo atuais?"""
     atual = {l["codigo"]: (l["C"], l["D"], round(l["desconto"], 2)) for l in calcular_desconto_inspecao(r)["linhas"]}
@@ -4379,10 +4417,11 @@ def relatorio_fornecedor(id, versao):
         salvar_config("assinatura_imagem", None)
         db.commit()
         img = None
+    historico = historico_qualidade(r)  # v4.67: desenvolvimento nos últimos 5 invoices
     html_previa = rel.corpo_email(info, eventos, textos, campos["link"].strip(), campos["nome"], campos["cargo"],
-                                  url_for("arquivo_baixar", aid=img["id"]) if img else None)
+                                  url_for("arquivo_baixar", aid=img["id"]) if img else None, historico)
     html = rel.corpo_email(info, eventos, textos, campos["link"].strip(), campos["nome"], campos["cargo"],
-                           "cid:" + CID_ASSINATURA if img else None)
+                           "cid:" + CID_ASSINATURA if img else None, historico)
     nome = rel.nome_arquivo(info)
     acao = f.get("acao") if request.method == "POST" else None
     if acao == "baixar":

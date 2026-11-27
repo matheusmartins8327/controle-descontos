@@ -279,7 +279,33 @@ def assinatura(nome, cargo, imagem_src=None):
     return html + AVISO_LEGAL
 
 
-def corpo_email(info, eventos, textos, link, assinatura_nome, assinatura_cargo, imagem_src=None):
+def secao_historico(historico, h, td):
+    """Desenvolvimento da qualidade nos últimos invoices (o mais antigo em cima; o atual destacado)."""
+    if not historico or len(historico) < 2:
+        return ""
+    linhas = []
+    for x in historico:
+        total = x["total"] or 1
+        celulas = "".join(
+            f'<td width="{max(1, round(x[k] / total * 100))}%" style="{td}background:#{CORES[k]};color:#ffffff;'
+            f'text-align:center;white-space:nowrap">{pct_br(x[k] / total)}</td>' for k in "ABCD" if x[k])
+        data = f"{x['data'][8:10]}/{x['data'][5:7]}/{x['data'][:4]}" if x.get("data") else ""
+        peso = "font-weight:bold;" if x["atual"] else ""
+        linhas.append(
+            f'<tr><td style="{td}{peso}white-space:nowrap">{escape(str(x["invoice"]))}{" (this invoice)" if x["atual"] else ""}</td>'
+            f'<td style="{td}white-space:nowrap;color:#555555">{data}</td>'
+            f'<td style="{td}text-align:right;white-space:nowrap">{num_br(x["total"])}</td>'
+            f'<td style="{td}text-align:right;white-space:nowrap;{peso}">{pct_br((x["A"] + x["B"]) / total)}</td>'
+            f'<td width="100%" style="padding:2px 0"><table width="100%" cellpadding="0" cellspacing="0" '
+            f'style="border-collapse:collapse"><tr>{celulas}</tr></table></td></tr>')
+    th = f'style="{td}background:#1F3864;color:#fff;text-align:left;white-space:nowrap"'
+    return (f"<p {h}><b>Quality development</b> · last {len(historico)} inspected invoices</p>"
+            f'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">'
+            f'<tr><th {th}>Invoice</th><th {th}>Inspection</th><th {th}>Units</th><th {th}>A + B</th>'
+            f'<th {th}>A / B / C / D</th></tr>' + "".join(linhas) + "</table>")
+
+
+def corpo_email(info, eventos, textos, link, assinatura_nome, assinatura_cargo, imagem_src=None, historico=None):
     tot, por_item, matriz = resumo(eventos)
     p = 'style="margin:0 0 12px 0;font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#1f1f1f"'
     h = 'style="margin:18px 0 8px 0;font-family:Calibri,Arial,sans-serif;font-size:12pt;color:#1F3864"'
@@ -305,6 +331,7 @@ def corpo_email(info, eventos, textos, link, assinatura_nome, assinatura_cargo, 
                   f'<table cellpadding="0" cellspacing="2" style="border-collapse:separate"><tr>{resumo_cat}</tr></table>'
                   f'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:6px">'
                   + "".join(linhas) + "</table>")
+    partes.append(secao_historico(historico, h, td))  # v4.67
     # análise de defeitos: defeitos / 1000 peças por item e matriz defeito × item
     if matriz:
         itens_def = [pr for pr in por_item if any(matriz[d][pr] for d in matriz)]
