@@ -226,6 +226,11 @@
   <h2>Inspeção e desconto <small>· Engenharia de Processos</small></h2>
   {% if r.insp_resumo %}<p class="insp-resumo">Inspeção de recebimento (Agregador MEGA): <strong>{{ r.insp_resumo.eventos }} evento(s)</strong>,
     {{ r.insp_resumo.pecas|qtd }} peça(s), {{ r.insp_resumo.cd|qtd }} em C/D · <a href="{{ url_for('inspecao_grupo', grupo=r.insp_resumo.grupo) }}">ver eventos</a></p>{% endif %}
+  {# v4.74: atalho para o fechamento do relatório de desconto (tela de eventos do invoice) #}
+  <p class="linha-form">{% if r.insp_resumo %}<a class="btn primario" href="{{ url_for('inspecao_grupo', grupo=r.insp_resumo.grupo) }}#fechamento">Fazer o relatório de desconto</a>
+    <small>Abre os eventos de inspeção deste invoice: reclassificação, cálculo, versões e envio ao fornecedor.</small>
+    {% else %}<span class="btn" aria-disabled="true" style="opacity:.55;cursor:not-allowed">Fazer o relatório de desconto</span>
+    <small>Ainda não há eventos de inspeção (Agregador MEGA) ligados a este invoice. Importe a planilha em <a href="{{ url_for('inspecoes') }}">Inspeções</a>.</small>{% endif %}</p>
   {% if not r.data_chegada and not r.historico %}
     <p class="vazio">A inspeção é registrada após a chegada do invoice na fábrica.</p>
   {% else %}

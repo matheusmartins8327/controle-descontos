@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.73)
+# Controle de Invoices e Descontos (v4.74)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -116,6 +116,8 @@ eventos do invoice (com registro no histórico quando muda). Na atualização, o
 ajustados uma vez.
 v4.72: o Excel do relatório de inspeção não é mais anexado à mão no invoice (nem na revalidação): o relatório é feito pela
 plataforma, que guarda as versões, os eventos e o Excel gerado no envio.
+v4.74: no invoice, a seção Inspeção e desconto tem o botão **Fazer o relatório de desconto**, que abre os eventos de inspeção
+do invoice direto no fechamento (cálculo, versões e envio); sem eventos ligados, o botão fica desabilitado com o aviso.
 
 **Aba Relatórios (v4.66):** relatórios da importação, todos calculados a partir das datas dos processos (nada digitado à mão),
 com as mesmas regras de status da aba Importação e recalculados a cada abertura/download (tela, Excel e PDF nunca se contradizem;
