@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.77"
+VERSAO = "4.78"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -1379,6 +1379,15 @@ def listar_pendencias(invoices, perfil=None):
                 quando = "" if dias is None else (" (enviado hoje)" if dias <= 0 else f" (enviado há {dias} dia{'s' if dias != 1 else ''})")
                 add(r, "Desconto aguardando aprovação do fornecedor" + quando,
                     "admin", d["data_relatorio"], d["valor_final"], atencao=True)
+        # v4.78: invoice aguardando inspeção é pendência da Engenharia de Processos, inclusive na carga de histórico
+        # (que pula a logística e começa justamente na inspeção)
+        if adm and sit == "INSPECAO":
+            if not r["data_fim_inspecao"]:
+                add(r, "Aguardando inspeção: registrar o fim da inspeção", "admin", r["data_chegada"])
+            elif r["tem_desconto"] is None:  # v4.45: data registrada, resultado ainda não definido
+                add(r, "Relatório de Inspeção Pendente", "admin", r["data_fim_inspecao"], atencao=True)
+            else:
+                add(r, "Aguardando inspeção: registrar a inspeção", "admin", r["data_chegada"])
         if r["historico"]:  # v4.51: invoices da carga de histórico não geram (outras) pendências
             continue
         if imp and sit == "CRIACAO":
@@ -1392,13 +1401,6 @@ def listar_pendencias(invoices, perfil=None):
         opcionais = [] if r["historico"] else opcionais_faltando(r)
         if imp and opcionais:
             add(r, "Informações não obrigatórias a preencher: " + ", ".join(opcionais), "importacao")
-        if adm and sit == "INSPECAO":
-            if not r["data_fim_inspecao"]:
-                add(r, "Registrar o fim da inspeção", "admin", r["data_chegada"])
-            elif r["tem_desconto"] is None:  # v4.45: data registrada, resultado ainda não definido
-                add(r, "Relatório de Inspeção Pendente", "admin", r["data_fim_inspecao"], atencao=True)
-            else:
-                add(r, "Registrar a inspeção", "admin", r["data_chegada"])
         if imp and d and d["status"] == "APROVADO" and r["saldo_a_deduzir"] > TOLERANCIA:
             add(r, "Desconto aprovado aguardando dedução em um próximo invoice", "importacao", None, r["saldo_a_deduzir"])
         if fin:
