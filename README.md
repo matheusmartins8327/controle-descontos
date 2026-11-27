@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.81)
+# Controle de Invoices e Descontos (v4.82)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -138,6 +138,10 @@ v4.81: **Fornecedor sem desconto** (configuração do fornecedor; só a Engenhar
 os invoices do fornecedor fica em 0 — a inspeção é concluída sem desconto quando o invoice chega na fábrica e o relatório da
 plataforma calcula C e D a 0% — e o pagamento após a HAWB é liberado automaticamente ao Financeiro. Descontos já registrados
 não mudam; desligado, tudo volta à política e à liberação manual.
+v4.82: o invoice pode ser salvo **sem o código** (escolhido pelo fornecedor): fica como prévia, com o número provisório
+"SEM CÓDIGO n", e o cadastro só é concluído quando o código for informado (fica no histórico). Na importação de inspeções, o
+número provisório nunca liga eventos, e a parte do invoice do Excel que é só o nome do fornecedor ("GEMKIND" em
+"GEMKIND - GK-114-26") não vale como número do invoice.
 
 **Aba Relatórios (v4.66):** relatórios da importação, todos calculados a partir das datas dos processos (nada digitado à mão),
 com as mesmas regras de status da aba Importação e recalculados a cada abertura/download (tela, Excel e PDF nunca se contradizem;

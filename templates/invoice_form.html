@@ -11,7 +11,8 @@
       <datalist id="lista-fornecedores">{% for f in fornecedores %}<option value="{{ f.nome }}">{% endfor %}</datalist>
       <small>{{ 'Travado: o invoice tem desconto ou deduções.' if chave_travada else 'Escolha da lista ou digite um nome novo.' }}</small>
     </label>
-    <label>Nº do invoice *<input name="numero" value="{{ d.numero or '' }}" required></label>
+    <label>Nº do invoice<input name="numero" value="{{ '' if d.numero_provisorio else (d.numero or '') }}" placeholder="{{ d.numero if d.numero_provisorio else 'código definido pelo fornecedor' }}">
+      <small>{{ 'Ainda sem código (prévia): informe assim que o fornecedor definir.' if d.numero_provisorio else 'Pode ficar em branco: o invoice é salvo como prévia e o cadastro só é concluído com o código.' }}</small></label>
     <label>Moeda *
       {% if chave_travada %}<input name="moeda" id="moeda" value="{{ d.moeda }}" readonly>
       {% else %}<select name="moeda" id="moeda" required><option value="" {{ 'selected' if not d.moeda }}>Selecione…</option>{% for k, s in MOEDAS.items() %}<option value="{{ k }}" {{ 'selected' if d.moeda == k }}>{{ k }} ({{ s }})</option>{% endfor %}</select>{% endif %}

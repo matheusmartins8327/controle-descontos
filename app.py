@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.81"
+VERSAO = "4.82"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -562,6 +562,8 @@ def init_db():
         # versão 4.20: número da NF (Desembaraço) e liberação do pagamento após a HAWB pela Engenharia
         if "exigencia_status" not in {r[1] for r in db.execute("PRAGMA table_info(invoices)")}:
             db.execute("ALTER TABLE invoices ADD COLUMN exigencia_status TEXT")  # v4.65
+        if "numero_provisorio" not in {r[1] for r in db.execute("PRAGMA table_info(invoices)")}:  # v4.82
+            db.execute("ALTER TABLE invoices ADD COLUMN numero_provisorio INTEGER NOT NULL DEFAULT 0")
         colunas_forn = {r[1] for r in db.execute("PRAGMA table_info(fornecedores)")}
         for col, tipo in (("sem_desconto", "INTEGER NOT NULL DEFAULT 0"), ("sem_desconto_por", "INTEGER"),
                           ("sem_desconto_em", "TEXT")):  # v4.81
@@ -1732,8 +1734,8 @@ def ler_form_invoice():
     erros = []
     if not dados["fornecedor"]:
         erros.append("Informe o fornecedor.")
-    if not dados["numero"]:
-        erros.append("Informe o número do invoice.")
+    # v4.82: o código do invoice (escolhido pelo fornecedor) pode ficar para depois: o invoice é salvo como prévia,
+    # com um número provisório, e o cadastro só é concluído quando o código for informado
     if not dados["moeda"]:
         erros.append("Selecione a moeda do invoice.")
     itens = []
@@ -1774,7 +1776,7 @@ SEM_PENDENCIA = {"exigencias_anvisa", "exigencia_status", "exigencia_acao", "exi
 
 def criacao_faltando(r):
     """Informações obrigatórias do cadastro que ainda faltam (impedem o avanço do processo)."""
-    falta = []
+    falta = ["Código do invoice (definido pelo fornecedor)"] if r.get("numero_provisorio") else []
     if not r["data_assinatura"]:
         falta.append("Data de assinatura")
     condicao = r.get("condicao") or []
@@ -2150,6 +2152,10 @@ def invoice_novo():
     if request.method == "POST":
         dados, itens, erros = ler_form_invoice()
         fid = obter_fornecedor(dados["fornecedor"], criar=False) if dados["fornecedor"] else None
+        provisorio = not dados["numero"]
+        if provisorio:  # prévia sem o código do invoice: número provisório até o fornecedor definir o código
+            dados["numero"] = f"SEM CÓDIGO {(db.execute('SELECT COALESCE(MAX(id), 0) FROM invoices').fetchone()[0] or 0) + 1}"
+            dados["numero_provisorio"] = 1
         if fid and db.execute("SELECT 1 FROM invoices WHERE fornecedor_id = ? AND lower(numero) = lower(?)",
                               (fid, dados["numero"])).fetchone():
             erros.append(f"O invoice {dados['numero']} deste fornecedor já está cadastrado.")
@@ -2174,11 +2180,12 @@ def invoice_novo():
         if not erros:
             cur = db.execute(
                 "INSERT INTO invoices (fornecedor_id, numero, moeda, data_assinatura, condicao_tipo, condicao_dias,"
-                " agente_carga, despachante, grupo_consolidacao, data_prog_coleta, obs, criado_por, criado_em)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " agente_carga, despachante, grupo_consolidacao, data_prog_coleta, obs, criado_por, criado_em, numero_provisorio)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (obter_fornecedor(dados["fornecedor"]), dados["numero"], dados["moeda"], dados["data_assinatura"],
                  dados["condicao_tipo"], dados["condicao_dias"], dados["agente_carga"], dados["despachante"],
-                 dados["grupo_consolidacao"], dados["data_prog_coleta"], dados["obs"], g.usuario["id"], agora()))
+                 dados["grupo_consolidacao"], dados["data_prog_coleta"], dados["obs"], g.usuario["id"], agora(),
+                 1 if provisorio else 0))
             iid = cur.lastrowid
             salvar_itens(iid, itens)
             salvar_condicao(iid, dados["condicao"])
@@ -2218,6 +2225,13 @@ def invoice_editar(id):
         if chave_travada:
             dados.update(fornecedor=r["fornecedor"], moeda=r["moeda"])
         fid = obter_fornecedor(dados["fornecedor"], criar=False) if dados["fornecedor"] else None
+        provisorio = not dados["numero"]
+        if provisorio:
+            if r["numero_provisorio"]:
+                dados["numero"] = r["numero"]  # continua sem o código: mantém o número provisório
+                dados["numero_provisorio"] = 1
+            else:
+                erros.append("Informe o número do invoice.")
         if fid and db.execute("SELECT 1 FROM invoices WHERE fornecedor_id = ? AND lower(numero) = lower(?) AND id <> ?",
                               (fid, dados["numero"], id)).fetchone():
             erros.append(f"O invoice {dados['numero']} deste fornecedor já está cadastrado.")
@@ -2237,11 +2251,13 @@ def invoice_editar(id):
                 mudancas.append(f"condição: {condicao_texto(r)} → {novo_texto}")
             db.execute(
                 "UPDATE invoices SET fornecedor_id=?, numero=?, moeda=?, data_assinatura=?, condicao_tipo=?,"
-                " condicao_dias=?, agente_carga=?, despachante=?, grupo_consolidacao=?, data_prog_coleta=?, obs=?"
-                " WHERE id=?",
+                " condicao_dias=?, agente_carga=?, despachante=?, grupo_consolidacao=?, data_prog_coleta=?, obs=?,"
+                " numero_provisorio=? WHERE id=?",
                 (obter_fornecedor(dados["fornecedor"]), dados["numero"], dados["moeda"], dados["data_assinatura"],
                  dados["condicao_tipo"], dados["condicao_dias"], dados["agente_carga"], dados["despachante"],
-                 dados["grupo_consolidacao"], dados["data_prog_coleta"], dados["obs"], id))
+                 dados["grupo_consolidacao"], dados["data_prog_coleta"], dados["obs"], 1 if provisorio else 0, id))
+            if r["numero_provisorio"] and not provisorio:
+                mudancas.insert(0, f"código do invoice informado: {dados['numero']} (era {r['numero']})")
             salvar_itens(id, itens)
             salvar_condicao(id, dados["condicao"])
             registrar_evento(id, "Dados do invoice corrigidos", "; ".join(mudancas) or None)
@@ -3452,10 +3468,13 @@ def fornecedor_sistema(nome_mega, mapa=None):
 app.jinja_env.globals["fornecedor_sistema"] = lambda n: fornecedor_sistema(n)
 
 
-def numeros_candidatos(invoice_excel):
-    """O Excel escreve "26000069 - DR.FRIGZ" ou "ORTHOGENT - 92-786-OGE-342": cada parte pode ser o número."""
+def numeros_candidatos(invoice_excel, *fornecedores):
+    """O Excel escreve "26000069 - DR.FRIGZ" ou "ORTHOGENT - 92-786-OGE-342": cada parte pode ser o número.
+    v4.82: a parte que é só o nome do fornecedor (ex.: "GEMKIND" em "GEMKIND - GK-114-26") nunca vale como número."""
     t = str(invoice_excel or "").strip()
+    nomes = {insp.chave_termo(n).replace(" ", "") for n in fornecedores if n}
     partes = [p.strip() for p in re.split(r"\s+-\s+", t) if p.strip()]
+    partes = [p for p in partes if insp.chave_termo(p).replace(" ", "") not in nomes]
     return list(dict.fromkeys([t] + partes))
 
 
@@ -3465,10 +3484,12 @@ def vincular_eventos(eventos):
     por fim, pelo número sozinho, se for único."""
     db = get_db()
     por_nf, por_numero, por_forn_numero = {}, {}, {}
-    for i in db.execute("SELECT i.id, i.numero, i.numero_nf, lower(f.nome) AS forn FROM invoices i"
+    for i in db.execute("SELECT i.id, i.numero, i.numero_nf, i.numero_provisorio, lower(f.nome) AS forn FROM invoices i"
                         " JOIN fornecedores f ON f.id = i.fornecedor_id WHERE i.cancelado_em IS NULL"):
         if i["numero_nf"]:
             por_nf.setdefault(str(i["numero_nf"]).strip().lstrip("0"), []).append(i["id"])
+        if i["numero_provisorio"]:  # v4.82: número provisório (prévia sem código) não identifica o invoice
+            continue
         por_numero.setdefault(i["numero"].strip().lower(), []).append(i["id"])
         por_forn_numero.setdefault((i["forn"], i["numero"].strip().lower()), []).append(i["id"])
     mapa = mapa_fornecedor_mega()
@@ -3484,7 +3505,7 @@ def vincular_eventos(eventos):
             iid = ids[0]
         else:
             forn = str(fornecedor_sistema(e.get("fornecedor_excel"), mapa) or "").strip().lower()
-            for num in numeros_candidatos(e.get("invoice_excel")):
+            for num in numeros_candidatos(e.get("invoice_excel"), e.get("fornecedor_excel"), forn):
                 ids = por_forn_numero.get((forn, num.lower())) or por_numero.get(num.lower())
                 if ids and len(ids) == 1:
                     iid = ids[0]
