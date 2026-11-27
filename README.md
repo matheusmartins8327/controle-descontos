@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.68)
+# Controle de Invoices e Descontos (v4.69)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -104,6 +104,9 @@ o último da lista: só entram os inspecionados antes dele (pela data de inspeç
 inclusive os que só existem na base do MEGA (relação de nomes MEGA × sistema). Categorias finais, já com as reclassificações.
 v4.68: a % de cada categoria fica em colunas próprias (A, B, C, D) e a barra só tem as cores, com cada parte na largura exata da
 sua porcentagem; invoices do Excel que trazem o nome do fornecedor junto ("TECHNIMEN - 01-QNT-26-27") aparecem só com o número.
+v4.69: a barra tem largura fixa (180 px) para caber em qualquer janela de e-mail. **Abrir no Outlook** baixa o e-mail pronto
+(.eml marcado como não enviado, com destinatários, assunto, texto, assinatura e o Excel anexo): o Outlook do computador o abre
+como e-mail novo, que sai pela conta logada nele. Depois do envio, "Registrar como enviado" atualiza o desconto do invoice.
 
 **Aba Relatórios (v4.66):** relatórios da importação, todos calculados a partir das datas dos processos (nada digitado à mão),
 com as mesmas regras de status da aba Importação e recalculados a cada abertura/download (tela, Excel e PDF nunca se contradizem;

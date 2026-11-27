@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.68"
+VERSAO = "4.69"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -4434,6 +4434,21 @@ def relatorio_fornecedor(id, versao):
         conteudo = rel.gerar_excel(info, linhas, eventos, itens)
         return send_file(io.BytesIO(conteudo), download_name=nome, as_attachment=True,
                          mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    if acao == "outlook":  # v4.69: abre no Outlook do computador, com a conta logada lá
+        if bloqueios:
+            for b in bloqueios:
+                flash(b, "erro")
+            return volta
+        conteudo = rel.gerar_excel(info, linhas, eventos, itens)
+        eml = rascunho_outlook(campos["assunto"], html, campos["para"], campos["cc"], [(nome, conteudo)])
+        if lista_emails(campos["para"]):
+            db.execute("UPDATE fornecedores SET emails_relatorio = ? WHERE id = ?", (campos["para"], r["fornecedor_id"]))
+        salvar_config("relatorio_cc", campos["cc"] or None)
+        salvar_config("relatorio_cargo", campos["cargo"] or None)
+        salvar_config(f"relatorio_nome_{g.usuario['id']}", campos["nome"] or None)
+        db.commit()
+        arquivo = "".join(ch for ch in campos["assunto"] if ch not in '\\/:*?"<>|')[:120] + ".eml"
+        return send_file(io.BytesIO(eml), download_name=arquivo, as_attachment=True, mimetype="message/rfc822")
     if acao in ("enviar", "registrar"):
         if bloqueios:
             for b in bloqueios:
@@ -6681,6 +6696,32 @@ def montar_mensagem(assunto, html, para, cc, anexos=None):
         with open(caminho, "rb") as arq:
             msg.add_attachment(arq.read(), maintype=principal, subtype=sub, filename=nome)
     return msg
+
+
+def rascunho_outlook(assunto, html, para, cc, anexos):
+    """v4.69: e-mail pronto como arquivo .eml marcado como "não enviado" (X-Unsent): o Outlook do computador o abre
+    como um e-mail novo, para revisar e enviar pela conta que está logada lá. Sem remetente: o Outlook usa a conta padrão.
+    anexos: [(nome, bytes)]"""
+    msg = EmailMessage()
+    msg["X-Unsent"] = "1"
+    msg["Subject"] = assunto
+    if lista_emails(para):
+        msg["To"] = ", ".join(lista_emails(para))
+    if lista_emails(cc):
+        msg["Cc"] = ", ".join(lista_emails(cc))
+    msg.set_content(texto_simples(html))
+    msg.add_alternative(html, subtype="html")
+    if "cid:" + CID_ASSINATURA in html:
+        img = imagem_assinatura()
+        if img:
+            with open(caminho_anexo(img), "rb") as arq:
+                sub_tipo = (mimetypes.guess_type(img["nome"])[0] or "image/png").split("/", 1)[1]
+                msg.get_payload()[1].add_related(arq.read(), maintype="image", subtype=sub_tipo, cid=f"<{CID_ASSINATURA}>")
+    for nome, conteudo in anexos:
+        tipo = mimetypes.guess_type(nome)[0] or "application/octet-stream"
+        principal, sub = tipo.split("/", 1)
+        msg.add_attachment(conteudo, maintype=principal, subtype=sub, filename=nome)
+    return msg.as_bytes()
 
 
 def enviar_fila():

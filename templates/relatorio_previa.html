@@ -32,12 +32,17 @@
       <button class="btn" name="acao" value="atualizar">Atualizar prévia</button>
       <button class="btn" name="acao" value="baixar">Baixar o Excel</button>
       {% if not bloqueios %}
-      <button class="btn primario" name="acao" value="enviar" {{ 'disabled' if not conta_ok }}
-        onclick="return confirm('Enviar o relatório v{{ v.versao }} ao fornecedor? O desconto do invoice será atualizado para {{ v.total|moeda(r.moeda) }}.')">Enviar ao fornecedor</button>
-      <button class="btn link" name="acao" value="registrar" onclick="return confirm('Registrar o relatório v{{ v.versao }} como enviado por fora do sistema (sem enviar e-mail)? O desconto do invoice será atualizado.')">Registrar sem enviar e-mail</button>
+      <button class="btn primario" name="acao" value="outlook">Abrir no Outlook</button>
+      <button class="btn" name="acao" value="registrar" onclick="return confirm('Registrar o relatório v{{ v.versao }} como enviado (pelo Outlook ou por fora do sistema)? O desconto do invoice será atualizado para {{ v.total|moeda(r.moeda) }}.')">Registrar como enviado</button>
+      <button class="btn link" name="acao" value="enviar" {{ 'disabled' if not conta_ok }}
+        onclick="return confirm('Enviar o relatório v{{ v.versao }} ao fornecedor pela conta de envio do sistema? O desconto do invoice será atualizado para {{ v.total|moeda(r.moeda) }}.')">Enviar pela conta do sistema</button>
       {% endif %}
     </div>
-    {% if not conta_ok %}<small class="erro-texto">Conta de envio de e-mails não configurada (aba E-mails): use "Baixar o Excel" e "Registrar sem enviar e-mail".</small>{% endif %}
+    {% if not bloqueios %}<p class="sub" style="margin-top:.6rem"><strong>Pelo Outlook:</strong> "Abrir no Outlook" baixa o e-mail pronto (arquivo .eml), com
+      destinatários, assunto, texto, assinatura e o Excel anexo. Abra o arquivo baixado: o Outlook do computador mostra um e-mail novo,
+      que sai pela conta logada nele; revise e clique em Enviar. Depois, volte aqui e clique em <strong>Registrar como enviado</strong>
+      para atualizar o desconto do invoice.</p>{% endif %}
+    
   </section>
   <section class="bloco">
     <h2>Prévia do e-mail</h2>

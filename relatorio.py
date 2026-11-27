@@ -279,6 +279,19 @@ def assinatura(nome, cargo, imagem_src=None):
     return html + AVISO_LEGAL
 
 
+LARGURA_BARRA = 180  # px: largura fixa cabe em qualquer janela de e-mail (Outlook inclusive)
+
+
+def larguras_px(valores, total_px):
+    """Pixels de cada parte, proporcionais e somando exatamente total_px (parte não zerada tem pelo menos 2 px)."""
+    soma = sum(valores) or 1
+    px = [0 if not v else max(2, round(v / soma * total_px)) for v in valores]
+    if any(px):
+        maior = px.index(max(px))
+        px[maior] += total_px - sum(px)
+    return list(zip("ABCD", px))
+
+
 def secao_historico(historico, h, td):
     """Desenvolvimento da qualidade nos últimos invoices (o mais antigo em cima; o atual destacado).
     v4.68: as porcentagens ficam em colunas próprias e a barra só tem as cores, com cada parte na largura exata da sua
@@ -290,10 +303,10 @@ def secao_historico(historico, h, td):
     for x in historico:
         total = x["total"] or 1
         peso = "font-weight:bold;" if x["atual"] else ""
-        partes = [(k, x[k] / total * 100) for k in "ABCD" if x[k]]
         barra = "".join(
-            f'<td width="{max(v, 0.4):.1f}%" style="width:{max(v, 0.4):.1f}%;background:#{CORES[k]};height:16px;'
-            f'font-size:1px;line-height:1px;mso-line-height-rule:exactly;padding:0">&nbsp;</td>' for k, v in partes)
+            f'<td width="{px}" style="width:{px}px;background:#{CORES[k]};height:16px;'
+            f'font-size:1px;line-height:1px;mso-line-height-rule:exactly;padding:0">&nbsp;</td>'
+            for k, px in larguras_px([x[k] for k in "ABCD"], LARGURA_BARRA) if px)
         data = f"{x['data'][8:10]}/{x['data'][5:7]}/{x['data'][:4]}" if x.get("data") else ""
         pcts = "".join(f'<td style="{td}{borda}text-align:right;white-space:nowrap;{peso}">'
                        f'{pct_br(x[k] / total) if x[k] else "–"}</td>' for k in "ABCD")
@@ -303,13 +316,13 @@ def secao_historico(historico, h, td):
             f'<td style="{td}{borda}text-align:right;white-space:nowrap">{num_br(x["total"])}</td>'
             f'{pcts}'
             f'<td style="{td}{borda}text-align:right;white-space:nowrap;{peso}">{pct_br((x["A"] + x["B"]) / total)}</td>'
-            f'<td width="100%" style="{borda}padding:4px 0 4px 8px"><table width="100%" cellpadding="0" cellspacing="0" '
-            f'style="border-collapse:collapse;table-layout:fixed;width:100%"><tr>{barra}</tr></table></td></tr>')
+            f'<td width="{LARGURA_BARRA + 8}" style="{borda}padding:4px 0 4px 8px"><table width="{LARGURA_BARRA}" cellpadding="0" '
+            f'cellspacing="0" style="border-collapse:collapse;width:{LARGURA_BARRA}px"><tr>{barra}</tr></table></td></tr>')
     th = f"{td}background:#1F3864;color:#fff;white-space:nowrap;"
     cab_cat = "".join(f'<th style="{td}background:#{CORES[k]};color:#fff;text-align:right;white-space:nowrap">{k}</th>'
                       for k in "ABCD")
     return (f"<p {h}><b>Quality development</b> · last {len(historico)} inspected invoices</p>"
-            f'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">'
+            f'<table cellpadding="0" cellspacing="0" style="border-collapse:collapse">'
             f'<tr><th style="{th}text-align:left">Invoice</th><th style="{th}text-align:left">Inspection</th>'
             f'<th style="{th}text-align:right">Units</th>{cab_cat}<th style="{th}text-align:right">A + B</th>'
             f'<th style="{th}text-align:left;padding-left:8px">Distribution</th></tr>' + "".join(linhas) + "</table>")
