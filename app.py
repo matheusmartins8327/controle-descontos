@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.78"
+VERSAO = "4.79"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -1349,6 +1349,18 @@ def minha_senha():
 # ---------------------------------------------------------------------------
 # Painel e pendências
 # ---------------------------------------------------------------------------
+def data_envio_desconto(r, d):
+    """Quando o relatório de desconto foi enviado ao fornecedor: envio/registro pela plataforma (versão aplicada) ou,
+    sem ele, a última vez que o desconto foi marcado como enviado; por fim, a data do relatório."""
+    db = get_db()
+    x = db.execute("SELECT MAX(aplicado_em) FROM relatorios_versoes WHERE invoice_id = ?", (r["id"],)).fetchone()[0]
+    if not x:
+        x = db.execute("SELECT MAX(criado_em) FROM eventos WHERE invoice_id = ? AND acao IN (?, ?)",
+                       (r["id"], f"Desconto: {STATUS_DESCONTO['ENVIADO']}",
+                        "Inspeção registrada com desconto · Enviado ao fornecedor")).fetchone()[0]
+    return (x or d["data_relatorio"] or "")[:10] or None
+
+
 def listar_pendencias(invoices, perfil=None):
     """Pendências de todos os setores (todos veem tudo); as do setor do usuário vêm primeiro.
     Ver não dá permissão de preencher: cada tela continua restrita ao seu setor."""
@@ -1371,14 +1383,15 @@ def listar_pendencias(invoices, perfil=None):
         if adm and d and d["status"] == "PENDENTE":
             add(r, "Enviar o relatório de inspeção (desconto) ao fornecedor", "admin", d["data_relatorio"], d["valor_final"])
         if adm and d and d["status"] == "ENVIADO":
-            dias = (date.fromisoformat(hoje()) - date.fromisoformat(d["data_relatorio"][:10])).days if d["data_relatorio"] else None
-            if dias is not None and dias > PRAZO_APROVACAO_DESCONTO:
-                add(r, f"Desconto aguardando aprovação do fornecedor há {dias} dias: prazo de {PRAZO_APROVACAO_DESCONTO} dias "
-                    "do e-mail vencido (marcar como aprovado)", "admin", d["data_relatorio"], d["valor_final"], alerta=True)
-            else:
-                quando = "" if dias is None else (" (enviado hoje)" if dias <= 0 else f" (enviado há {dias} dia{'s' if dias != 1 else ''})")
-                add(r, "Desconto aguardando aprovação do fornecedor" + quando,
-                    "admin", d["data_relatorio"], d["valor_final"], atencao=True)
+            # v4.79: a pendência vence 7 dias depois do envio do relatório (prazo dado ao fornecedor no e-mail)
+            envio = data_envio_desconto(r, d)
+            prazo = somar_dias(envio, PRAZO_APROVACAO_DESCONTO) if envio else None
+            vencido = bool(prazo and prazo < hoje())
+            texto = "Desconto aguardando aprovação do fornecedor"
+            if envio:
+                texto += f" (relatório enviado em {fmt_data(envio)}"
+                texto += f"; prazo de {PRAZO_APROVACAO_DESCONTO} dias vencido: marcar como aprovado)" if vencido else ")"
+            add(r, texto, "admin", prazo, d["valor_final"], alerta=vencido, atencao=not vencido)
         # v4.78: invoice aguardando inspeção é pendência da Engenharia de Processos, inclusive na carga de histórico
         # (que pula a logística e começa justamente na inspeção)
         if adm and sit == "INSPECAO":

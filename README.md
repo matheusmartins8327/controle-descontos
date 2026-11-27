@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.78)
+# Controle de Invoices e Descontos (v4.79)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -131,6 +131,9 @@ valor do desconto e a **observação escrita** nele (o texto automático "Relat�
 v4.78: invoices **aguardando inspeção** aparecem sempre nas Pendências da Engenharia de Processos, inclusive os da carga de
 histórico (que pulam a logística e começam na inspeção): "Aguardando inspeção: registrar o fim da inspeção" e, com a data
 registrada, "Relatório de Inspeção Pendente".
+v4.79: a pendência "Desconto aguardando aprovação do fornecedor" tem como data o envio do relatório + 7 dias (prazo dado no
+e-mail). Data do envio: envio/registro do relatório pela plataforma; sem ele, quando o desconto foi marcado como enviado; por
+último, a data do relatório. Depois da data, fica vencida (vermelho) para marcar como aprovado.
 
 **Aba Relatórios (v4.66):** relatórios da importação, todos calculados a partir das datas dos processos (nada digitado à mão),
 com as mesmas regras de status da aba Importação e recalculados a cada abertura/download (tela, Excel e PDF nunca se contradizem;
