@@ -151,3 +151,18 @@ def numero_invoice_excel(txt):
     """'26000069 - DR.FRIGZ' -> '26000069' (o Excel acrescenta o nome do fornecedor no fim)."""
     t = str(txt or "").strip()
     return re.split(r"\s+-\s+", t)[0].strip() if t else ""
+
+
+def rotulo_invoice_excel(txt, *nomes_fornecedor):
+    """Número do invoice escrito no Excel, sem o nome do fornecedor, que pode vir antes ou depois:
+    '26000069 - DR.FRIGZ' -> '26000069'; 'TECHNIMEN - 01-QNT-26-27' -> '01-QNT-26-27'."""
+    t = str(txt or "").strip()
+    if not t:
+        return ""
+    def norm(x):
+        return re.sub(r"[^A-Z0-9]", "", unicodedata.normalize("NFKD", str(x or "")).encode("ascii", "ignore").decode().upper())
+    fornecedores = {norm(n) for n in nomes_fornecedor if norm(n)}
+    partes = [p.strip() for p in re.split(r"\s+-\s+", t) if p.strip()]
+    sobra = [p for p in partes if norm(p) not in fornecedores and not any(f and (f in norm(p) or norm(p) in f)
+                                                                           and not re.search(r"\d", p) for f in fornecedores)]
+    return (sobra or partes)[0]

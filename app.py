@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.67"
+VERSAO = "4.68"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -4285,18 +4285,24 @@ def historico_qualidade(r, n=5):
     db = get_db()
     grupos = {}
     for e in db.execute(
-            "SELECT e.grupo, e.invoice_id, e.invoice_excel, e.categoria, e.quantidade, substr(e.report_date, 1, 10) AS data,"
+            "SELECT e.grupo, e.invoice_id, e.invoice_excel, e.fornecedor_excel, e.numero_nf, e.categoria, e.quantidade,"
+            " substr(e.report_date, 1, 10) AS data,"
             " i.numero FROM inspecao_eventos e LEFT JOIN invoices i ON i.id = e.invoice_id"
             " LEFT JOIN fornecedor_mega fm ON fm.nome_mega = trim(e.fornecedor_excel)"
             " WHERE (i.fornecedor_id = ? AND i.cancelado_em IS NULL) OR (e.invoice_id IS NULL"
             " AND lower(trim(COALESCE(fm.nome_sistema, e.fornecedor_excel))) = lower(trim(?)))",
             (r["fornecedor_id"], r["fornecedor"])):
-        gr = grupos.setdefault(e["grupo"], {"invoice": e["numero"] or insp.numero_invoice_excel(e["invoice_excel"]) or e["grupo"],
+        gr = grupos.setdefault(e["grupo"], {"invoice": e["numero"] or insp.rotulo_invoice_excel(
+                                                e["invoice_excel"], e["fornecedor_excel"], r["fornecedor"]) or e["grupo"],
                                             "data": None, "A": 0, "B": 0, "C": 0, "D": 0, "atual": e["invoice_id"] == r["id"]})
         if e["categoria"] in ("A", "B", "C", "D"):
             gr[e["categoria"]] += e["quantidade"] or 0
         if e["data"] and (gr["data"] is None or e["data"] > gr["data"]):
             gr["data"] = e["data"]
+        # o Excel às vezes traz só o nome do fornecedor no lugar do invoice: aí identifica pela NF de entrada
+        if e["numero_nf"] and not e["numero"] and insp.chave_termo(gr["invoice"]).replace(" ", "") in {
+                insp.chave_termo(e["fornecedor_excel"]).replace(" ", ""), insp.chave_termo(r["fornecedor"]).replace(" ", "")}:
+            gr["invoice"] = f"NF {e['numero_nf']}"
     lista = [x for x in grupos.values() if x["A"] + x["B"] + x["C"] + x["D"] > 0]
     for x in lista:
         x["total"] = x["A"] + x["B"] + x["C"] + x["D"]

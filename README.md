@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.67)
+# Controle de Invoices e Descontos (v4.68)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -102,6 +102,8 @@ a caixa **DUIMP enviada ao banco**. Não trava o processo, mas enquanto não for
 invoices inspecionados (ou quantos houver), com unidades, % A+B e a barra A/B/C/D de cada um. O invoice do relatório é sempre
 o último da lista: só entram os inspecionados antes dele (pela data de inspeção; na mesma data, pela ordem do número do invoice),
 inclusive os que só existem na base do MEGA (relação de nomes MEGA × sistema). Categorias finais, já com as reclassificações.
+v4.68: a % de cada categoria fica em colunas próprias (A, B, C, D) e a barra só tem as cores, com cada parte na largura exata da
+sua porcentagem; invoices do Excel que trazem o nome do fornecedor junto ("TECHNIMEN - 01-QNT-26-27") aparecem só com o número.
 
 **Aba Relatórios (v4.66):** relatórios da importação, todos calculados a partir das datas dos processos (nada digitado à mão),
 com as mesmas regras de status da aba Importação e recalculados a cada abertura/download (tela, Excel e PDF nunca se contradizem;
