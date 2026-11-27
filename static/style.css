@@ -838,3 +838,4 @@ select.tipo-antigo { border-color: #e0a800; background: #fffbea; }
 .descontos-disponiveis { margin: .4rem 0 0; padding-left: 1.1rem; font-size: .88rem; }
 .descontos-disponiveis li { margin: .25rem 0; }
 .descontos-disponiveis small { color: var(--suave); white-space: pre-line; }
+.sem-desconto.ligado { border-left: 4px solid var(--pri); }

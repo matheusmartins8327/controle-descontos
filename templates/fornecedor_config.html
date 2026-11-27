@@ -5,6 +5,21 @@
 <h1>{{ f.nome }}</h1>
 <p class="sub">{{ f.cidade or '' }}{% if f.cidade and f.contato %} · {% endif %}{{ f.contato or '' }}{% if not f.ativo %} · <strong>Inativo</strong>{% endif %}</p>
 
+<section class="bloco sem-desconto {{ 'ligado' if f.sem_desconto }}" id="sem-desconto">
+  <h2>Fornecedor sem desconto <small>· só a Engenharia de Processos altera</small></h2>
+  {% if admin %}
+  <form method="post" class="linha-form" onsubmit="return confirm(this.sem_desconto.checked ? 'Marcar {{ f.nome }} como sem desconto? Os invoices dele ficam sem desconto e o pagamento após a HAWB é liberado automaticamente.' : 'Remover a marcação? O fornecedor volta à política de desconto e à liberação do pagamento pela Engenharia de Processos.')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="acao" value="sem_desconto">
+    <label class="flag-etapa"><input type="checkbox" name="sem_desconto" value="1" {{ 'checked' if f.sem_desconto }}> <strong>Sem desconto</strong></label>
+    <button class="btn">Salvar</button>
+  </form>
+  {% else %}<p><strong>{{ 'Ligado' if f.sem_desconto else 'Desligado' }}</strong></p>{% endif %}
+  <p class="sub">Ligado: o desconto de todos os invoices deste fornecedor fica em 0 (a inspeção é concluída sem desconto quando
+    o invoice chega na fábrica e o relatório da plataforma calcula C e D a 0%) e o pagamento após a HAWB é liberado ao Financeiro
+    automaticamente. Descontos já registrados antes da marcação não são alterados.
+    {% if f.sem_desconto_em %}<br>Alterado por {{ quem_sd or '—' }} em {{ f.sem_desconto_em|data }}.{% endif %}</p>
+</section>
+
 <section class="bloco" id="condicao">
   <h2>Condição de pagamento padrão</h2>
   <p class="sub">Ao criar um invoice deste fornecedor, a condição é preenchida automaticamente. Ela continua podendo ser alterada no invoice;

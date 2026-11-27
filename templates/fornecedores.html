@@ -26,7 +26,7 @@
         <td><input form="f{{ f.id }}" name="nome" value="{{ f.nome }}" required></td>
         <td><input form="f{{ f.id }}" name="cidade" value="{{ f.cidade or '' }}"></td>
         <td><input form="f{{ f.id }}" name="contato" value="{{ f.contato or '' }}"></td>
-        <td><small>{{ condicoes[f.id] or '—' }}</small></td>
+        <td><small>{{ condicoes[f.id] or '—' }}</small>{% if f.sem_desconto %} <span class="status-imp st-azul">Sem desconto</span>{% endif %}</td>
         <td>{% if f.lembretes %}<span class="etiqueta lembrete">🔔 {{ f.lembretes }}</span>{% else %}<small>—</small>{% endif %}</td>
         <td class="num">{{ f.qtd }}</td>
         <td><select form="f{{ f.id }}" name="ativo"><option value="1" {{ 'selected' if f.ativo }}>Ativo</option><option value="0" {{ 'selected' if not f.ativo }}>Inativo</option></select></td>
@@ -35,7 +35,7 @@
       </tr>
     {% else %}
       <tr><td>{{ f.nome }}</td><td>{{ f.cidade or '—' }}</td><td>{{ f.contato or '—' }}</td>
-        <td><small>{{ condicoes[f.id] or '—' }}</small></td>
+        <td><small>{{ condicoes[f.id] or '—' }}</small>{% if f.sem_desconto %} <span class="status-imp st-azul">Sem desconto</span>{% endif %}</td>
         <td>{% if f.lembretes %}<span class="etiqueta lembrete">🔔 {{ f.lembretes }}</span>{% else %}<small>—</small>{% endif %}</td>
         <td class="num">{{ f.qtd }}</td><td>{{ 'Ativo' if f.ativo else 'Inativo' }}</td>
         <td><a class="btn pequeno" href="{{ url_for('fornecedor_config', fid=f.id) }}">Ver</a></td></tr>

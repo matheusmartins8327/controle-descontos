@@ -227,6 +227,8 @@
 {# ---------- inspeção e desconto (Engenharia de Processos) ---------- #}
 <section class="bloco" id="inspecao">
   <h2>Inspeção e desconto <small>· Engenharia de Processos</small></h2>
+  {% if r.sem_desconto_fornecedor %}<p class="flash aviso-box">Fornecedor <strong>sem desconto</strong> (definido pela Engenharia de Processos):
+    {% if r.inspecao_auto %}inspeção concluída automaticamente sem desconto; {% endif %}pagamento após a HAWB liberado automaticamente.</p>{% endif %}
   {% if r.insp_resumo %}<p class="insp-resumo">Inspeção de recebimento (Agregador MEGA): <strong>{{ r.insp_resumo.eventos }} evento(s)</strong>,
     {{ r.insp_resumo.pecas|qtd }} peça(s), {{ r.insp_resumo.cd|qtd }} em C/D · <a href="{{ url_for('inspecao_grupo', grupo=r.insp_resumo.grupo) }}">ver eventos</a></p>{% endif %}
   {# v4.74: atalho para o fechamento do relatório de desconto (tela de eventos do invoice) #}
@@ -374,8 +376,8 @@
   <div class="liberacao-pg {{ 'liberado' if r.pagamento_liberado else 'bloqueado' }}">
     {% if r.pagamento_liberado %}
       <div><strong>✓ Pagamento após a HAWB liberado ao Financeiro</strong>
-        <small class="bloco-linha">por {{ nomes.get(r.pagamento_liberado_por, 'Engenharia de Processos') }} em {{ r.pagamento_liberado_em|data }}{% if r.pagamento_liberado_obs %} · {{ r.pagamento_liberado_obs }}{% endif %}</small></div>
-      {% if admin %}<form method="post" action="{{ url_for('pagamento_bloquear', id=r.id) }}" onsubmit="return confirm('Desfazer a liberação? O pagamento após a HAWB volta a ficar bloqueado para o Financeiro.')">
+        <small class="bloco-linha">{% if r.pagamento_liberado_auto %}automaticamente: fornecedor sem desconto (definido pela Engenharia de Processos){% else %}por {{ nomes.get(r.pagamento_liberado_por, 'Engenharia de Processos') }} em {{ r.pagamento_liberado_em|data }}{% if r.pagamento_liberado_obs %} · {{ r.pagamento_liberado_obs }}{% endif %}{% endif %}</small></div>
+      {% if admin and not r.pagamento_liberado_auto %}<form method="post" action="{{ url_for('pagamento_bloquear', id=r.id) }}" onsubmit="return confirm('Desfazer a liberação? O pagamento após a HAWB volta a ficar bloqueado para o Financeiro.')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn pequeno link">Desfazer liberação</button></form>{% endif %}
     {% else %}
       <div><strong>🔒 Pagamento após a HAWB bloqueado</strong>

@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.80)
+# Controle de Invoices e Descontos (v4.81)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -134,6 +134,10 @@ registrada, "Relatório de Inspeção Pendente".
 v4.79: a pendência "Desconto aguardando aprovação do fornecedor" tem como data o envio do relatório + 7 dias (prazo dado no
 e-mail). Data do envio: envio/registro do relatório pela plataforma; sem ele, quando o desconto foi marcado como enviado; por
 último, a data do relatório. Depois da data, fica vencida (vermelho) para marcar como aprovado.
+v4.81: **Fornecedor sem desconto** (configuração do fornecedor; só a Engenharia de Processos altera): ligado, o desconto de todos
+os invoices do fornecedor fica em 0 — a inspeção é concluída sem desconto quando o invoice chega na fábrica e o relatório da
+plataforma calcula C e D a 0% — e o pagamento após a HAWB é liberado automaticamente ao Financeiro. Descontos já registrados
+não mudam; desligado, tudo volta à política e à liberação manual.
 
 **Aba Relatórios (v4.66):** relatórios da importação, todos calculados a partir das datas dos processos (nada digitado à mão),
 com as mesmas regras de status da aba Importação e recalculados a cada abertura/download (tela, Excel e PDF nunca se contradizem;

@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.80"
+VERSAO = "4.81"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -562,6 +562,11 @@ def init_db():
         # versão 4.20: número da NF (Desembaraço) e liberação do pagamento após a HAWB pela Engenharia
         if "exigencia_status" not in {r[1] for r in db.execute("PRAGMA table_info(invoices)")}:
             db.execute("ALTER TABLE invoices ADD COLUMN exigencia_status TEXT")  # v4.65
+        colunas_forn = {r[1] for r in db.execute("PRAGMA table_info(fornecedores)")}
+        for col, tipo in (("sem_desconto", "INTEGER NOT NULL DEFAULT 0"), ("sem_desconto_por", "INTEGER"),
+                          ("sem_desconto_em", "TEXT")):  # v4.81
+            if col not in colunas_forn:
+                db.execute(f"ALTER TABLE fornecedores ADD COLUMN {col} {tipo}")
         for col in ("exigencia_acao", "exigencia_prazo"):  # v4.66
             if col not in {r[1] for r in db.execute("PRAGMA table_info(invoices)")}:
                 db.execute(f"ALTER TABLE invoices ADD COLUMN {col} TEXT")
@@ -852,7 +857,7 @@ def condicao_texto(r):
 # Cálculos de cada invoice
 # ---------------------------------------------------------------------------
 SQL_INVOICE = """
-SELECT i.*, f.nome AS fornecedor
+SELECT i.*, f.nome AS fornecedor, f.sem_desconto AS fornecedor_sem_desconto
 FROM invoices i JOIN fornecedores f ON f.id = i.fornecedor_id
 """
 
@@ -1053,6 +1058,17 @@ def calcular(inv):
     r["parcelas"] = calcular_parcelas(r)
     # parcelas após a HAWB ficam bloqueadas até a Engenharia de Processos liberar o pagamento ao Financeiro
     r["pagamento_liberado"] = bool(r["pagamento_liberado_em"])
+    # v4.81: fornecedor marcado "sem desconto" pela Engenharia de Processos: pagamento liberado automaticamente e
+    # inspeção concluída sem desconto assim que o invoice chega na fábrica (nada é gravado: vale enquanto a marcação existir)
+    r["sem_desconto_fornecedor"] = bool(r.get("fornecedor_sem_desconto"))
+    r["pagamento_liberado_auto"] = r["sem_desconto_fornecedor"] and not r["pagamento_liberado"]
+    if r["pagamento_liberado_auto"]:
+        r["pagamento_liberado"] = True
+    r["inspecao_auto"] = (r["sem_desconto_fornecedor"] and r["tem_desconto"] is None and not r["desconto"]
+                          and bool(r["data_chegada"]))
+    if r["inspecao_auto"]:
+        r["tem_desconto"] = 0
+        r["data_fim_inspecao"] = r["data_fim_inspecao"] or r["data_chegada"]
     for p in r["parcelas"]:
         p["bloqueado"] = p["tipo"] == "PRAZO" and not r["pagamento_liberado"]
     r["tem_parcela_prazo"] = any(p["tipo"] == "PRAZO" for p in r["parcelas"])
@@ -3889,6 +3905,10 @@ FAIXAS_ORTHOGENT = [[90, 0], [80, 50], [70, 60], [0, 80]]
 
 def politica_desconto(fornecedor_id):
     db = get_db()
+    f = db.execute("SELECT sem_desconto FROM fornecedores WHERE id = ?", (fornecedor_id,)).fetchone()
+    if f and f["sem_desconto"]:  # v4.81: fornecedor sem desconto: C e D a 0%
+        return {"fornecedor_id": fornecedor_id, "tipo": "FIXA", "pct_c": 0, "pct_d": 0, "faixas": [], "propria": True,
+                "sem_desconto": True}
     p = db.execute("SELECT * FROM politicas_desconto WHERE fornecedor_id = ?", (fornecedor_id,)).fetchone() \
         or db.execute("SELECT * FROM politicas_desconto WHERE fornecedor_id = 0").fetchone()
     d = dict(p)
@@ -3898,6 +3918,8 @@ def politica_desconto(fornecedor_id):
 
 
 def descrever_politica(p):
+    if p.get("sem_desconto"):
+        return "Fornecedor sem desconto (definido pela Engenharia de Processos): C 0% e D 0%"
     if p["tipo"] == "FAIXAS":
         partes = []
         for i, (minimo, pct) in enumerate(sorted(p["faixas"], key=lambda f: -f[0])):
@@ -3929,7 +3951,7 @@ def calcular_desconto_inspecao(r):
     from collections import Counter
     db = get_db()
     pol = politica_desconto(r["fornecedor_id"])
-    ajustes = ajustes_atuais(r["id"])
+    ajustes = {} if pol.get("sem_desconto") else ajustes_atuais(r["id"])  # sem desconto: nenhum ajuste vale
     geral = ajustes.get(None)
     itens = {}
     for x in r["itens"]:
@@ -4822,6 +4844,22 @@ def fornecedor_config(fid):
         if not pode_editar:
             abort(403)
         acao = request.form.get("acao")
+        if acao == "sem_desconto":  # v4.81: só a Engenharia de Processos
+            if g.usuario["perfil"] != "admin":
+                abort(403)
+            ligar = 1 if request.form.get("sem_desconto") == "1" else 0
+            if ligar != (f["sem_desconto"] or 0):
+                db.execute("UPDATE fornecedores SET sem_desconto = ?, sem_desconto_por = ?, sem_desconto_em = ? WHERE id = ?",
+                           (ligar, g.usuario["id"], agora(), fid))
+                for (iid,) in db.execute("SELECT id FROM invoices WHERE fornecedor_id = ? AND cancelado_em IS NULL",
+                                         (fid,)).fetchall():
+                    registrar_evento(iid, "Fornecedor marcado como sem desconto (pagamento liberado automaticamente)" if ligar
+                                     else "Fornecedor deixou de ser sem desconto")
+                db.commit()
+                flash("Fornecedor marcado como sem desconto: os invoices dele ficam sem desconto e com o pagamento liberado "
+                      "automaticamente." if ligar else "Marcação \"sem desconto\" removida: o fornecedor volta à política de "
+                      "desconto e à liberação do pagamento pela Engenharia de Processos.", "ok")
+            return redirect(url_for("fornecedor_config", fid=fid) + "#sem-desconto")
         if acao == "condicao":
             cond, erros = [], []
             for pct, tipo, dias in zip(request.form.getlist("cond_pct"), request.form.getlist("cond_tipo"),
@@ -4869,8 +4907,11 @@ def fornecedor_config(fid):
         "SELECT l.*, u.nome AS autor, o.nome AS quem_ok FROM fornecedor_lembretes l"
         " LEFT JOIN usuarios u ON u.id = l.criado_por LEFT JOIN usuarios o ON o.id = l.ok_por"
         " WHERE l.fornecedor_id = ? AND l.ok_em IS NOT NULL ORDER BY l.ok_em DESC LIMIT 30", (fid,)).fetchall()
+    quem_sd = db.execute("SELECT nome FROM usuarios WHERE id = ?", (f["sem_desconto_por"],)).fetchone() \
+        if f["sem_desconto_por"] else None
     return render_template("fornecedor_config.html", f=f, condicao=condicao_fornecedor(fid),
-                           lembretes=lembretes_ativos(fid), historico=historico, pode_editar=pode_editar)
+                           lembretes=lembretes_ativos(fid), historico=historico, pode_editar=pode_editar,
+                           admin=g.usuario["perfil"] == "admin", quem_sd=quem_sd["nome"] if quem_sd else None)
 
 
 @app.route("/api/fornecedor-info")
@@ -6770,6 +6811,8 @@ def gerar_emails(r, antigo, novo):
         quem = get_db().execute("SELECT nome FROM usuarios WHERE id = ?", (r["pagamento_liberado_por"],)).fetchone()
         obs = (f"Liberado por {quem['nome'] if quem else 'Engenharia de Processos'} em "
                f"{fmt_data(r['pagamento_liberado_em'])}.")
+        if r.get("pagamento_liberado_auto"):
+            obs = "Liberado automaticamente: fornecedor sem desconto (definido pela Engenharia de Processos)."
         if r["pagamento_liberado_obs"]:
             obs += f" Observação: {r['pagamento_liberado_obs']}"
         obs += " O pagamento já pode ser realizado e registrado no sistema."
