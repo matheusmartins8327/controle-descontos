@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.76)
+# Controle de Invoices e Descontos (v4.77)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -126,6 +126,8 @@ eventos com laudo dentro do período que a planilha cobre e mantém os anteriore
 v4.76: nas Pendências da Engenharia de Processos aparecem sempre os descontos ainda não aprovados (inclusive de invoices da carga de
 histórico): "Enviar o relatório" (não enviado) e "Desconto aguardando aprovação do fornecedor" (enviado; em vermelho depois do
 prazo de 7 dias do e-mail, para marcar como aprovado).
+v4.77: ao deduzir um desconto aprovado num próximo invoice (na criação do invoice e no bloco de deduções do invoice), aparecem o
+valor do desconto e a **observação escrita** nele (o texto automático "Relatório de inspeção · versão N" não aparece).
 
 **Aba Relatórios (v4.66):** relatórios da importação, todos calculados a partir das datas dos processos (nada digitado à mão),
 com as mesmas regras de status da aba Importação e recalculados a cada abertura/download (tela, Excel e PDF nunca se contradizem;

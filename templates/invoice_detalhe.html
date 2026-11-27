@@ -145,10 +145,13 @@
   <form method="post" action="{{ url_for('deducao_nova', id=r.id) }}" class="linha-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Desconto disponível
-      <select name="desconto_id">{% for x in disponiveis %}<option value="{{ x.id }}">{{ x.invoice if x.avulso else 'Invoice ' ~ x.invoice }} · saldo {{ x.saldo|moeda(m) }}{% if x.avulso %} · {{ x.justificativa|truncate(60) }}{% endif %}</option>{% endfor %}</select></label>
+      <select name="desconto_id">{% for x in disponiveis %}<option value="{{ x.id }}">{{ x.invoice if x.avulso else 'Invoice ' ~ x.invoice }} · saldo {{ x.saldo|moeda(m) }}{% if x.avulso %} · {{ x.justificativa|truncate(60) }}{% elif x.obs %} · {{ x.obs|truncate(60) }}{% endif %}</option>{% endfor %}</select></label>
     <label>Valor a deduzir<input name="valor" inputmode="decimal" placeholder="0,00" required></label>
     <button class="btn">Deduzir</button>
   </form>
+  <ul class="descontos-disponiveis">{% for x in disponiveis %}
+    <li><strong>{{ x.invoice if x.avulso else 'Invoice ' ~ x.invoice }}</strong> · desconto {{ x.valor_final|moeda(m) }} · saldo {{ x.saldo|moeda(m) }}{% if x.data_relatorio %} · relatório de {{ x.data_relatorio|data }}{% endif %}
+      {% if x.avulso %}<br><small>Justificativa: {{ x.justificativa }}</small>{% elif x.obs %}<br><small>Obs.: {{ x.obs }}</small>{% endif %}</li>{% endfor %}</ul>
   {% endif %}
 </section>
 

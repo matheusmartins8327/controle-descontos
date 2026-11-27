@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.76"
+VERSAO = "4.77"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -1118,6 +1118,12 @@ def codigo_invoice(r):
     return f"{r['fornecedor']} · {r['numero']}"
 
 
+def obs_escrita(obs):
+    """v4.77: observação escrita no desconto (sem o texto automático "Relatório de inspeção · versão N")."""
+    t = (obs or "").strip()
+    return None if not t or re.fullmatch(r"Relatório de inspeção · versão \d+", t) else t
+
+
 def descontos_disponiveis(fornecedor_id, moeda, excluir_invoice_id=None):
     """Descontos aprovados do fornecedor, na mesma moeda, com saldo a deduzir."""
     lista = []
@@ -1132,7 +1138,7 @@ def descontos_disponiveis(fornecedor_id, moeda, excluir_invoice_id=None):
         saldo = round(d["valor_final"] - deduzido, 2)
         if saldo > TOLERANCIA:
             lista.append({"id": d["id"], "invoice": d["numero"], "valor_final": d["valor_final"], "saldo": saldo,
-                          "data_relatorio": d["data_relatorio"]})
+                          "data_relatorio": d["data_relatorio"], "obs": obs_escrita(d["obs"])})
     # descontos avulsos do fornecedor (id "a<número>" para não confundir com os descontos de invoices)
     for a in avulsos_com_saldo(fornecedor_id, moeda):
         lista.append({"id": f"a{a['id']}", "invoice": f"Avulso #{a['id']}", "valor_final": a["valor"], "saldo": a["saldo"],
@@ -2099,6 +2105,7 @@ def api_descontos_disponiveis():
         d["saldo_fmt"] = fmt_moeda(d["saldo"], moeda)
         d["saldo_num"] = fmt_num(d["saldo"])
         d["data_relatorio_fmt"] = fmt_data(d["data_relatorio"])
+        d["valor_final_fmt"] = fmt_moeda(d["valor_final"], moeda)
     return jsonify(lista)
 
 

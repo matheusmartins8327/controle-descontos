@@ -835,3 +835,6 @@ select.tipo-antigo { border-color: #e0a800; background: #fffbea; }
 .selecao-semanal input { width: auto; margin: 0; }
 .alertas-imp li { margin: .2rem 0; }
 @media (max-width: 600px) { .resumo-proc dl { grid-template-columns: 1fr; } .graficos { grid-template-columns: 1fr; } }
+.descontos-disponiveis { margin: .4rem 0 0; padding-left: 1.1rem; font-size: .88rem; }
+.descontos-disponiveis li { margin: .25rem 0; }
+.descontos-disponiveis small { color: var(--suave); white-space: pre-line; }

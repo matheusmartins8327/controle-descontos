@@ -362,7 +362,9 @@
         <td class="num"><input name="ded_${d.id}" class="num" inputmode="decimal" placeholder="0,00" value="${valor}"></td>
         <td><button type="button" class="btn pequeno usar">Usar saldo</button></td>`;
       tr.cells[0].textContent = d.avulso ? d.invoice : 'Invoice ' + d.invoice;
-      if (d.avulso) { const j = document.createElement('small'); j.className = 'bloco-linha'; j.textContent = d.justificativa; tr.cells[0].appendChild(j); }
+      const info = document.createElement('small'); info.className = 'bloco-linha';
+      info.textContent = 'desconto ' + d.valor_final_fmt + (d.avulso ? ' · ' + d.justificativa : (d.obs ? ' · Obs.: ' + d.obs : ''));
+      tr.cells[0].appendChild(info);
       tr.querySelector('.usar').addEventListener('click', () => { tr.querySelector('input').value = d.saldo_num; valorFinal(); });
       corpo.appendChild(tr);
     });
