@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.74)
+# Controle de Invoices e Descontos (v4.75)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -118,6 +118,11 @@ v4.72: o Excel do relatório de inspeção não é mais anexado à mão no invoi
 plataforma, que guarda as versões, os eventos e o Excel gerado no envio.
 v4.74: no invoice, a seção Inspeção e desconto tem o botão **Fazer o relatório de desconto**, que abre os eventos de inspeção
 do invoice direto no fechamento (cálculo, versões e envio); sem eventos ligados, o botão fica desabilitado com o aviso.
+v4.75: a importação de inspeções aceita o formato novo do MEGA (INSPECAO_RECEBIMENTOS.xlsm, aba DADOS): RAZAO = fornecedor,
+PRODUTO = PRODUCT, QUANTIDADE_INSP = QUANTITY, DESCR_CRITERIO = categoria, ACAO = COMMENTARY, DATA_DO_LAUDO = REPORT DATE,
+PROFORMA = INVOICE (o formato antigo continua valendo). A família em inglês, que o formato novo não traz, vem da base (mesma
+família ou mesmo produto). Como a planilha nova é semanal (só os eventos novos), a importação troca, em cada invoice, só os
+eventos com laudo dentro do período que a planilha cobre e mantém os anteriores (a prévia mostra o período e os mantidos).
 
 **Aba Relatórios (v4.66):** relatórios da importação, todos calculados a partir das datas dos processos (nada digitado à mão),
 com as mesmas regras de status da aba Importação e recalculados a cada abertura/download (tela, Excel e PDF nunca se contradizem;

@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.74"
+VERSAO = "4.75"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -3511,13 +3511,31 @@ def fornecedores_mega():
     return render_template("fornecedores_mega.html", linhas=linhas, sistema=sistema, admin=admin)
 
 
-def grupos_atuais():
-    """{grupo: {qtd, assinaturas (multiconjunto), invoice_id, bloqueado}}"""
+def janela_laudos(eventos):
+    """v4.75: período de laudos (REPORT DATE / DATA_DO_LAUDO) que a planilha cobre: (menor, maior) ou None.
+    A extração nova é semanal (só os eventos novos): a importação troca só os eventos desse período e mantém os
+    anteriores. Uma extração completa cobre todo o histórico, então continua trocando tudo."""
+    datas = [str(e.get("report_date"))[:10] for e in eventos if e.get("report_date")]
+    return (min(datas), max(datas)) if datas else None
+
+
+def na_janela(report_date, janela):
+    """Evento da base que a planilha substitui: laudo dentro do período dela (ou ainda sem laudo)."""
+    if janela is None or not report_date:
+        return True
+    return janela[0] <= str(report_date)[:10] <= janela[1]
+
+
+def grupos_atuais(janela=None):
+    """{grupo: {qtd (no período da planilha), total, assinaturas (multiconjunto), invoice_id, bloqueado}}"""
     from collections import Counter
     db = get_db()
     res = {}
     for e in db.execute("SELECT * FROM inspecao_eventos"):
-        g_ = res.setdefault(e["grupo"], {"qtd": 0, "assin": Counter(), "invoice_id": e["invoice_id"]})
+        g_ = res.setdefault(e["grupo"], {"qtd": 0, "total": 0, "assin": Counter(), "invoice_id": e["invoice_id"]})
+        g_["total"] += 1
+        if not na_janela(e["report_date"], janela):
+            continue
         g_["qtd"] += 1
         g_["assin"][assinatura_evento(e)] += 1
     for k, g_ in res.items():
@@ -3538,9 +3556,9 @@ def relatorio_enviado(invoice_id):
 
 
 def plano_importacao(eventos):
-    """Compara a planilha com a base, invoice a invoice."""
+    """Compara a planilha com a base, invoice a invoice (só os eventos do período de laudos da planilha)."""
     from collections import Counter
-    atuais = grupos_atuais()
+    atuais = grupos_atuais(janela_laudos(eventos))
     novos = {}
     for e in eventos:
         novos.setdefault(e["grupo"], []).append(e)
@@ -3568,6 +3586,7 @@ def plano_importacao(eventos):
         linhas.append({"grupo": gk, "invoice_id": iid, "invoice": inv["numero"] if inv else evs[0].get("invoice_excel"),
                        "fornecedor": inv["fornecedor"] if inv else fornecedor_sistema(evs[0].get("fornecedor_excel")),
                        "nf": evs[0].get("numero_nf"), "eventos": len(evs), "atuais": atual["qtd"] if atual else 0,
+                       "mantidos": (atual["total"] - atual["qtd"]) if atual else 0,
                        "acao": acao, "itens_fora": fora,
                        "data": max((str(e.get("data_inclusao") or "") for e in evs), default="")})
     linhas.sort(key=lambda x: (x["acao"] == "igual", x["data"]), reverse=False)
@@ -3575,15 +3594,22 @@ def plano_importacao(eventos):
     return linhas
 
 
-def gravar_eventos(grupo, eventos, importacao_id):
-    """Troca os eventos do grupo pelos da extração, reaproveitando as reclassificações do mesmo evento."""
+def gravar_eventos(grupo, eventos, importacao_id, janela=None):
+    """Troca os eventos do grupo pelos da extração, reaproveitando as reclassificações do mesmo evento.
+    v4.75: só troca os eventos com laudo no período da planilha (janela); os anteriores ficam como estão."""
     from collections import defaultdict
     db = get_db()
     # partes de cada evento original (um evento dividido numa reclassificação parcial tem várias partes)
     antigos = defaultdict(list)
+    apagar, maior_ordem = [], -1
     for e in db.execute("SELECT * FROM inspecao_eventos WHERE grupo = ? ORDER BY ordem, id", (grupo,)):
-        antigos[e["chave_origem"] or assinatura_evento(e) + "#0"].append(e)
-    db.execute("DELETE FROM inspecao_eventos WHERE grupo = ?", (grupo,))
+        if na_janela(e["report_date"], janela):
+            antigos[e["chave_origem"] or assinatura_evento(e) + "#0"].append(e)
+            apagar.append(e["id"])
+        else:
+            maior_ordem = max(maior_ordem, e["ordem"] or 0)
+    db.executemany("DELETE FROM inspecao_eventos WHERE id = ?", [(i,) for i in apagar])
+    inicio_ordem = maior_ordem + 1
     linhas = []
     vistos = defaultdict(int)
     colunas = (f"grupo, invoice_id, {', '.join(CAMPOS_GRAVADOS)}, categoria_original, categoria, outros, reclass_por,"
@@ -3606,14 +3632,14 @@ def gravar_eventos(grupo, eventos, importacao_id):
                 if a["comentario_original"]:
                     b[CAMPOS_GRAVADOS.index("comentario")] = a["comentario"]
                 linhas.append((grupo, e["invoice_id"], *b, e["categoria_original"], a["categoria"], outros,
-                               a["reclass_por"], a["reclass_em"], a["reclass_motivo"], importacao_id, ordem, chave,
+                               a["reclass_por"], a["reclass_em"], a["reclass_motivo"], importacao_id, inicio_ordem + ordem, chave,
                                a["comentario_original"]))
             continue
         cat, rm = e["categoria"], None
         if cat and e["categoria_original"] and cat != e["categoria_original"]:
             rm = "Reclassificado na planilha (antes do sistema)"
         linhas.append((grupo, e["invoice_id"], *base, e["categoria_original"], cat, outros, None, None, rm,
-                       importacao_id, ordem, chave, None))
+                       importacao_id, inicio_ordem + ordem, chave, None))
     db.executemany(f"INSERT INTO inspecao_eventos ({colunas}) VALUES ({', '.join('?' * (len(CAMPOS_GRAVADOS) + 12))})",
                    linhas)
 
@@ -3659,23 +3685,41 @@ def inspecoes():
                            pendentes_total=len(set().union(*[r["pendentes"] for r in lista])) if lista else 0)
 
 
+def preencher_family(eventos):
+    """v4.75: o formato novo do MEGA só traz a família em português (FAMÍLIA). A família em inglês (usada no Excel ao
+    fornecedor) vem da base: a tradução mais usada para a mesma família ou, sem ela, a do mesmo produto."""
+    db = get_db()
+    por_familia, por_produto = {}, {}
+    for x in db.execute("SELECT lower(trim(familia)) AS k, family, COUNT(*) AS n FROM inspecao_eventos"
+                        " WHERE familia IS NOT NULL AND family IS NOT NULL AND trim(family) <> '' GROUP BY 1, 2 ORDER BY n"):
+        por_familia[x["k"]] = x["family"]
+    for x in db.execute("SELECT upper(trim(produto)) AS k, family, COUNT(*) AS n FROM inspecao_eventos"
+                        " WHERE family IS NOT NULL AND trim(family) <> '' GROUP BY 1, 2 ORDER BY n"):
+        por_produto[x["k"]] = x["family"]
+    for e in eventos:
+        if not e.get("family"):
+            e["family"] = (por_familia.get(str(e.get("familia") or "").strip().lower())
+                           or por_produto.get(str(e.get("produto") or "").strip().upper()))
+
+
 @app.route("/inspecoes/importar", methods=["POST"])
 @somente_admin
 def inspecoes_importar():
     arq = request.files.get("arquivo")
     if not arq or not arq.filename.lower().endswith((".xlsx", ".xlsm")):
-        flash("Escolha a planilha (.xlsx) extraída do Agregador MEGA.", "erro")
+        flash("Escolha a planilha (.xlsx ou .xlsm) extraída do Agregador MEGA.", "erro")
         return redirect(url_for("inspecoes"))
     try:
         eventos, traducoes, avisos, aba = insp.ler_planilha(io.BytesIO(arq.read()))
     except Exception as e:
         app.logger.warning("Falha ao ler a planilha de inspeções: %s", e)
-        flash("Não foi possível ler a planilha. Confira se é um arquivo .xlsx válido.", "erro")
+        flash("Não foi possível ler a planilha. Confira se é um arquivo .xlsx/.xlsm válido.", "erro")
         return redirect(url_for("inspecoes"))
     if not eventos:
         for a in avisos or ["A planilha não tem eventos."]:
             flash(a, "erro")
         return redirect(url_for("inspecoes"))
+    preencher_family(eventos)
     os.makedirs(PASTA_IMPORTACOES, exist_ok=True)
     for antigo in glob.glob(os.path.join(PASTA_IMPORTACOES, "*.json")):  # prévias abandonadas
         try:
@@ -3723,8 +3767,9 @@ def inspecoes_previa(token):
         mid = db.execute("INSERT INTO inspecao_importacoes (arquivo, eventos, grupos, resumo, criado_por, criado_em)"
                          " VALUES (?, ?, ?, ?, ?, ?)", (dados["arquivo"], sum(p["eventos"] for p in aplicar), len(aplicar),
                                                         None, g.usuario["id"], agora())).lastrowid
+        janela = janela_laudos(eventos)
         for p in aplicar:
-            gravar_eventos(p["grupo"], por_grupo[p["grupo"]], mid)
+            gravar_eventos(p["grupo"], por_grupo[p["grupo"]], mid, janela)
             if p["invoice_id"]:
                 registrar_evento(p["invoice_id"], "Inspeção de recebimento importada do Agregador MEGA",
                                  f"{p['eventos']} evento(s)" + (" (atualizados)" if p["acao"] == "atualizar" else ""))
@@ -3748,7 +3793,7 @@ def inspecoes_previa(token):
                                                                    if n_termos else ""), "ok")
         return redirect(url_for("inspecoes"))
     return render_template("inspecoes_previa.html", plano=plano, avisos=avisos, arquivo=dados["arquivo"], aba=dados["aba"],
-                           total=len(eventos), termos_novos=len(termos_novos), token=token)
+                           total=len(eventos), termos_novos=len(termos_novos), token=token, janela=janela_laudos(eventos))
 
 
 @app.route("/inspecoes/<path:grupo>")

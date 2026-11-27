@@ -11,7 +11,7 @@
   <form method="post" action="{{ url_for('inspecoes_importar') }}" enctype="multipart/form-data" class="linha-form"
         onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Lendo a planilha…'">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label class="cresce">Planilha extraída do Agregador MEGA (.xlsx)<input type="file" name="arquivo" accept=".xlsx,.xlsm" required></label>
+    <label class="cresce">Planilha extraída do Agregador MEGA (.xlsx ou .xlsm)<input type="file" name="arquivo" accept=".xlsx,.xlsm" required></label>
     <button class="btn primario">Importar (com prévia)</button>
   </form>
   {% endif %}

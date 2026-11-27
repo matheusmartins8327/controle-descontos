@@ -4,6 +4,8 @@
 <p class="voltar"><a href="{{ url_for('inspecoes') }}">← Inspeções de recebimento</a></p>
 <h1>Prévia da importação</h1>
 <p class="sub">{{ arquivo }} · aba "{{ aba }}" · {{ total }} evento(s). Confira e confirme: só os invoices marcados são gravados.</p>
+{% if janela %}<p class="sub">A planilha cobre laudos (REPORT DATE) de <strong>{{ janela[0]|data }}</strong> a <strong>{{ janela[1]|data }}</strong>:
+  em cada invoice, só os eventos com laudo nesse período são trocados pelos da planilha; os eventos com laudo anterior são mantidos.</p>{% endif %}
 {% for a in avisos %}<div class="duimp-aviso">{{ a }}</div>{% endfor %}
 {% set n = namespace(novo=0, atualizar=0, igual=0, bloqueado=0) %}
 {% for p in plano %}{% if p.acao == 'novo' %}{% set n.novo = n.novo + 1 %}{% elif p.acao == 'atualizar' %}{% set n.atualizar = n.atualizar + 1 %}{% elif p.acao == 'igual' %}{% set n.igual = n.igual + 1 %}{% else %}{% set n.bloqueado = n.bloqueado + 1 %}{% endif %}{% endfor %}
@@ -20,7 +22,7 @@
   <div class="rolagem">
   <table class="tabela-filtro" data-rotulo="invoices">
     <thead><tr><th data-filtro="nenhum"><input type="checkbox" id="todos" checked title="Marcar/desmarcar todos"></th><th data-filtro="lista">Situação</th><th data-filtro="lista">Fornecedor</th><th data-filtro="texto">Invoice</th><th data-filtro="texto">NF</th>
-      <th class="num" data-filtro="nenhum">Eventos na planilha</th><th class="num" data-filtro="nenhum">Eventos atuais</th><th data-filtro="nenhum">Atenção</th></tr></thead>
+      <th class="num" data-filtro="nenhum">Eventos na planilha</th><th class="num" data-filtro="nenhum">Eventos atuais no período</th><th data-filtro="nenhum">Atenção</th></tr></thead>
     <tbody>
     {% for p in plano %}
       <tr class="{{ 'linha-atencao' if p.acao == 'bloqueado' or p.itens_fora }}">
@@ -29,7 +31,7 @@
         <td>{{ p.fornecedor or '—' }}</td>
         <td>{{ p.invoice or '—' }}{% if not p.invoice_id %} <small class="etiqueta-xls" title="NF não cadastrada em nenhum invoice e número do invoice não encontrado: fica como está no Excel">Excel</small>{% endif %}</td>
         <td>{{ p.nf or '⚠ sem NF' }}</td>
-        <td class="num">{{ p.eventos }}</td><td class="num">{{ p.atuais or '' }}</td>
+        <td class="num">{{ p.eventos }}</td><td class="num">{{ p.atuais or '' }}{% if p.mantidos %} <small title="eventos com laudo anterior ao período da planilha: ficam como estão">+ {{ p.mantidos }} mantidos</small>{% endif %}</td>
         <td><small>{% if p.itens_fora %}Itens que não estão no invoice: {{ p.itens_fora|join(', ') }}{% endif %}
           {% if p.acao == 'bloqueado' %}A extração mudou depois do envio do relatório: confira.{% endif %}</small></td>
       </tr>

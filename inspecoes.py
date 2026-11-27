@@ -21,6 +21,9 @@ COLUNAS = {
     "REPORTDATE": "report_date", "ITEMINPECIONADO": "item_inspecionado", "ITEMINSPECIONADO": "item_inspecionado",
     "DESCRSTATUSLOTE": "status_lote", "QTDENF": "qtde_nf", "VLRUNITARIONF": "vlr_unit_nf", "VLRITEMNF": "vlr_item_nf",
     "INVOICE": "invoice_excel", "LOTE": "lote", "AREA": "area", "FAMILIA": "familia", "FAMILY": "family",
+    # v4.75: formato novo (INSPECAO_RECEBIMENTOS.xlsm, aba DADOS): mesmos dados com outros títulos
+    "RAZAO": "fornecedor_excel", "PRODUTO": "produto", "QUANTIDADEINSP": "quantidade", "DESCRCRITERIO": "categoria",
+    "ACAO": "comentario", "DATADOLAUDO": "report_date", "PROFORMA": "invoice_excel",
 }
 OBRIGATORIAS = ["numero_nf", "produto", "quantidade", "comentario"]
 CAMPOS_EVENTO = list(dict.fromkeys(COLUNAS.values()))
@@ -78,8 +81,8 @@ def ler_planilha(arquivo):
                 eventos.append(ev)
     wb.close()
     if aba_eventos is None:
-        avisos.append("Não encontrei a aba de eventos: são necessárias as colunas NUMERO_NF, PRODUCT, QUANTITY e "
-                      "COMMENTARY.")
+        avisos.append("Não encontrei a aba de eventos: são necessárias as colunas NUMERO_NF, PRODUCT (ou PRODUTO), "
+                      "QUANTITY (ou QUANTIDADE_INSP) e COMMENTARY (ou ACAO).")
     return eventos, traducoes, avisos, aba_eventos
 
 
