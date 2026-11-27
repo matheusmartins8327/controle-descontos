@@ -313,7 +313,7 @@ def _rotulo(v, formato):
     if v is None:
         return ""
     if formato == "pct":
-        return f"{v:.0f}%"
+        return f"{v:.1f}%".replace(".", ",")
     if formato == "dias":
         return f"{v:.1f}".replace(".", ",")
     return f"{v:g}".replace(".", ",")

@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.72)
+# Controle de Invoices e Descontos (v4.73)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -127,6 +127,9 @@ com as mesmas regras de status da aba Importação e recalculados a cada abertur
 - **Relatório mensal**: linha do tempo, chegadas, entregas, parametrizações por canal, pontualidade, peças, processos em aberto
   "como estavam na data final" e pendências herdadas; Excel com várias abas e PDF em paisagem.
 - **Resumo semanal**: escolha dos processos e texto-resumo de cada um; PDF e Excel.
+- **Descontos** (v4.73): período (padrão: últimos 12 meses) e fornecedor; 5 cartões (invoices inspecionados, total de descontos,
+  % sobre o valor inspecionado, % de peças C+D, saldo a deduzir), descontos por mês, % de desconto por fornecedor, qualidade
+  A/B/C/D por fornecedor (piores primeiro) e a lista do que está em aberto (aguardando envio/aprovação ou com saldo); PDF e Excel.
 - **Alertas** no Painel: ETA vencida, prazo de resposta da exigência vencido, parado em canal amarelo/vermelho há 5+ dias, entrega
   prevista vencida, HAWB não preenchida, sem atualização há 7+ dias.
 No Desembaraço há também **Ação tomada na exigência** e **Prazo de resposta da exigência** (opcionais).

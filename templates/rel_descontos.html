@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block titulo %}Relatório de descontos{% endblock %}
+{% block conteudo %}
+{% include "_rel_abas.html" %}
+<form class="barra-acoes" method="get" action="{{ url_for('relatorio_descontos') }}">
+  <label>De<input type="date" name="de" value="{{ de }}" required></label>
+  <label>Até<input type="date" name="ate" value="{{ ate }}" required></label>
+  <label>Fornecedor<select name="fornecedor"><option value="">Todos</option>{% for f in fornecedores %}<option value="{{ f.id }}" {{ 'selected' if forn == f.id }}>{{ f.nome }}</option>{% endfor %}</select></label>
+  <button class="btn primario">Gerar relatório</button>
+  <span class="espaco"></span>
+  <a class="btn" href="{{ url_for('relatorio_descontos', fmt='pdf', de=de, ate=ate, fornecedor=forn) }}">Baixar PDF</a>
+  <a class="btn" href="{{ url_for('relatorio_descontos', fmt='xlsx', de=de, ate=ate, fornecedor=forn) }}">Baixar Excel</a>
+</form>
+
+{% include "_rel_cartoes.html" %}
+
+<div class="graficos">
+  {% for m, s in x.graf_mes.items() %}
+  <div class="grafico"><h3>Descontos por mês <small>({{ m }}, pelo fim da inspeção)</small></h3><div class="area"><canvas data-serie='{{ s|tojson }}' data-formato="n"></canvas></div></div>
+  {% endfor %}
+  {% for m, s in x.graf_forn.items() %}
+  <div class="grafico"><h3>% de desconto sobre o valor, por fornecedor <small>({{ m }})</small></h3><div class="area"><canvas data-serie='{{ s|tojson }}' data-formato="pct"></canvas></div></div>
+  {% endfor %}
+  {% if not x.graf_mes %}<div class="grafico"><h3>Descontos</h3><p class="grafico-aviso">— nenhum invoice com inspeção concluída no período</p></div>{% endif %}
+  <div class="grafico largo"><h3>Qualidade por fornecedor <small>· % de peças A / B / C / D (REPORT DATE no período), piores primeiro; entre parênteses, as peças inspecionadas</small></h3>
+    <div class="area" style="height: {{ 70 + 34 * (x.qualidade|length or 1) }}px"><canvas data-empilhado='{{ qual_js|tojson }}'></canvas></div></div>
+</div>
+
+<section class="bloco">
+  <h2>Em aberto <small>· descontos aguardando envio/aprovação ou com saldo a deduzir (qualquer data)</small></h2>
+  {% if x.abertos %}
+  <div class="rolagem"><table class="tabela-rel">
+    <thead><tr><th>Fornecedor</th><th>Invoice</th><th class="num">Desconto</th><th class="num">Deduzido</th><th class="num">Saldo a deduzir</th><th>Situação</th></tr></thead>
+    <tbody>{% for a in x.abertos %}<tr><td>{{ a.fornecedor }}</td>
+      <td>{% if a.id %}<a href="{{ url_for('invoice_detalhe', id=a.id) }}">{{ a.invoice }}</a>{% else %}{{ a.invoice }}{% endif %}</td>
+      <td class="num">{{ a.valor|moeda(a.moeda) }}</td><td class="num">{{ a.deduzido|moeda(a.moeda) }}</td><td class="num"><strong>{{ a.saldo|moeda(a.moeda) }}</strong></td>
+      <td><span class="status-imp st-{{ {'PENDENTE': 'vermelho', 'ENVIADO': 'amarelo'}.get(a.status, 'verde') }}">{{ a.situacao }}</span></td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="vazio">Nenhum desconto em aberto.</p>{% endif %}
+</section>
+{% endblock %}
+{% block scripts %}{% include "_rel_graficos_js.html" %}{% endblock %}

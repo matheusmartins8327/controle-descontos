@@ -5,7 +5,7 @@
   var CORES_CANAL = { 'Verde': '#2e9e5b', 'Amarelo': '#e0b400', 'Vermelho': '#d64545', 'Sem canal': '#9aa4ae' };
   function rotulo(v, f) {
     if (v === null || v === undefined) return '';
-    if (f === 'pct') return Math.round(v) + '%';
+    if (f === 'pct') return (Math.round(v * 10) / 10).toString().replace('.', ',') + '%';
     if (f === 'dias') return (Math.round(v * 10) / 10).toString().replace('.', ',');
     return String(v).replace('.', ',');
   }
@@ -47,6 +47,42 @@
                   x: { ticks: { autoSkip: false, maxRotation: 40, font: { size: 11 } } } }
       },
       plugins: [valores]
+    });
+  });
+})();
+
+/* v4.73: barra horizontal 100% empilhada (qualidade A/B/C/D por fornecedor), com a % escrita em cada parte que couber.
+   <canvas data-empilhado='{"rotulos": [...], "series": [{"nome": "A", "cor": "#..", "valores": [...]}, ...]}'> */
+(function () {
+  document.querySelectorAll('canvas[data-empilhado]').forEach(function (c) {
+    var d = JSON.parse(c.dataset.empilhado || '{}');
+    function aviso(t) { var p = document.createElement('p'); p.className = 'grafico-aviso'; p.textContent = t; c.parentNode.replaceChild(p, c); }
+    if (!d.rotulos || !d.rotulos.length) { aviso('— sem eventos de inspeção no período'); return; }
+    if (typeof Chart === 'undefined') { aviso('Não foi possível carregar a biblioteca de gráficos. Os números estão no Excel/PDF.'); return; }
+    var textos = {
+      id: 'pctNasPartes',
+      afterDatasetsDraw: function (chart) {
+        var ctx = chart.ctx; ctx.save(); ctx.font = '600 11px system-ui, sans-serif'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        chart.data.datasets.forEach(function (ds, i) {
+          chart.getDatasetMeta(i).data.forEach(function (bar, j) {
+            var v = ds.data[j]; if (!v) return;
+            var t = (Math.round(v * 10) / 10).toString().replace('.', ',') + '%';
+            if (bar.width > ctx.measureText(t).width + 6) ctx.fillText(t, bar.x - bar.width / 2, bar.y);
+          });
+        });
+        ctx.restore();
+      }
+    };
+    new Chart(c, {
+      type: 'bar',
+      data: { labels: d.rotulos, datasets: d.series.map(function (s) { return { label: s.nome, data: s.valores, backgroundColor: s.cor, barThickness: 22 }; }) },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { position: 'top', align: 'start' },
+                   tooltip: { callbacks: { label: function (x) { return x.dataset.label + ': ' + String(x.raw).replace('.', ',') + '%'; } } } },
+        scales: { x: { stacked: true, max: 100, ticks: { callback: function (v) { return v + '%'; } } }, y: { stacked: true, ticks: { font: { size: 12 } } } }
+      },
+      plugins: [textos]
     });
   });
 })();

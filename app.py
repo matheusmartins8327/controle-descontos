@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.72"
+VERSAO = "4.73"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -5149,6 +5149,177 @@ def relatorio_mensal(fmt=None):
 def _dif(previsto, real):
     d = rimp.dias_entre(previsto, real)
     return "—" if d is None else (f"+{d}" if d > 0 else str(d))
+
+
+# ---------------------------------------------------------------------------
+# v4.73: relatório de descontos (inspeção de recebimento) — poucos números e bem visual
+# ---------------------------------------------------------------------------
+SITUACAO_DESCONTO_CURTA = {"PENDENTE": "Aguardando envio", "ENVIADO": "Aguardando aprovação", "APROVADO": "Aprovado"}
+
+
+def dados_descontos(de, ate, fornecedor_id=None):
+    """Invoices inspecionados no período (fim da inspeção entre de e ate), descontos, qualidade A/B/C/D por fornecedor
+    (eventos com REPORT DATE no período) e o que ainda está em aberto (saldo a deduzir, a qualquer data)."""
+    db = get_db()
+    todos = [r for r in todos_invoices() if fornecedor_id is None or r["fornecedor_id"] == fornecedor_id]
+    insp_ = [r for r in todos if r["tem_desconto"] is not None and r["data_fim_inspecao"]
+             and de <= r["data_fim_inspecao"][:10] <= ate]
+    moedas = sorted({r["moeda"] for r in insp_}, key=lambda m: (m != "USD", m))
+    resumo = {}
+    for m in moedas:
+        rs = [r for r in insp_ if r["moeda"] == m]
+        valor = round(sum(r["valor_invoice"] for r in rs), 2)
+        desc = round(sum(r["desconto"]["valor_final"] for r in rs if r["desconto"]), 2)
+        resumo[m] = {"invoices": len(rs), "com_desconto": sum(1 for r in rs if r["desconto"]), "valor": valor,
+                     "desconto": desc, "pct": (desc / valor) if valor else None}
+    # por mês e por fornecedor (cada moeda separada: nunca se misturam)
+    por_mes, por_forn = {}, {}
+    for r in insp_:
+        v = r["desconto"]["valor_final"] if r["desconto"] else 0
+        mes = rimp.mes_ano(r["data_fim_inspecao"])
+        chave_mes = r["data_fim_inspecao"][:7]
+        por_mes.setdefault(r["moeda"], {}).setdefault(chave_mes, [mes, 0])[1] += v
+        f = por_forn.setdefault((r["moeda"], r["fornecedor"]), {"valor": 0, "desconto": 0, "n": 0})
+        f["valor"] += r["valor_invoice"]
+        f["desconto"] += v
+        f["n"] += 1
+    graf_mes = {m: [(x[0], round(x[1], 2)) for _k, x in sorted(d.items())] for m, d in por_mes.items()}
+    graf_forn = {}
+    for (m, nome), f in sorted(por_forn.items(), key=lambda x: -(x[1]["desconto"] / x[1]["valor"] if x[1]["valor"] else 0)):
+        if f["valor"]:
+            graf_forn.setdefault(m, []).append((f"{nome} ({f['n']})", round(f["desconto"] / f["valor"] * 100, 1)))
+    tabela_forn = sorted([{"fornecedor": nome, "moeda": m, "invoices": f["n"], "valor": round(f["valor"], 2),
+                           "desconto": round(f["desconto"], 2), "pct": f["desconto"] / f["valor"] if f["valor"] else None}
+                          for (m, nome), f in por_forn.items()], key=lambda x: (x["moeda"] != "USD", -(x["pct"] or 0)))
+    # qualidade A/B/C/D por fornecedor (base de inspeção inteira, inclusive invoices só do MEGA)
+    sql = ("SELECT COALESCE(f.nome, fm.nome_sistema, trim(e.fornecedor_excel)) AS forn, e.categoria, SUM(e.quantidade) AS q"
+           " " + SQL_BASE + " WHERE substr(COALESCE(e.report_date, ''), 1, 10) BETWEEN ? AND ?"
+           " AND e.categoria IN ('A', 'B', 'C', 'D')")
+    params = [de, ate]
+    if fornecedor_id is not None:
+        nome_f = db.execute("SELECT nome FROM fornecedores WHERE id = ?", (fornecedor_id,)).fetchone()
+        sql += " AND lower(COALESCE(f.nome, fm.nome_sistema, trim(e.fornecedor_excel))) = lower(?)"
+        params.append(nome_f["nome"] if nome_f else "")
+    qual = {}
+    for x in db.execute(sql + " GROUP BY 1, 2", params):
+        if x["forn"]:
+            qual.setdefault(x["forn"], {"A": 0, "B": 0, "C": 0, "D": 0})[x["categoria"]] += x["q"] or 0
+    qualidade = sorted(({"fornecedor": k, **v, "total": sum(v.values())} for k, v in qual.items() if sum(v.values())),
+                       key=lambda x: -((x["C"] + x["D"]) / x["total"]))[:12]
+    tot_q = {k: sum(x[k] for x in qual.values()) for k in "ABCD"}
+    tot_q["total"] = sum(tot_q.values())
+    # em aberto: descontos com saldo a deduzir ou ainda sem aprovação (qualquer data)
+    abertos = []
+    for r in todos:
+        d = r["desconto"]
+        if d and (r["saldo_a_deduzir"] > TOLERANCIA or d["status"] != "APROVADO"):
+            abertos.append({"id": r["id"], "fornecedor": r["fornecedor"], "invoice": r["numero"], "moeda": r["moeda"],
+                            "valor": d["valor_final"], "deduzido": r["deduzido"], "saldo": r["saldo_a_deduzir"],
+                            "situacao": SITUACAO_DESCONTO_CURTA.get(d["status"], d["status"]), "status": d["status"],
+                            "data": d["data_relatorio"]})
+    for a in avulsos_de(fornecedor_id):
+        if a["saldo"] > TOLERANCIA:
+            abertos.append({"id": None, "fornecedor": a["fornecedor"], "invoice": "Desconto avulso", "moeda": a["moeda"],
+                            "valor": a["valor"], "deduzido": a["deduzido"], "saldo": a["saldo"], "situacao": "Aprovado",
+                            "status": "APROVADO", "data": a["criado_em"][:10]})
+    abertos.sort(key=lambda x: ({"PENDENTE": 0, "ENVIADO": 1}.get(x["status"], 2), x["fornecedor"].lower(), x["data"] or ""))
+    saldo = {}
+    aguardando = {}
+    for x in abertos:
+        saldo[x["moeda"]] = round(saldo.get(x["moeda"], 0) + x["saldo"], 2)
+        if x["status"] != "APROVADO":
+            aguardando.setdefault(x["moeda"], [0, 0])
+            aguardando[x["moeda"]][0] += 1
+            aguardando[x["moeda"]][1] += x["valor"]
+    return {"insp": insp_, "moedas": moedas, "resumo": resumo, "graf_mes": graf_mes, "graf_forn": graf_forn,
+            "tabela_forn": tabela_forn, "qualidade": qualidade, "tot_q": tot_q, "abertos": abertos, "saldo": saldo,
+            "aguardando": aguardando}
+
+
+def _cartoes_descontos(x):
+    def por_moeda(dic, fmt):
+        return " · ".join(fmt(m, v) for m, v in dic.items()) or "—"
+    n_insp = sum(v["invoices"] for v in x["resumo"].values())
+    n_desc = sum(v["com_desconto"] for v in x["resumo"].values())
+    tq = x["tot_q"]
+    return [
+        ("Invoices inspecionados", str(n_insp), "neutro", f"{n_desc} com desconto" if n_insp else ""),
+        ("Total de descontos", por_moeda({m: v["desconto"] for m, v in x["resumo"].items()}, lambda m, v: fmt_moeda(v, m)),
+         "neutro", "no período"),
+        ("% sobre o valor inspecionado", por_moeda({m: v["pct"] for m, v in x["resumo"].items()},
+                                                   lambda m, v: ("—" if v is None else rimp.num(v * 100, 1, "%"))
+                                                   + (f" ({m})" if len(x["resumo"]) > 1 else "")),
+         "neutro", "desconto ÷ valor dos invoices"),
+        ("Peças C + D", rimp.num((tq["C"] + tq["D"]) / tq["total"] * 100, 1, "%") if tq["total"] else "—",
+         "vermelho" if tq["total"] and (tq["C"] + tq["D"]) / tq["total"] > 0.05 else "neutro",
+         f"{rimp.num(tq['total'], 0)} peças inspecionadas" if tq["total"] else ""),
+        ("Saldo a deduzir", por_moeda(x["saldo"], lambda m, v: fmt_moeda(v, m)), "amarelo" if x["saldo"] else "neutro",
+         "em aberto, qualquer data" + (" · " + ", ".join(f"{n} aguardando aprovação" for n, _v in x["aguardando"].values())
+                                       if x["aguardando"] else "")),
+    ]
+
+
+def _periodo_12_meses():
+    de, ate = request.args.get("de") or "", request.args.get("ate") or ""
+    try:
+        date.fromisoformat(de)
+        date.fromisoformat(ate)
+    except ValueError:
+        h = date.fromisoformat(hoje())
+        ate = h.isoformat()
+        de = (h.replace(day=1) - timedelta(days=330)).replace(day=1).isoformat()
+    return (de, ate) if de <= ate else (ate, de)
+
+
+@app.route("/relatorios/descontos")
+@app.route("/relatorios/descontos.<fmt>")
+@login_obrigatorio
+def relatorio_descontos(fmt=None):
+    de, ate = _periodo_12_meses()
+    forn = request.args.get("fornecedor", type=int)
+    x = dados_descontos(de, ate, forn)
+    cartoes = _cartoes_descontos(x)
+    periodo = _txt_periodo(de, ate)
+    nome = f"descontos-{de}-a-{ate}"
+    linhas_abertos = [[a["fornecedor"], a["invoice"], a["moeda"], a["valor"], a["deduzido"], a["saldo"], a["situacao"]]
+                      for a in x["abertos"]]
+    cab_abertos = ["Fornecedor", "Invoice", "Moeda", "Desconto", "Deduzido", "Saldo a deduzir", "Situação"]
+    if fmt == "xlsx":
+        abas = [{"nome": "Descontos", "titulo": f"Descontos · inspeções de {periodo}",
+                 "cab": ["Fornecedor", "Invoice", "Moeda", "Fim da inspeção", "Valor do invoice", "Desconto", "% do invoice", "Situação"],
+                 "linhas": [[r["fornecedor"], r["numero"], r["moeda"], rimp.dma(r["data_fim_inspecao"]), r["valor_invoice"],
+                             r["desconto"]["valor_final"] if r["desconto"] else 0,
+                             round((r["desconto"]["valor_final"] if r["desconto"] else 0) / r["valor_invoice"] * 100, 1)
+                             if r["valor_invoice"] else "—",
+                             SITUACAO_DESCONTO_CURTA.get(r["desconto"]["status"]) if r["desconto"] else "Sem desconto"]
+                            for r in sorted(x["insp"], key=lambda r: r["data_fim_inspecao"])]},
+                {"nome": "Por fornecedor", "cab": ["Fornecedor", "Moeda", "Invoices", "Valor inspecionado", "Desconto", "% desconto"],
+                 "linhas": [[t["fornecedor"], t["moeda"], t["invoices"], t["valor"], t["desconto"],
+                             round(t["pct"] * 100, 1) if t["pct"] is not None else "—"] for t in x["tabela_forn"]]},
+                {"nome": "Qualidade", "cab": ["Fornecedor", "Peças", "% A", "% B", "% C", "% D"],
+                 "linhas": [[q_["fornecedor"], q_["total"]] + [round(q_[k] / q_["total"] * 100, 1) for k in "ABCD"]
+                            for q_ in x["qualidade"]]},
+                {"nome": "Em aberto", "cab": cab_abertos, "linhas": linhas_abertos}]
+        return _baixar(exp_imp.xlsx(abas), nome + ".xlsx", XLSX_MIME)
+    if fmt == "pdf":
+        if not _pdf_disponivel():
+            return redirect(url_for("relatorio_descontos", de=de, ate=ate, fornecedor=forn))
+        pdf = exp_imp.Pdf("Descontos", f"inspeções de {periodo}", paisagem=True)
+        pdf.cartoes(cartoes, 5)
+        graf = [(f"Descontos por mês ({m})", s_, "n", False) for m, s_ in x["graf_mes"].items()]
+        graf += [(f"% de desconto por fornecedor ({m})", s_, "pct", False) for m, s_ in x["graf_forn"].items()]
+        graf.append(("% de peças C + D por fornecedor", [(f"{q_['fornecedor']} ({rimp.num(q_['total'], 0)})", round((q_["C"] + q_["D"]) / q_["total"] * 100, 1))
+                                                         for q_ in x["qualidade"]], "pct", False))
+        pdf.graficos_lado_a_lado(graf)
+        pdf.h2("Em aberto")
+        pdf.tabela(cab_abertos, linhas_abertos, [16, 12, 6, 10, 10, 10, 14], vazio="Nenhum desconto em aberto.")
+        return _baixar(pdf.bytes(_gerado_em()), nome + ".pdf", "application/pdf")
+    fornecedores = get_db().execute("SELECT id, nome FROM fornecedores ORDER BY nome").fetchall()
+    qual_js = {"rotulos": [f"{q_['fornecedor']} ({rimp.num(q_['total'], 0)})" for q_ in x["qualidade"]],
+               "series": [{"nome": k, "cor": "#" + rel.CORES[k], "valores": [round(q_[k] / q_["total"] * 100, 1) for q_ in x["qualidade"]]}
+                          for k in "ABCD"]}
+    return render_template("rel_descontos.html", x=x, cartoes=cartoes, de=de, ate=ate, periodo=periodo, forn=forn,
+                           fornecedores=fornecedores, qual_js=qual_js, rimp=rimp, aba="descontos")
 
 
 FILTROS_SEMANAL = {"a_entregar": "A entregar", "entregues": "Entregues", "todos": "Todos"}

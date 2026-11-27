@@ -1,11 +1,13 @@
-<h1>Relatórios da importação</h1>
-<p class="sub">Tudo é calculado a partir das datas preenchidas nos processos, na hora em que a tela abre ou o arquivo é baixado
+<h1>Relatórios</h1>
+{% if aba == 'descontos' %}<p class="sub">Descontos e qualidade da inspeção de recebimento, calculados na hora com os dados atuais (tela, Excel e PDF iguais).
+  Valores em moedas diferentes nunca são somados. "—" = sem dados suficientes.</p>
+{% else %}<p class="sub">Tudo é calculado a partir das datas preenchidas nos processos, na hora em que a tela abre ou o arquivo é baixado
   (a tela, o Excel e o PDF usam as mesmas regras). "—" = sem dados suficientes. Os invoices da carga de histórico ficam de fora.
-  Fluxo financeiro: <a href="{{ url_for('fluxo_pagamentos') }}">Fluxo de pagamentos</a>.</p>
+  Fluxo financeiro: <a href="{{ url_for('fluxo_pagamentos') }}">Fluxo de pagamentos</a>.</p>{% endif %}
 <nav class="subabas">
   {% for k, rot, ep in [('indicadores', 'Indicadores', 'relatorios'), ('itens', 'Itens por situação', 'relatorio_itens'),
                         ('canal', 'Importações por canal', 'relatorio_canal'), ('mensal', 'Relatório mensal', 'relatorio_mensal'),
-                        ('semanal', 'Resumo semanal', 'relatorio_semanal')] %}
+                        ('semanal', 'Resumo semanal', 'relatorio_semanal'), ('descontos', 'Descontos', 'relatorio_descontos')] %}
   <a href="{{ url_for(ep) }}" class="{{ 'ativo' if aba == k }}">{{ rot }}</a>
   {% endfor %}
 </nav>
