@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.79"
+VERSAO = "4.80"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -5335,15 +5335,22 @@ def _cartoes_descontos(x):
     ]
 
 
-def _periodo_12_meses():
+def _periodo_descontos():
+    """Período do relatório de descontos. v4.80: sem datas escolhidas, o último mês fechado (antes do mês atual) que teve
+    inspeção concluída; sem nenhuma, o mês anterior."""
     de, ate = request.args.get("de") or "", request.args.get("ate") or ""
     try:
         date.fromisoformat(de)
         date.fromisoformat(ate)
     except ValueError:
-        h = date.fromisoformat(hoje())
-        ate = h.isoformat()
-        de = (h.replace(day=1) - timedelta(days=330)).replace(day=1).isoformat()
+        inicio_mes = date.fromisoformat(hoje()).replace(day=1)
+        ultima = get_db().execute("SELECT MAX(substr(data_fim_inspecao, 1, 10)) FROM invoices WHERE cancelado_em IS NULL"
+                                  " AND tem_desconto IS NOT NULL AND data_fim_inspecao < ?",
+                                  (inicio_mes.isoformat(),)).fetchone()[0]
+        ref = date.fromisoformat(ultima) if ultima else inicio_mes - timedelta(days=1)
+        de = ref.replace(day=1).isoformat()
+        prox = (ref.replace(day=28) + timedelta(days=4)).replace(day=1)
+        ate = (prox - timedelta(days=1)).isoformat()
     return (de, ate) if de <= ate else (ate, de)
 
 
@@ -5351,7 +5358,7 @@ def _periodo_12_meses():
 @app.route("/relatorios/descontos.<fmt>")
 @login_obrigatorio
 def relatorio_descontos(fmt=None):
-    de, ate = _periodo_12_meses()
+    de, ate = _periodo_descontos()
     forn = request.args.get("fornecedor", type=int)
     x = dados_descontos(de, ate, forn)
     cartoes = _cartoes_descontos(x)
