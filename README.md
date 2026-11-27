@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.70)
+# Controle de Invoices e Descontos (v4.71)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -111,6 +111,9 @@ v4.70: o arquivo do Outlook leva só a versão HTML do e-mail (a alternativa em 
 **Apagar versão do desconto** (admin, só a última, na tela de inspeção do invoice): se já foi registrada/enviada, desfaz o efeito —
 revisão: o desconto volta ao valor anterior; versão 1: o desconto é apagado e o invoice volta a aguardar o relatório. Bloqueado se o
 desconto já foi usado em deduções/liberações que o valor anterior não comporta. Fica registrado no histórico do invoice.
+v4.71: ao enviar/registrar o relatório ao fornecedor, a **data real do fim da inspeção** passa a ser a última REPORT DATE dos
+eventos do invoice (com registro no histórico quando muda). Na atualização, os invoices com relatório já enviado/registrado são
+ajustados uma vez.
 
 **Aba Relatórios (v4.66):** relatórios da importação, todos calculados a partir das datas dos processos (nada digitado à mão),
 com as mesmas regras de status da aba Importação e recalculados a cada abertura/download (tela, Excel e PDF nunca se contradizem;

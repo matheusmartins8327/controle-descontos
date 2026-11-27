@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.70"
+VERSAO = "4.71"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -572,6 +572,13 @@ def init_db():
                           ("duimp_dispensada", "INTEGER")):
             if col not in colunas_inv:
                 db.execute(f"ALTER TABLE invoices ADD COLUMN {col} {tipo}")
+        # versão 4.71: invoices com relatório de inspeção já enviado/registrado: fim da inspeção = última REPORT DATE
+        if db.execute("SELECT 1 FROM configuracoes WHERE chave = 'v471_fim_inspecao'").fetchone() is None:
+            db.execute("UPDATE invoices SET data_fim_inspecao = (SELECT MAX(substr(e.report_date, 1, 10)) FROM inspecao_eventos e"
+                       " WHERE e.invoice_id = invoices.id) WHERE id IN (SELECT invoice_id FROM relatorios_versoes"
+                       " WHERE aplicado_em IS NOT NULL) AND EXISTS (SELECT 1 FROM inspecao_eventos e WHERE e.invoice_id ="
+                       " invoices.id AND e.report_date IS NOT NULL)")
+            db.execute("INSERT INTO configuracoes (chave, valor) VALUES ('v471_fim_inspecao', '1')")
         # versão 4.30: invoices que já passaram do Transporte não voltam a ficar pendentes da nova "NF Liberada"
         if db.execute("SELECT 1 FROM configuracoes WHERE chave = 'v430_nf'").fetchone() is None:
             db.execute("UPDATE invoices SET nf_liberada = 1 WHERE data_chegada IS NOT NULL")
@@ -4394,8 +4401,14 @@ def aplicar_versao_no_desconto(r, v, conteudo, nome):
     db = get_db()
     total = round(v["total"], 2)
     d = r["desconto"]
-    data_insp = r["data_fim_inspecao"] or db.execute("SELECT MAX(substr(report_date, 1, 10)) FROM inspecao_eventos"
-                                                     " WHERE invoice_id = ?", (r["id"],)).fetchone()[0] or hoje()
+    # v4.71: ao enviar/registrar o relatório, o fim da inspeção passa a ser a última REPORT DATE dos eventos do invoice
+    data_insp = db.execute("SELECT MAX(substr(report_date, 1, 10)) FROM inspecao_eventos WHERE invoice_id = ?",
+                           (r["id"],)).fetchone()[0] or r["data_fim_inspecao"] or hoje()
+    if data_insp != r["data_fim_inspecao"]:
+        db.execute("UPDATE invoices SET data_fim_inspecao = ? WHERE id = ?", (data_insp, r["id"]))
+        if r["data_fim_inspecao"]:
+            registrar_evento(r["id"], "Fim da inspeção ajustado para a última REPORT DATE",
+                             f"{fmt_data(r['data_fim_inspecao'])} → {fmt_data(data_insp)}")
     if not d:
         if total <= TOLERANCIA:
             db.execute("UPDATE invoices SET data_fim_inspecao = ?, tem_desconto = 0 WHERE id = ?", (data_insp, r["id"]))
