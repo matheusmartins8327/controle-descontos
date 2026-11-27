@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.75"
+VERSAO = "4.76"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -124,6 +124,7 @@ SITUACOES = {
 }
 ORDEM_LOGISTICA = ["COLETA", "EMBARQUE", "DESEMBARACO", "CHEGADA"]
 
+PRAZO_APROVACAO_DESCONTO = 7  # dias: o e-mail ao fornecedor considera aprovado sem resposta em 7 dias
 TOLERANCIA = 0.005  # diferença de arredondamento aceita (meio centavo)
 
 app = Flask(__name__)
@@ -1359,7 +1360,20 @@ def listar_pendencias(invoices, perfil=None):
         sit = r["situacao"]
         if sit == "CANCELADO":
             continue
-        if r["historico"]:  # v4.51: invoices da carga de histórico não geram pendências
+        d = r["desconto"]
+        # v4.76: desconto ainda não aprovado pelo fornecedor aparece sempre (inclusive em invoices da carga de histórico)
+        if adm and d and d["status"] == "PENDENTE":
+            add(r, "Enviar o relatório de inspeção (desconto) ao fornecedor", "admin", d["data_relatorio"], d["valor_final"])
+        if adm and d and d["status"] == "ENVIADO":
+            dias = (date.fromisoformat(hoje()) - date.fromisoformat(d["data_relatorio"][:10])).days if d["data_relatorio"] else None
+            if dias is not None and dias > PRAZO_APROVACAO_DESCONTO:
+                add(r, f"Desconto aguardando aprovação do fornecedor há {dias} dias: prazo de {PRAZO_APROVACAO_DESCONTO} dias "
+                    "do e-mail vencido (marcar como aprovado)", "admin", d["data_relatorio"], d["valor_final"], alerta=True)
+            else:
+                quando = "" if dias is None else (" (enviado hoje)" if dias <= 0 else f" (enviado há {dias} dia{'s' if dias != 1 else ''})")
+                add(r, "Desconto aguardando aprovação do fornecedor" + quando,
+                    "admin", d["data_relatorio"], d["valor_final"], atencao=True)
+        if r["historico"]:  # v4.51: invoices da carga de histórico não geram (outras) pendências
             continue
         if imp and sit == "CRIACAO":
             add(r, "Completar o cadastro: falta " + ", ".join(criacao_faltando(r)), "importacao")
@@ -1379,11 +1393,6 @@ def listar_pendencias(invoices, perfil=None):
                 add(r, "Relatório de Inspeção Pendente", "admin", r["data_fim_inspecao"], atencao=True)
             else:
                 add(r, "Registrar a inspeção", "admin", r["data_chegada"])
-        d = r["desconto"]
-        if adm and d and d["status"] == "PENDENTE":
-            add(r, "Enviar o relatório de inspeção (desconto) ao fornecedor", "admin", d["data_relatorio"], d["valor_final"])
-        if adm and d and d["status"] == "ENVIADO":
-            add(r, "Acompanhar a aprovação do desconto pelo fornecedor", "admin", d["data_relatorio"], d["valor_final"])
         if imp and d and d["status"] == "APROVADO" and r["saldo_a_deduzir"] > TOLERANCIA:
             add(r, "Desconto aprovado aguardando dedução em um próximo invoice", "importacao", None, r["saldo_a_deduzir"])
         if fin:
