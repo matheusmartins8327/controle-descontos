@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.71"
+VERSAO = "4.72"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2872,10 +2872,8 @@ def invoice_inspecao(id):
     data_rel = data_valida(f.get("data_relatorio"))
     # v4.46: sem escolha, o relatório ainda não foi enviado ao fornecedor
     status = f.get("status") if f.get("status") in STATUS_DESCONTO else "PENDENTE"
-    relatorio, erro_rel = arquivo_excel_form("relatorio_arquivo")
-    if erro_rel:
-        flash(erro_rel, "erro")
-        return volta
+    # v4.72: o relatório é feito pela plataforma (versões do desconto), que guarda todas as informações: não se anexa
+    # mais o Excel do relatório no invoice
     obs = f.get("obs", "").strip() or None
     if not data_rel:
         flash("Informe a data do relatório.", "erro")
@@ -2888,14 +2886,6 @@ def invoice_inspecao(id):
             return volta
         if status != d["status"]:
             alterar_status_desconto(r, d, status)
-        if relatorio:  # nova versão do relatório (ou relatório de desconto anterior à v4.41)
-            salvos, erros = salvar_arquivos("relatorio", d["id"], [relatorio])
-            if not salvos:
-                db.rollback()
-                for e in erros:
-                    flash(e, "erro")
-                return volta
-            registrar_evento(id, "Relatório de inspeção anexado", ", ".join(salvos))
         registrar_evento(id, "Inspeção/desconto atualizados")
         db.commit()
         flash("Inspeção atualizada.", "ok")
@@ -2908,27 +2898,17 @@ def invoice_inspecao(id):
     if valor > r["valor_invoice"] + TOLERANCIA:
         flash("O desconto não pode ser maior que o valor do invoice.", "erro")
         return volta
-    if not relatorio:
-        flash("Anexe o relatório de inspeção (arquivo Excel) referente ao desconto.", "erro")
-        return volta
     segurado = segurado_possivel(r, valor)
     did = db.execute("INSERT INTO descontos (invoice_id, valor_inicial, valor_final, valor_segurado, data_relatorio, status,"
                      " aprovado_em, aprovado_por, obs, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (id, valor, valor, segurado, data_rel, status, agora() if status == "APROVADO" else None,
                       g.usuario["id"] if status == "APROVADO" else None, obs, g.usuario["id"], agora())).lastrowid
-    salvos, erros = salvar_arquivos("relatorio", did, [relatorio])
-    if not salvos:
-        db.rollback()
-        for e in erros:
-            flash(e, "erro")
-        flash("O desconto não foi cadastrado: anexe um relatório de inspeção válido.", "erro")
-        return volta
     db.execute("UPDATE invoices SET data_fim_inspecao = ?, tem_desconto = 1 WHERE id = ?", (data_insp, id))
     detalhe = f"Valor: {fmt_moeda(valor, r['moeda'])} · segurado: {fmt_moeda(segurado, r['moeda'])}"
     if segurado + TOLERANCIA < valor:
         detalhe += " (o invoice já estava pago em parte: o restante será apenas deduzido no próximo invoice)"
     registrar_evento(id, f"Inspeção registrada com desconto · {STATUS_DESCONTO[status]}",
-                     detalhe + f" · relatório: {salvos[0]}")
+                     detalhe)
     db.commit()
     flash("Desconto cadastrado. " + (f"Valor segurado: {fmt_moeda(segurado, r['moeda'])}." if segurado > TOLERANCIA
                                      else "O invoice já foi pago: o desconto será apenas deduzido no próximo invoice."),
@@ -2986,12 +2966,6 @@ def desconto_revalidar(did):
                 f"({fmt_moeda(r['deduzido'], r['moeda'])}).")
     elif novo > r["valor_invoice"] + TOLERANCIA:
         erro = "O desconto não pode ser maior que o valor do invoice."
-    revisao, erro_rev = arquivo_excel_form("revisao_arquivo")
-    if not erro:
-        if erro_rev:
-            erro = erro_rev
-        elif novo > TOLERANCIA and not revisao:
-            erro = "Anexe a revisão do relatório de inspeção (arquivo Excel). Só a revalidação para 0 dispensa o relatório."
     if erro:
         flash(erro, "erro")
         return volta
@@ -3001,15 +2975,6 @@ def desconto_revalidar(did):
         segurado = max(segurado_possivel(r, novo), r["liberado"])
     vid = db.execute("INSERT INTO revisoes_desconto (desconto_id, valor_anterior, valor_novo, motivo, usuario_id, criado_em)"
                      " VALUES (?, ?, ?, ?, ?, ?)", (did, d["valor_final"], novo, motivo, g.usuario["id"], agora())).lastrowid
-    if revisao:
-        salvos, erros = salvar_arquivos("revisao", vid, [revisao])
-        if not salvos:
-            db.rollback()
-            for e in erros:
-                flash(e, "erro")
-            flash("A revalidação não foi salva: anexe uma revisão do relatório válida.", "erro")
-            return volta
-        motivo += f" · relatório revisado: {salvos[0]}"
     db.execute("UPDATE descontos SET valor_final = ?, valor_segurado = ? WHERE id = ?", (novo, segurado, did))
     obs = motivo
     if abs(segurado - d["valor_segurado"]) > TOLERANCIA:
