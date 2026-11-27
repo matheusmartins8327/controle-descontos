@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.82"
+VERSAO = "4.83"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -2262,6 +2262,10 @@ def invoice_editar(id):
             salvar_condicao(id, dados["condicao"])
             registrar_evento(id, "Dados do invoice corrigidos", "; ".join(mudancas) or None)
             db.commit()
+            if conferir_vinculos(id):
+                db.commit()
+                flash("Eventos de inspeção que não batem com este invoice (NF ou número) foram desvinculados e voltaram "
+                      "a aparecer como invoice do Excel.", "aviso-box")
             flash("Invoice atualizado.", "ok")
             salvar_invoice_assinado_form(id)
             avisar_cadastro_pendente(id)
@@ -2359,6 +2363,8 @@ def invoice_etapa(id, etapa):
     if erro:
         flash(erro, "erro")
         return redirect(url_for("invoice_detalhe", id=id) + f"#etapa-{etapa}")
+    if "numero_nf" in novos and conferir_vinculos(id):  # v4.83: NF trocada: confere os eventos de inspeção ligados
+        get_db().commit()
     # salvar sempre funciona; a etapa só é concluída com todas as informações obrigatórias
     falta = etapa_faltando(dict(r, **novos), etapa)
     if falta:
@@ -3522,6 +3528,49 @@ def vincular_eventos(eventos):
     return avisos
 
 
+def conferir_vinculos(invoice_id=None):
+    """v4.83: eventos ligados a um invoice do sistema que não batem mais com ele (nem pela NF de entrada, nem pelo número
+    do invoice) voltam a ser um invoice "Excel" separado. Ex.: eventos de "GEMKIND - GK-114-26" ligados a um invoice cujo
+    número era "GEMKIND". Invoices com relatório já enviado ao fornecedor não mudam. Devolve [(invoice_id, eventos)]."""
+    db = get_db()
+    sql = "SELECT DISTINCT invoice_id FROM inspecao_eventos WHERE invoice_id IS NOT NULL"
+    ids = [invoice_id] if invoice_id else [x[0] for x in db.execute(sql).fetchall()]
+    movidos = []
+    for iid in ids:
+        if relatorio_enviado(iid):
+            continue
+        n, origens = 0, set()
+        for e in db.execute("SELECT id, numero_nf, invoice_excel, fornecedor_excel, criterio, categoria FROM inspecao_eventos"
+                            " WHERE invoice_id = ?", (iid,)).fetchall():
+            copia = dict(e)
+            vincular_eventos([copia])
+            if copia["invoice_id"] == iid:
+                continue
+            novo = copia["grupo"] if copia["invoice_id"] is None else \
+                "xls:" + (str(e["invoice_excel"] or "").strip() or f"NF {e['numero_nf'] or '?'}")
+            db.execute("UPDATE inspecao_eventos SET grupo = ?, invoice_id = NULL WHERE id = ?", (novo, e["id"]))
+            n += 1
+            origens.add(novo[4:])
+        if n:
+            registrar_evento(iid, "Inspeção de recebimento desvinculada do invoice",
+                             f"{n} evento(s) não batem com este invoice (NF ou número): voltaram a "
+                             + ", ".join(f'"{o}"' for o in sorted(origens)) + " (Excel)")
+            movidos.append((iid, n))
+    if movidos:
+        religar_grupos()
+    return movidos
+
+
+def conferir_vinculos_uma_vez():
+    """Na primeira vez depois da atualização, confere todos os vínculos já gravados."""
+    if config("v483_vinculos"):
+        return []
+    movidos = conferir_vinculos()
+    salvar_config("v483_vinculos", "1")
+    get_db().commit()
+    return movidos
+
+
 def religar_grupos():
     """Grupos sem vínculo ("Excel") que agora encontram o invoice (NF cadastrada ou relação de fornecedor nova)
     passam a ser do invoice. Só quando o invoice ainda não tem eventos. Devolve quantos foram ligados."""
@@ -3717,6 +3766,7 @@ def gravar_eventos(grupo, eventos, importacao_id, janela=None):
 def inspecoes():
     from collections import Counter
     db = get_db()
+    conferir_vinculos_uma_vez()
     glos = glossario()
     resumo = {}
     for e in db.execute("SELECT grupo, invoice_id, invoice_excel, numero_nf, fornecedor_excel, quantidade, categoria,"
@@ -3848,6 +3898,7 @@ def inspecoes_previa(token):
                            [(k, k.capitalize(), v, g.usuario["id"], agora()) for k, v in termos_novos.items()])
             n_termos = len(termos_novos)
         religar_grupos()
+        conferir_vinculos()
         resumo = {"novos": sum(1 for p in aplicar if p["acao"] == "novo"),
                   "atualizados": sum(1 for p in aplicar if p["acao"] == "atualizar"), "termos": n_termos}
         db.execute("UPDATE inspecao_importacoes SET resumo = ? WHERE id = ?", (json.dumps(resumo), mid))
@@ -4132,6 +4183,28 @@ def mensagem_reclass(feitos, pecas, para, erro, comentario=None):
         flash("Nada mudou: os eventos já estavam assim.", "erro")
 
 
+@app.route("/inspecoes/<path:grupo>/conferir-vinculo", methods=["POST"])
+@somente_admin
+def inspecao_conferir_vinculo(grupo):
+    """v4.83: confere na hora se os eventos ligados ao invoice batem com ele (NF ou número)."""
+    iid = int(grupo[4:]) if grupo.startswith("inv:") and grupo[4:].isdigit() else None
+    if not iid:
+        abort(404)
+    if relatorio_enviado(iid):
+        flash("O relatório deste invoice já foi enviado ao fornecedor: os eventos não mudam mais.", "erro")
+        return redirect(url_for("inspecao_grupo", grupo=grupo))
+    movidos = conferir_vinculos(iid)
+    get_db().commit()
+    if movidos:
+        flash(f"{movidos[0][1]} evento(s) não batiam com este invoice e voltaram a aparecer como invoice do Excel.", "ok")
+        return redirect(url_for("inspecoes"))
+    inv = get_db().execute("SELECT numero, numero_nf FROM invoices WHERE id = ?", (iid,)).fetchone()
+    flash("Todos os eventos batem com este invoice"
+          + (f" (NF {inv['numero_nf']} cadastrada no invoice)" if inv and inv["numero_nf"] else " (pelo número do invoice)")
+          + ". Se não forem dele, corrija a NF ou o número no invoice: ao salvar, os eventos são conferidos de novo.", "aviso-box")
+    return redirect(url_for("inspecao_grupo", grupo=grupo))
+
+
 @app.route("/inspecoes/<path:grupo>/reclassificar", methods=["POST"])
 @somente_admin
 def inspecao_reclassificar(grupo):
@@ -4198,6 +4271,7 @@ SQL_BASE = ("FROM inspecao_eventos e LEFT JOIN invoices i ON i.id = e.invoice_id
 def inspecoes_base():
     """Base de dados de inspeção (todos os invoices), com filtros e reclassificação em lote."""
     db = get_db()
+    conferir_vinculos_uma_vez()
     admin = g.usuario["perfil"] == "admin"
     if request.method == "POST":
         if not admin:

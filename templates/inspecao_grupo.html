@@ -6,6 +6,11 @@
 <h1>Inspeção de recebimento · {{ r.numero if r else e0.invoice_excel }}</h1>
 <p class="sub">{{ r.fornecedor if r else fornecedor_sistema(e0.fornecedor_excel) }} · NF {{ e0.numero_nf or '—' }}
   {% if not r %} · <strong>sem vínculo com um invoice do sistema</strong> (cadastre o número da NF no invoice para ligar e calcular o desconto){% endif %}</p>
+{% if r and admin %}<form method="post" action="{{ url_for('inspecao_conferir_vinculo', grupo='inv:' ~ r.id) }}" class="linha-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="btn pequeno">Conferir vínculo com o invoice</button>
+  <small>Os eventos ficam ligados a {{ r.numero }} pela NF de entrada ou pelo número do invoice; os que não baterem voltam a aparecer como invoice do Excel.</small>
+</form>{% endif %}
 
 {% if pendentes %}<div class="duimp-aviso"><strong>{{ pendentes|length }} termo(s) sem tradução</strong> neste invoice: {{ pendentes.keys()|list|join(', ') }}.
   {% if admin %}<a href="{{ url_for('traducoes') }}">Traduzir</a>{% endif %}</div>{% endif %}

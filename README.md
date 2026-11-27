@@ -1,4 +1,4 @@
-# Controle de Invoices e Descontos (v4.82)
+# Controle de Invoices e Descontos (v4.83)
 
 Sistema único que controla o ciclo completo de cada invoice de fornecedor, da criação até o pagamento completo,
 reunindo **Importação**, **Engenharia de Processos** (inspeção e descontos) e **Financeiro** (pagamentos).
@@ -142,6 +142,10 @@ v4.82: o invoice pode ser salvo **sem o código** (escolhido pelo fornecedor): f
 "SEM CÓDIGO n", e o cadastro só é concluído quando o código for informado (fica no histórico). Na importação de inspeções, o
 número provisório nunca liga eventos, e a parte do invoice do Excel que é só o nome do fornecedor ("GEMKIND" em
 "GEMKIND - GK-114-26") não vale como número do invoice.
+v4.83: **conferência dos vínculos da inspeção**: eventos ligados a um invoice do sistema que não batem mais com ele (nem pela NF
+de entrada, nem pelo número) voltam a ser um invoice "Excel" separado. Roda uma vez ao abrir Inspeções depois da atualização,
+a cada importação, ao salvar o invoice ou a NF, e pelo botão "Conferir vínculo com o invoice" na tela de eventos (Engenharia).
+Invoices com relatório já enviado não mudam.
 
 **Aba Relatórios (v4.66):** relatórios da importação, todos calculados a partir das datas dos processos (nada digitado à mão),
 com as mesmas regras de status da aba Importação e recalculados a cada abertura/download (tela, Excel e PDF nunca se contradizem;
