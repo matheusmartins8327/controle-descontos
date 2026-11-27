@@ -53,7 +53,7 @@ ANEXO_MAX_MB = 10                       # por arquivo
 EXTENSOES_ANEXO = {"pdf", "png", "jpg", "jpeg", "gif", "webp", "xlsx", "xlsm", "xls", "csv", "docx", "doc", "xml", "txt",
                    "zip", "rar", "7z", "msg", "eml", "ofx"}
 MAX_USUARIOS = 20
-VERSAO = "4.69"
+VERSAO = "4.70"
 
 # ---------------------------------------------------------------------------
 # Perfis, moedas e etapas
@@ -4219,6 +4219,71 @@ def desconto_versao(id):
     return volta
 
 
+@app.route("/invoices/<int:id>/versoes/<int:versao>/excluir", methods=["POST"])
+@somente_admin
+def desconto_versao_excluir(id, versao):
+    """v4.70: apaga a última versão do desconto (ex.: revisão feita como teste). Se ela já tinha sido registrada/enviada,
+    desfaz o efeito no desconto do invoice: revisão → o desconto volta ao valor anterior; versão 1 → o desconto é apagado
+    e o invoice volta a "Relatório de Inspeção Pendente". Não apaga se o desconto já foi usado em deduções ou liberações
+    que o novo valor não comporta."""
+    r = carregar_invoice(id)
+    db = get_db()
+    volta = redirect(url_for("inspecao_grupo", grupo=f"inv:{id}") + "#fechamento")
+    v = db.execute("SELECT * FROM relatorios_versoes WHERE invoice_id = ? AND versao = ?", (id, versao)).fetchone()
+    if v is None:
+        abort(404)
+    ultima = db.execute("SELECT MAX(versao) FROM relatorios_versoes WHERE invoice_id = ?", (id,)).fetchone()[0]
+    if versao != ultima:
+        flash(f"Só a última versão (v{ultima}) pode ser apagada.", "erro")
+        return volta
+    d = r["desconto"]
+    apagar = excluir_arquivos_de("relatorio_versao", v["id"])
+    detalhe = f"v{versao} · {fmt_moeda(v['total'], r['moeda'])}" + (f" · {v['motivo']}" if v["motivo"] else "")
+    if v["aplicado_em"]:
+        if versao == 1 or not d:
+            if d:
+                if r["deduzido"] > TOLERANCIA or r["liberado"] > TOLERANCIA:
+                    flash("O desconto desta versão já foi deduzido em outro invoice ou teve valor segurado liberado: "
+                          "desfaça isso antes de apagar a versão.", "erro")
+                    return volta
+                for x in db.execute("SELECT id FROM revisoes_desconto WHERE desconto_id = ?", (d["id"],)).fetchall():
+                    apagar += excluir_arquivos_de("revisao", x["id"])
+                db.execute("DELETE FROM revisoes_desconto WHERE desconto_id = ?", (d["id"],))
+                apagar += excluir_arquivos_de("relatorio", d["id"])
+                db.execute("DELETE FROM descontos WHERE id = ?", (d["id"],))
+            db.execute("UPDATE invoices SET tem_desconto = NULL WHERE id = ?", (id,))
+            detalhe += " · o desconto criado por ela foi apagado; o invoice volta a aguardar o relatório de inspeção"
+        else:
+            rev = db.execute("SELECT * FROM revisoes_desconto WHERE desconto_id = ? ORDER BY id DESC LIMIT 1",
+                             (d["id"],)).fetchone()
+            if rev and abs(rev["valor_novo"] - d["valor_final"]) <= TOLERANCIA and abs(rev["valor_novo"] - v["total"]) <= TOLERANCIA:
+                anterior = rev["valor_anterior"]
+                if anterior < r["deduzido"] - TOLERANCIA:
+                    flash(f"O valor anterior ({fmt_moeda(anterior, r['moeda'])}) é menor que o já deduzido em outros invoices "
+                          f"({fmt_moeda(r['deduzido'], r['moeda'])}): desfaça as deduções antes.", "erro")
+                    return volta
+                segurado = min(d["valor_segurado"], anterior)
+                if r["principal_pago"] < r["principal_devido"] - TOLERANCIA or r["principal_pago"] <= TOLERANCIA:
+                    segurado = max(segurado_possivel(r, anterior), r["liberado"])
+                db.execute("UPDATE descontos SET valor_final = ?, valor_segurado = ? WHERE id = ?", (anterior, segurado, d["id"]))
+                apagar += excluir_arquivos_de("revisao", rev["id"])
+                db.execute("DELETE FROM revisoes_desconto WHERE id = ?", (rev["id"],))
+                detalhe += f" · desconto voltou de {fmt_moeda(d['valor_final'], r['moeda'])} para {fmt_moeda(anterior, r['moeda'])}"
+            elif v["arquivo_id"]:  # a versão não mudou o valor: só tinha anexado o relatório ao desconto
+                nome_arq = db.execute("SELECT nome FROM arquivos WHERE id = ?", (v["arquivo_id"],)).fetchone()
+                if nome_arq:
+                    for a in db.execute("SELECT * FROM arquivos WHERE origem = 'relatorio' AND origem_id = ? AND nome = ?",
+                                        (d["id"], nome_arq["nome"])).fetchall():
+                        apagar.append(a)
+                        db.execute("DELETE FROM arquivos WHERE id = ?", (a["id"],))
+    db.execute("DELETE FROM relatorios_versoes WHERE id = ?", (v["id"],))
+    registrar_evento(id, f"Versão {versao} do desconto apagada", detalhe)
+    db.commit()
+    remover_arquivos(apagar)
+    flash(f"Versão {versao} apagada." + (" O desconto do invoice foi ajustado." if v["aplicado_em"] else ""), "ok")
+    return volta
+
+
 # ---------------------------------------------------------------------------
 # Relatório ao fornecedor (v4.61 — fase 3): Excel em inglês + e-mail com prévia; ao enviar, a versão vira o desconto
 # do invoice (versão 1: desconto com o relatório anexado; revisões: revalidação com o relatório revisado)
@@ -6701,27 +6766,41 @@ def montar_mensagem(assunto, html, para, cc, anexos=None):
 def rascunho_outlook(assunto, html, para, cc, anexos):
     """v4.69: e-mail pronto como arquivo .eml marcado como "não enviado" (X-Unsent): o Outlook do computador o abre
     como um e-mail novo, para revisar e enviar pela conta que está logada lá. Sem remetente: o Outlook usa a conta padrão.
+    v4.70: só a versão HTML (sem a alternativa em texto simples, que o Outlook escolhia ao abrir o rascunho e perdia toda
+    a formatação), num documento HTML completo. Estrutura: mixed → related (HTML + imagem da assinatura) + anexos.
     anexos: [(nome, bytes)]"""
-    msg = EmailMessage()
-    msg["X-Unsent"] = "1"
-    msg["Subject"] = assunto
+    from email.mime.application import MIMEApplication
+    from email.mime.image import MIMEImage
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    documento = ('<!DOCTYPE html><html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8">'
+                 '<meta name="viewport" content="width=device-width, initial-scale=1"></head>'
+                 f'<body style="margin:0;padding:0">{html}</body></html>')
+    raiz = MIMEMultipart("mixed")
+    raiz["X-Unsent"] = "1"
+    raiz["Subject"] = assunto
     if lista_emails(para):
-        msg["To"] = ", ".join(lista_emails(para))
+        raiz["To"] = ", ".join(lista_emails(para))
     if lista_emails(cc):
-        msg["Cc"] = ", ".join(lista_emails(cc))
-    msg.set_content(texto_simples(html))
-    msg.add_alternative(html, subtype="html")
+        raiz["Cc"] = ", ".join(lista_emails(cc))
+    corpo = MIMEMultipart("related")
+    corpo.attach(MIMEText(documento, "html", "utf-8"))
     if "cid:" + CID_ASSINATURA in html:
         img = imagem_assinatura()
         if img:
             with open(caminho_anexo(img), "rb") as arq:
                 sub_tipo = (mimetypes.guess_type(img["nome"])[0] or "image/png").split("/", 1)[1]
-                msg.get_payload()[1].add_related(arq.read(), maintype="image", subtype=sub_tipo, cid=f"<{CID_ASSINATURA}>")
+                parte = MIMEImage(arq.read(), _subtype=sub_tipo)
+            parte.add_header("Content-ID", f"<{CID_ASSINATURA}>")
+            parte.add_header("Content-Disposition", "inline", filename=img["nome"])
+            corpo.attach(parte)
+    raiz.attach(corpo)
     for nome, conteudo in anexos:
         tipo = mimetypes.guess_type(nome)[0] or "application/octet-stream"
-        principal, sub = tipo.split("/", 1)
-        msg.add_attachment(conteudo, maintype=principal, subtype=sub, filename=nome)
-    return msg.as_bytes()
+        parte = MIMEApplication(conteudo, _subtype=tipo.split("/", 1)[1])
+        parte.add_header("Content-Disposition", "attachment", filename=nome)
+        raiz.attach(parte)
+    return raiz.as_bytes()
 
 
 def enviar_fila():
